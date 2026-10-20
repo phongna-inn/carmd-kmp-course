@@ -102,6 +102,21 @@
 - [KMP-NativeCoroutines](https://github.com/rickclephas/KMP-NativeCoroutines) and [KMP-ObservableViewModel](https://github.com/rickclephas/KMP-ObservableViewModel); [Compose Multiplatform: common ViewModel](https://kotlinlang.org/docs/multiplatform/compose-viewmodel.html)
   Alternatives to SKIE + a hand-written owner; JetBrains' page recommends KMP-ObservableViewModel for SwiftUI. Use for: Lesson 05 B4, reading other KMP codebases.
 
+- [Android: Guide to app architecture](https://developer.android.com/topic/architecture) and [Domain layer](https://developer.android.com/topic/architecture/domain-layer)
+  Separation of concerns, UI/data/optional domain layers, "Manage dependencies between components" (DI vs service locator); use cases: `VerbNounUseCase`, `operator fun invoke`, no mutable data, main-safe. Note the guide's domain depends on data; the course inverts that for ports (adapters live per platform). Use for: Lesson 06 (primary source).
+- [Alistair Cockburn: Hexagonal architecture (Ports and Adapters)](https://alistair.cockburn.us/hexagonal-architecture/)
+  The original article: ports as "purposeful conversations", one adapter per external device, test harnesses as adapters. Use for: Lesson 06 A2.
+- [Android: Dependency injection](https://developer.android.com/training/dependency-injection) and [Manual dependency injection](https://developer.android.com/training/dependency-injection/manual)
+  Constructor vs field injection, DI vs service locator, the `AppContainer` pattern and its costs as an app grows. Use for: Lesson 06.
+- [Koin](https://insert-koin.io/): [definitions](https://insert-koin.io/docs/reference/koin-core/definitions/), [ViewModel](https://insert-koin.io/docs/reference/koin-core/viewmodel/), [KoinComponent](https://insert-koin.io/docs/reference/koin-core/koin-component/), [Compose](https://insert-koin.io/docs/reference/koin-compose/compose/), [Android ViewModel](https://insert-koin.io/docs/reference/koin-android/viewmodel/), [KMP](https://insert-koin.io/docs/reference/koin-mp/kmp/)
+  `single`/`factory`/`viewModelOf`, `koinViewModel()` (koin-compose-viewmodel), `by viewModel()` (koin-android), KoinComponent only at the edges. The docs say little about iOS ViewModels; the course's Koin-backed `ViewModelProvider.Factory` comes from reading Koin 4.2.2's sources (`KoinViewModelFactory`, `resolveViewModel`). Use for: Lesson 06 Part B, Lessons 07–08 (platform modules).
+- [Android: Test Kotlin coroutines](https://developer.android.com/kotlin/coroutines/test) and [Test doubles](https://developer.android.com/training/testing/fundamentals/test-doubles)
+  `runTest` and virtual time, `StandardTestDispatcher` vs `UnconfinedTestDispatcher`, `Dispatchers.setMain` (in setup, not a property); fakes preferred over mocks. Use for: Lesson 06 A5, Lesson 10 (state machine tests).
+- [Turbine](https://github.com/cashapp/turbine)
+  `flow.test { awaitItem() }`, 3 s wall-clock timeout, unconsumed events fail the test. Use for: Lesson 06, Lesson 10.
+- [Kotlin: Test your multiplatform app](https://kotlinlang.org/docs/multiplatform/multiplatform-run-tests.html) and [Android-KMP plugin: host and device tests](https://developer.android.com/kotlin/multiplatform/plugin)
+  `commonTest` + `kotlin.test` on JVM (JUnit 4) and iOS (Kotlin/Native runner), `allTests`; the Android-KMP plugin disables host tests until `withHostTest {}`. Use for: Lesson 06 A5.
+
 ## Wisdom (Communities)
 
 - [r/androiddev](https://reddit.com/r/androiddev)
@@ -113,7 +128,7 @@
 - [r/swift](https://reddit.com/r/swift)
   Swift-focused subreddit. Use for: Swift/iOS troubleshooting and idiom questions.
 - [Kotlin Slack, #multiplatform channel](https://surveys.jetbrains.com/s3/kotlin-slack-sign-up)
-  Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 03 on).
+  Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 03 on). Channel #koin: Koin's maintainers (Lesson 06 on).
 - [Stack Overflow — android-bluetooth / corebluetooth tags](https://stackoverflow.com/questions/tagged/android-bluetooth)
   High-signal Q&A for concrete BLE bugs on both platforms. Use for: debugging real device/peripheral issues.
 

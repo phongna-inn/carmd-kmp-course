@@ -162,6 +162,38 @@
     <dt><strong>export</strong> (framework)</dt>
     <dd>Including a dependency's public API in the iOS framework header, so Swift can use its classes under clean names. (05)</dd>
   </dl>
+
+  <h2>Architecture, DI and testing</h2>
+  <dl>
+    <dt><strong>Layer</strong>: presentation · domain · data</dt>
+    <dd>Groups of code with one kind of responsibility. Presentation: ViewModels and UI state. Domain: models, ports and use cases, the app's own rules. Data: adapters that provide what the ports promise. In the course each layer is a package in <code>shared</code>. The native screens sit on top. (06)</dd>
+    <dt><strong>Dependency rule</strong></dt>
+    <dd>Dependencies point toward the domain. The domain imports no other layer, and only the composition root knows every layer. (06)</dd>
+    <dt><strong>Port</strong></dt>
+    <dd>An interface in <code>commonMain</code>, owned by the code that needs it and written in the app's terms (<code>BleScanner</code>). Platform code implements it. (06)</dd>
+    <dt><strong>Adapter</strong></dt>
+    <dd>One concrete implementation of a port: simulated, a platform radio (Kotlin in <code>androidMain</code>, or Swift), a library (Kable), or a test fake. (06)</dd>
+    <dt><strong>Use case</strong></dt>
+    <dd>A domain class for one app rule, named <code>VerbNounUseCase</code> and called through <code>operator fun invoke</code>. It keeps no mutable state between calls. (06)</dd>
+    <dt><strong>Dependency injection (DI)</strong> / <strong>constructor injection</strong></dt>
+    <dd>A class receives its dependencies (through its constructor) instead of building them. The app decides what to pass. (06)</dd>
+    <dt><strong>Composition root</strong></dt>
+    <dd>The one place that builds the object graph and names the adapters: <code>AppContainer</code> by hand, then Koin's <code>appModule</code>. (06)</dd>
+    <dt><strong>Service locator</strong></dt>
+    <dd>A registry that classes ask for their dependencies (<code>KoinComponent</code> + <code>get()</code>). It hides what a class needs, so the course allows it only at the edges. (06)</dd>
+    <dt><strong>DI container</strong> / <strong>Koin module</strong></dt>
+    <dd>A library that builds the graph from declarations (<code>single</code>: one instance, <code>factory</code>: new each time, <code>viewModel</code>: new, then kept by the store). It works out the order, but checks it only at run time. (06)</dd>
+    <dt><strong>Test double</strong> / <strong>fake</strong></dt>
+    <dd>An object a test uses in place of a real dependency. A fake is a working but simplified implementation (<code>FakeBleScanner</code>), and Android prefers fakes over mocks. (06)</dd>
+    <dt><strong>Test dispatcher</strong> / <strong>virtual time</strong></dt>
+    <dd><code>StandardTestDispatcher</code> queues coroutines on a test scheduler whose clock skips delays. <code>Dispatchers.setMain</code> puts it under <code>viewModelScope</code>, and <code>runTest</code> shares its clock. (06)</dd>
+    <dt><strong>Turbine</strong></dt>
+    <dd>Cash App's library for testing flows: <code>flow.test { awaitItem() }</code>, with a 3 s wall-clock timeout. Unconsumed items fail the test. (06)</dd>
+    <dt><strong>Host test</strong></dt>
+    <dd>A test that runs on the development machine's JVM (<code>testAndroidHostTest</code>), as opposed to a device. With the Android-KMP plugin it's off until <code>withHostTest {}</code>. (06)</dd>
+    <dt><strong>Mutation check</strong></dt>
+    <dd>Deliberately breaking one rule in production code to see whether any test fails. If none does, no test protects that rule. (06)</dd>
+  </dl>
 </main>
 </body>
 </html>

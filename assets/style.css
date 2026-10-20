@@ -348,3 +348,24 @@ pre.brief-text { white-space: pre-wrap; font-size: 0.78em; padding-top: 2.2rem; 
 .shots figure { margin: 0; }
 .shots img { width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 10px; display: block; }
 .shots figcaption { font-family: "Courier New", monospace; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-soft); margin-top: 0.3rem; }
+
+/* ---- Click-to-classify drill (assets/sorter.js, e.g. Lesson 06 "which layer?") ---- */
+.sorter { border: 1px solid var(--rule); border-radius: 6px; padding: 0.6rem 1.1rem 0.9rem; margin: 1.25rem 0; background: var(--card-strong); }
+.sort-item { padding: 0.55rem 0; border-bottom: 1px solid var(--rule); }
+.sort-item:last-of-type { border-bottom: none; }
+.sort-label { display: block; margin-bottom: 0.35rem; font-size: 0.92rem; }
+.sort-choices { display: flex; flex-wrap: wrap; gap: 0.35rem; }
+.sort-choices button { font-family: "SF Mono", "Menlo", "Consolas", monospace; font-size: 0.75rem; padding: 0.25rem 0.6rem; border: 1px solid var(--rule); border-radius: 4px; background: var(--paper); color: var(--ink); cursor: pointer; }
+.sort-choices button:hover { border-color: var(--accent); }
+.sort-choices button.picked-right { border-color: var(--ok); background: var(--ok); color: var(--paper); }
+.sort-choices button.picked-wrong { border-color: var(--err); color: var(--err); text-decoration: line-through; }
+.sort-item .why { display: none; margin: 0.4rem 0 0; font-size: 0.86rem; color: var(--ink-soft); }
+.sort-item.answered .why { display: block; }
+.sort-score { display: none; margin: 0.6rem 0 0; font-size: 0.9rem; font-weight: 600; }
+.sort-score.show { display: block; }
+@media print { .sort-choices { display: none; } .sort-item .why { display: block; } }
+
+/* ---- Collapsed answer under an exercise ("what we saw"), opened after predicting ---- */
+details.callout > summary { cursor: pointer; font-size: 0.9rem; color: var(--ink-soft); }
+details.callout[open] > summary { margin-bottom: 0.6rem; }
+details.callout ul { margin: 0 0 0.75rem; font-size: 0.92rem; }

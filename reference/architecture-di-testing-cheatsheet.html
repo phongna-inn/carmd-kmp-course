@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture, DI and Testing Cheatsheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · from Lesson 06</p>
+  <h1>Layers, Ports, DI and Tests</h1>
+  <p class="source">Compressed from <a href="../lessons/06-clean-architecture-di-testing.html">Lesson 06</a>. Built and checked with Kotlin 2.4.20, Koin 4.2.2, kotlinx-coroutines(-test) 1.11.0, Turbine 1.2.1, AGP 9.4.1, Xcode 26.2.</p>
+
+  <h2>The rules</h2>
+  <ol>
+    <li><strong>Dependencies point toward the domain.</strong> <code>domain</code> imports no other layer. <code>presentation</code> imports <code>domain</code>. <code>data</code> implements <code>domain</code>'s ports. Only <code>di</code> knows every layer.</li>
+    <li><strong>A port is an interface in <code>commonMain</code>, written in the app's terms</strong> (<code>Flow&lt;Device&gt;</code>, never <code>ScanResult</code>). Adapters implement it: in <code>commonMain</code>, in <code>androidMain</code>, in Swift, or in <code>commonTest</code> (fakes). Use an interface, not <code>expect</code>/<code>actual</code>, whenever you need more than one implementation or a Swift one.</li>
+    <li><strong>Constructor injection everywhere.</strong> Classes receive dependencies and never build them. Only the composition root (<code>di/</code>) calls the constructors or names an adapter.</li>
+    <li><strong>A use case is one app rule</strong>: <code>VerbNounUseCase</code>, <code>operator fun invoke</code>, no mutable state kept between calls.</li>
+    <li><strong>Lookups (<code>KoinComponent</code>, <code>get()</code>) only at the edges</strong>: classes Koin doesn't create (the iOS ViewModel factory). Never in ViewModels, use cases or adapters.</li>
+    <li><strong>Tests use constructors and fakes, not the container.</strong> One extra test checks that the Koin graph builds.</li>
+  </ol>
+
+  <h2>Layers in m03</h2>
+<pre><code>commonMain/…/devicemonitor/
+  domain/        Device · BleScanner (port) · ScanException · ScanForDevicesUseCase
+  data/          SimulatedBleScanner (adapter) · SampleDevices
+  presentation/  DeviceListUiState · DeviceListViewModel
+  di/            AppModule.kt: internal val appModule, fun initKoin()
+iosMain/         ViewModelResolver.kt (Koin-backed factory for ViewModelOwner)
+commonTest/      fakes/FakeBleScanner · domain/… · presentation/… · di/AppModuleTest</code></pre>
+
+  <h2>Port, use case, adapter</h2>
+<pre><code>interface BleScanner { fun scan(): Flow&lt;Device&gt; }       // cold, never-ending: collect = start, cancel = stop
+
+class ScanForDevicesUseCase(private val scanner: BleScanner) {
+    operator fun invoke(filter: String): Flow&lt;Device&gt; = flow {
+        val wanted = filter.trim()
+        val seen = mutableSetOf&lt;String&gt;()                   // per collection, never a property
+        scanner.scan().collect { d -&gt;
+            if (d.name.contains(wanted, ignoreCase = true) &amp;&amp; seen.add(d.id)) emit(d)
+        }
+    }
+}
+
+class SimulatedBleScanner : BleScanner { override fun scan() = flow { while (true) for (d in SampleDevices.all) { delay(300); emit(d) } } }</code></pre>
+
+  <h2>Wiring: by hand vs Koin</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>By hand (<code>AppContainer</code>)</th><th>Koin (<code>appModule</code>)</th></tr>
+    <tr><td>Declare</td><td><code>private val bleScanner by lazy { SimulatedBleScanner() }</code><br><code>viewModelFactory { initializer { DeviceListViewModel(ScanForDevicesUseCase(bleScanner)) } }</code></td><td><code>single&lt;BleScanner&gt; { SimulatedBleScanner() }</code><br><code>factoryOf(::ScanForDevicesUseCase)</code><br><code>viewModelOf(::DeviceListViewModel)</code></td></tr>
+    <tr><td>Order</td><td>you write it</td><td>Koin works it out</td></tr>
+    <tr><td>Missing dependency</td><td><strong>compile error</strong></td><td><strong>run-time crash</strong> on first use: <code>NoDefinitionFoundException</code> (read the chain bottom-up)</td></tr>
+    <tr><td>Safety net</td><td>the compiler</td><td><code>koinApplication { modules(appModule) }.koin.get&lt;EveryViewModel&gt;()</code> in <code>commonTest</code></td></tr>
+  </table>
+  </div>
+  <p><code>single</code>: one instance for the container's life. <code>factory</code>: a new one per request. <code>viewModel</code>: new per request, then kept by the platform's <code>ViewModelStore</code>. Keep the module <code>internal</code>: a public <code>Module</code> exported ~1,000 lines of Koin types into Swift's header.</p>
+
+  <h2>Start Koin once, get ViewModels per track</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Track</th><th>Start (once per process)</th><th>Get the ViewModel</th><th>Dependency</th></tr>
+    <tr><td>Compose</td><td><code>class DeviceMonitorApplication : Application() { onCreate { initKoin() } }</code> + <code>android:name</code> in the manifest</td><td><code>viewModel: DeviceListViewModel = koinViewModel()</code></td><td><code>io.insert-koin:koin-compose-viewmodel:4.2.2</code></td></tr>
+    <tr><td>XML</td><td>same <code>Application</code> class</td><td><code>private val viewModel: DeviceListViewModel by viewModel()</code> (singular, Koin's)</td><td><code>io.insert-koin:koin-android:4.2.2</code></td></tr>
+    <tr><td>SwiftUI</td><td><code>App.init() { AppModuleKt.doInitKoin() }</code> (needs <code>import Shared</code>)</td><td><code>let viewModel: DeviceListViewModel = owner.viewModel()</code></td><td rowspan="2">shared: <code>koin-core</code>, <code>koin-core-viewmodel</code> (<code>implementation</code>)</td></tr>
+    <tr><td>UIKit</td><td><code>application(_:didFinishLaunchingWithOptions:)</code></td><td><code>private lazy var viewModel: DeviceListViewModel = owner.viewModel()</code></td></tr>
+  </table>
+  </div>
+  <p>Forget <code>android:name</code>: crash at launch, <code>KoinApplication has not been started</code>. Kotlin <code>initKoin()</code> is <code>doInitKoin()</code> in Swift: names that start with <code>init</code> get a <code>do</code> prefix.</p>
+<pre><code>// iosMain: the store still owns the ViewModel; Koin only builds it on first use.
+private object KoinViewModelFactory : ViewModelProvider.Factory, KoinComponent {
+    override fun &lt;T : ViewModel&gt; create(modelClass: KClass&lt;T&gt;, extras: CreationExtras): T = getKoin().get(modelClass)
+}</code></pre>
+
+  <h2>Test recipe (commonTest)</h2>
+<pre><code>// shared/build.gradle.kts
+kotlin { android { withHostTest {} } }                      // else Android tests silently never run
+commonTest.dependencies {
+    implementation(kotlin("test"))
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    implementation("app.cash.turbine:turbine:1.2.1")
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)                    // else w: needs opt-in
+class SomeViewModelTest {
+    @BeforeTest fun setUp() { Dispatchers.setMain(StandardTestDispatcher()) }   // in setUp, not a property
+    @AfterTest fun tearDown() { Dispatchers.resetMain() }
+
+    @Test fun something() = runTest {                       // shares Main's virtual clock
+        vm.uiState.test {                                   // Turbine
+            assertEquals(…, awaitItem())                    // 3 s wall-clock timeout per item
+            // unconsumed items at the end fail the test
+        }
+        testScheduler.runCurrent()                          // run what's ready, clock unchanged
+        testScheduler.currentTime                           // virtual ms elapsed
+    }
+}</code></pre>
+  <p><code>./gradlew :shared:allTests</code> runs <code>testAndroidHostTest</code> (JVM, JUnit 4) and <code>iosSimulatorArm64Test</code> (Kotlin/Native runner). Check that both tasks appear: a green build only means nothing failed.</p>
+  <p><strong>Fakes over mocks.</strong> A fake implements the port with test controls (<code>hear(…)</code>, <code>failure</code>, <code>scansStarted</code>). Use a <code>Channel(UNLIMITED)</code> so nothing sent before the collector subscribes is lost. A completing <code>flowOf(…)</code> fake suits a pure use-case test with <code>toList()</code>.</p>
+  <p><strong>Mutation check.</strong> Break one rule in the production code and run the tests. If they stay green, nothing protects that rule.</p>
+</main>
+</body>
+</html>
