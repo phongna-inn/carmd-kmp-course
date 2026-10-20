@@ -101,6 +101,31 @@
     <dt><strong>Direct integration</strong></dt>
     <dd>Wiring the framework into Xcode with a script build phase that runs <code>:shared:embedAndSignAppleFrameworkForXcode</code> on every build. (03)</dd>
   </dl>
+  <h2>Declarative UI</h2>
+  <dl>
+    <dt><strong>Imperative UI</strong> / <strong>declarative UI</strong></dt>
+    <dd>Imperative: handlers mutate widget objects one property at a time (XML Views, UIKit). Declarative: you describe the screen for a given state and the framework applies the changes (Compose, SwiftUI). (04)</dd>
+    <dt><strong>UI state</strong></dt>
+    <dd>The values a screen is drawn from, e.g. <code>isScanning</code> and <code>devices</code>. The screen is a function of it. (04)</dd>
+    <dt><strong>Single source of truth</strong></dt>
+    <dd>Each piece of state lives in exactly one place; everyone else reads it or asks it to change. (04)</dd>
+    <dt><strong>Derived state</strong></dt>
+    <dd>A value computed from state on every render (status text, enabled flags) instead of stored. (04)</dd>
+    <dt><strong>Recomposition</strong> / <strong>body re-evaluation</strong></dt>
+    <dd>The framework re-running UI code when state it read changes (Compose / SwiftUI). Frequent, skippable, order not guaranteed, so UI code must be side-effect free. (04)</dd>
+    <dt><strong>render()</strong></dt>
+    <dd>On imperative tracks, the one function that copies all state into all widgets; every handler ends with it. (04)</dd>
+    <dt><strong>Side effect</strong></dt>
+    <dd>Work that changes something outside the UI function (starting a scan, writing a file). Belongs in event callbacks or lifecycle-bound effects (<code>LaunchedEffect</code>, <code>.task</code>), never in the UI function. (04)</dd>
+    <dt><strong>State hoisting</strong> / <strong>unidirectional data flow</strong></dt>
+    <dd>Moving state up to a caller and passing down values plus event lambdas: state goes down, events go up. A SwiftUI <code>Binding</code> is the two-way form. (04)</dd>
+    <dt><strong>Stable key</strong> (item identity)</dt>
+    <dd>A unique, unchanging id per list item (the device id), used by lists to match rows across updates. Never an index. (04)</dd>
+    <dt><strong>Back stack</strong> / <strong>route</strong></dt>
+    <dd>The stack of screens; Back pops one. A route is the small, saveable value pushed to open a screen (<code>DeviceDetail(id)</code>), carrying ids, not objects. (04)</dd>
+    <dt><strong>Main thread</strong> (UI thread)</dt>
+    <dd>The one thread allowed to touch UI. Don't block it; don't update UI from elsewhere. Swift: <code>@MainActor</code>. (04)</dd>
+  </dl>
 </main>
 </body>
 </html>

@@ -317,3 +317,29 @@ pre.brief-text { white-space: pre-wrap; font-size: 0.78em; padding-top: 2.2rem; 
   [data-track], [data-both-only] { display: block !important; }
   .switchers { display: none; }
 }
+
+/* ---- Mini phone mock (interactive UI toys, e.g. Lesson 04) ---- */
+.toy { border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; margin: 1.25rem 0; background: var(--card); }
+.toy-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.9rem; }
+.toy-controls button { font-family: inherit; font-size: 0.82rem; padding: 0.35rem 0.75rem; border: 1px solid var(--accent); background: var(--card-strong); color: var(--accent); border-radius: 4px; cursor: pointer; }
+.toy-controls button:hover { background: var(--accent-soft); }
+.toy-phones { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: 1rem; }
+.toy-phones figure { margin: 0; }
+.toy-phones figcaption { font-family: "Courier New", monospace; font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 0.35rem; }
+.phone { border: 2px solid var(--ink-soft); border-radius: 18px; padding: 0.9rem 0.8rem 1.1rem; background: var(--card-strong); min-height: 13.5rem; font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 0.82rem; }
+.phone .p-title { font-weight: 600; font-size: 0.95rem; margin-bottom: 0.5rem; }
+.phone .p-btn { display: block; width: 100%; padding: 0.3rem; border-radius: 999px; border: none; background: var(--accent); color: var(--paper); font-size: 0.8rem; text-align: center; }
+.phone .p-btn.off { background: var(--rule); color: var(--ink-soft); }
+.phone .p-status { margin: 0.55rem 0 0.4rem; min-height: 1.2em; display: flex; align-items: center; gap: 0.4rem; }
+.phone .p-status.err { color: var(--err); }
+.phone .p-spin { width: 0.8rem; height: 0.8rem; border: 2px solid var(--rule); border-top-color: var(--accent); border-radius: 50%; animation: p-spin 0.8s linear infinite; }
+.phone .p-row { border-bottom: 1px solid var(--rule); padding: 0.25rem 0; }
+@keyframes p-spin { to { transform: rotate(360deg); } }
+.toy pre.toy-state { margin: 0.9rem 0 0; font-size: 0.75em; }
+@media (prefers-reduced-motion: reduce) { .phone .p-spin { animation: none; } }
+
+/* ---- Screenshot strip (lesson "what actually happens" sections) ---- */
+.shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.75rem; margin: 1rem 0 1.5rem; }
+.shots figure { margin: 0; }
+.shots img { width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 10px; display: block; }
+.shots figcaption { font-family: "Courier New", monospace; font-size: 0.68rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-soft); margin-top: 0.3rem; }

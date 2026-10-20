@@ -82,6 +82,15 @@
 - [Android: Display content edge-to-edge](https://developer.android.com/develop/ui/views/layout/edge-to-edge)
   targetSdk 35+ draws behind system bars by default; insets handling for Compose and Views. Use for: Lesson 03, Lesson 04.
 
+- [Thinking in Compose](https://developer.android.com/develop/ui/compose/mental-model), [State and Jetpack Compose](https://developer.android.com/develop/ui/compose/state), [Side-effects in Compose](https://developer.android.com/develop/ui/compose/side-effects), [Lists and grids](https://developer.android.com/develop/ui/compose/lists), [Configure text fields](https://developer.android.com/develop/ui/compose/text/user-input)
+  Official Compose guides: the declarative model and recomposition (primary source for Lesson 04), remember/rememberSaveable, hoisting and unidirectional data flow, where side effects go, item keys (Bundle-able), TextFieldState recommendation. Use for: Lesson 04, Lesson 05.
+- [Android: Navigation](https://developer.android.com/guide/navigation) (setup, "use Navigation Compose" guidance), [Type safety in Navigation](https://developer.android.com/guide/navigation/design/type-safety), [Navigation 3](https://developer.android.com/guide/navigation/navigation-3)
+  `@Serializable` routes, `composable<T>`, `toRoute()`; Fragment navigation for Views apps; Nav3 (back stack as a list you own) as the newer alternative. Use for: Lesson 04.
+- [Android: Processes and threads](https://developer.android.com/guide/components/processes-and-threads)
+  The two single-thread rules (don't block the UI thread; don't touch the UI toolkit off it). Use for: Lesson 04 B2, Lesson 08 (BLE callback threads).
+- [SwiftUI: State](https://developer.apple.com/documentation/swiftui/state), [List](https://developer.apple.com/documentation/swiftui/list), [NavigationStack](https://developer.apple.com/documentation/swiftui/navigationstack); [UIKit: UITableViewDiffableDataSource](https://developer.apple.com/documentation/uikit/uitableviewdiffabledatasource)
+  Official Apple references: @State as single source of truth (and "safe to mutate from any thread"), Identifiable lists, value-based navigation and path binding, snapshot-diffed tables. Use for: Lesson 04 (State is the iOS primary source), Lesson 05.
+
 ## Wisdom (Communities)
 
 - [r/androiddev](https://reddit.com/r/androiddev)
