@@ -72,6 +72,7 @@ print(a.count)     // 0: a was never touched</code></pre>
     </svg>
     <figcaption>Assign a struct and you get a copy. Assign a class instance and you get another name for the same object.</figcaption>
   </figure>
+  <p>Notice the <code>let b</code> on the class side. For a class, <code>let</code> freezes the <em>reference</em> (<code>b</code> always names the same object), not the object, so <code>b.count += 1</code> still compiles. For a struct, <code>let</code> freezes the whole value, which is why the struct side needs <code>var b</code>.</p>
   <p>The rule of thumb the course follows: <strong>data is a <code>struct</code></strong> (a scanned device, a reading) and <strong>long-lived things with identity are a <code>class</code></strong> (a scanner, a BLE adapter). Everyone holding a scanner must see the <em>same</em> scanner. <code>let</code> is Swift's <code>const</code>. On a struct, <code>let</code> also freezes every field.</p>
 
   <h2>2. Optionals</h2>
@@ -103,7 +104,7 @@ guard let name = device.name else { return }    // ...or exit early; name is usa
   <p>This lesson's program is the Lesson 01 program in Swift: devices trickle in, weak ones are filtered out, and a property tracks the scan's state while top-level code prints each state it sees. Here's how the values travel:</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 640 215" role="img" aria-labelledby="l02-flow-title">
-      <title id="l02-flow-title">The program's pipeline. fakeScan's task yields devices into an AsyncStream. Scanner.start loops over the stream with for await and a where filter, and each pass assigns state. didSet runs on every assignment and calls onChange, which prints. A dashed arrow shows that the loop is what starts the stream being consumed.</title>
+      <title id="l02-flow-title">The program's pipeline. fakeScan's task yields devices into an AsyncStream. Scanner.start loops over the stream with for await and a where filter, and each pass assigns state. didSet runs on every assignment and calls onChange, which prints. Unlike a Kotlin cold Flow, the stream starts producing as soon as fakeScan() is called; values wait in its buffer until the loop reads them.</title>
       <defs><marker id="l02-flow-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <path class="edge" d="M12,30 L12,22 L368,22 L368,30"/>
       <text class="small muted" x="190" y="15" text-anchor="middle">AsyncStream: values are pushed in</text>
@@ -128,8 +129,8 @@ guard let name = device.name else { return }    // ...or exit early; name is usa
       <path class="edge" d="M245,65 L256,65" marker-end="url(#l02-flow-arrow)"/>
       <path class="edge" d="M368,65 L386,65" marker-end="url(#l02-flow-arrow)"/>
       <path class="edge" d="M498,65 L516,65" marker-end="url(#l02-flow-arrow)"/>
-      <path class="edge dashed" d="M190,90 C190,140 67,140 67,92" marker-end="url(#l02-flow-arrow)"/>
-      <text class="small muted" x="128" y="158" text-anchor="middle">asks for the next value</text>
+      <text class="small muted" x="190" y="112" text-anchor="middle">starts producing when fakeScan() is called;</text>
+      <text class="small muted" x="190" y="127" text-anchor="middle">values wait in a buffer until for await reads them</text>
       <text class="small muted" x="508" y="115" text-anchor="middle">runs synchronously, so it sees every state</text>
       <text class="small muted" x="320" y="200" text-anchor="middle">Compare Lesson 01: there a StateFlow collector read the latest value later, in its own coroutine.</text>
     </svg>
@@ -190,6 +191,7 @@ enum ScanState {
     <li>The closure receives a <code>continuation</code>, a handle for pushing values in from outside.</li>
     <li><code>Task { }</code> starts a piece of async work, much like <code>launch</code>. Unlike <code>launch</code>, it isn't tied to a scope, so nothing cancels it automatically. Keep that difference in mind.</li>
     <li><code>Task.sleep</code> can throw if the task is cancelled, and <code>try?</code> ignores that here. <code>yield</code> is Kotlin's <code>emit</code>, and <code>finish()</code> ends the stream. In Lesson 13, CoreBluetooth's delegate callback calls <code>yield</code> instead.</li>
+    <li><strong>Not cold, unlike Kotlin's <code>flow { }</code>.</strong> The closure runs as soon as <code>fakeScan()</code> is called, so the <code>Task</code> starts producing right away, whether or not anyone is listening. Values wait in the stream's buffer (unbounded by default) until a <code>for await</code> reads them. In Lesson 01, nothing ran until <code>collect</code>.</li>
   </ol>
 
   <h3>The scanner: a class that guards its own state</h3>
@@ -287,16 +289,16 @@ Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm</code></pre>
   </figure>
 
   <h2>Where this program goes in the app</h2>
-  <p>Swift is the iOS half of the app, but not a copy of the shared code. The model and the scan state live once, in Kotlin; Swift only needs to read them (Lessons 08–09 show how). What Swift owns is the part that touches the iPhone: the screen, and the code that talks to CoreBluetooth. Colours are the course's <strong>colour code</strong>, the same as in Lesson 01.</p>
+  <p>Swift is the iOS half of the app, but not a copy of the shared code. The device model lives once, in the Kotlin app core, and the scan state lives once, in a shared Kotlin ViewModel; Swift only needs to read them (Lessons 08–09 show how). What Swift owns is the part that touches the iPhone: the screen, and the code that talks to CoreBluetooth. Colours are the course's <strong>colour code</strong>, the same as in Lesson 01.</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 640 245" role="img" aria-labelledby="l02-map-title">
-      <title id="l02-map-title">Where each piece of main.swift goes. Device and ScanState are not rewritten in Swift: the app core has one Kotlin version that Swift reads. fakeScan becomes an outbound adapter written in Swift, wrapping CoreBluetooth and conforming to the Kotlin outbound port. Scanner, with its didSet callback, is replaced by the shared ViewModel, which Swift observes. render and the top-level code become the SwiftUI screen.</title>
+      <title id="l02-map-title">Where each piece of main.swift goes. Device is not rewritten in Swift: the app core has one Kotlin model that Swift reads. fakeScan becomes an outbound adapter written in Swift, wrapping CoreBluetooth and conforming to the Kotlin outbound port. Scanner and ScanState, with the didSet callback, are replaced by a shared Kotlin ViewModel and its UI state, an inbound adapter, which Swift observes. render and the top-level code become the SwiftUI screen.</title>
       <defs><marker id="l02-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <text class="small muted" x="120" y="14" text-anchor="middle">main.swift, this lesson</text>
       <text class="small muted" x="460" y="14" text-anchor="middle">The Native Device Monitor</text>
-      <rect class="box" x="20" y="24" width="200" height="44" rx="6"/><text class="mono" x="120" y="51" text-anchor="middle">Device, ScanState</text>
+      <rect class="box" x="20" y="24" width="200" height="44" rx="6"/><text class="mono" x="120" y="51" text-anchor="middle">Device</text>
       <rect class="box" x="20" y="80" width="200" height="44" rx="6"/><text class="mono" x="120" y="107" text-anchor="middle">fakeScan()</text>
-      <rect class="box" x="20" y="136" width="200" height="44" rx="6"/><text class="mono" x="120" y="163" text-anchor="middle">Scanner</text>
+      <rect class="box" x="20" y="136" width="200" height="44" rx="6"/><text class="mono" x="120" y="163" text-anchor="middle">Scanner, ScanState</text>
       <rect class="box" x="20" y="192" width="200" height="44" rx="6"/><text class="mono" x="120" y="219" text-anchor="middle">render(), top-level code</text>
       <path class="edge" d="M220,46 L298,46" marker-end="url(#l02-map-arrow)"/>
       <path class="edge" d="M220,102 L298,102" marker-end="url(#l02-map-arrow)"/>
@@ -315,7 +317,7 @@ Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm</code></pre>
       <g data-part="inbound">
         <rect class="box" x="300" y="136" width="320" height="44" rx="6"/>
         <text class="title" x="314" y="154">Inbound adapter (Kotlin)</text>
-        <text class="small muted" x="314" y="171">the shared ViewModel replaces the callback</text>
+        <text class="small muted" x="314" y="171">a shared ViewModel and its UI state</text>
       </g>
       <g data-part="ios">
         <rect class="box" x="300" y="192" width="320" height="44" rx="6"/>

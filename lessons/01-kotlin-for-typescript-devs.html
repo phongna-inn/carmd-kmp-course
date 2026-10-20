@@ -76,7 +76,7 @@ a.copy(rssi = -50)        // a new Device; `a` is untouched</code></pre>
     data class Done(val devices: List&lt;Device&gt;) : ScanState
 }</code></pre></figure>
   </div>
-  <p>Because the set is closed, a <code>when</code> expression over it must handle every case, and the compiler checks that for you. TypeScript needs the <code>never</code> trick to get the same guarantee. You'll lean on this constantly: every screen in the app renders a sealed UI state.</p>
+  <p>Because the set is closed, a <code>when</code> expression over it must handle every case, and the compiler checks that for you. TypeScript needs the <code>never</code> trick to get the same guarantee. You'll lean on this constantly: the app's device list keeps a sealed <code>ScanState</code> very like this one inside its UI state, and every screen that shows a scan switches over it.</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 640 200" role="img" aria-labelledby="l01-sealed-title">
       <title id="l01-sealed-title">A sealed interface is a closed set of three subtypes; a when expression has exactly one arm per subtype, so it needs no else.</title>
