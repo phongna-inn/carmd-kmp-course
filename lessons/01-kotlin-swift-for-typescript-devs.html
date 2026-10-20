@@ -19,6 +19,11 @@
     <span class="tag">Prereq: TypeScript</span>
   </div>
 
+  <div class="callout">
+    <span class="label">This page is being split</span>
+    Part A (Kotlin) is now <a href="01-kotlin-for-typescript-devs.html">Lesson 01: Kotlin for TypeScript developers</a>. If you've done that lesson, go straight to <a href="#part-b">Part B (Swift)</a>, which becomes Lesson 02.
+  </div>
+
   <div class="mission-tie">
     <strong>Why this matters:</strong> our app's shared core is Kotlin, and its iOS edges are Swift. By the end of this lesson you'll have written the same small program twice: a fake BLE scan that streams devices into a piece of observable state. That shape is exactly what the real app does from Lesson 05 on, with a real radio behind it.
   </div>
@@ -237,7 +242,7 @@ Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm</code></pre>
   </div>
 
   <!-- ============================== PART B ============================== -->
-  <p class="part">Part B — Swift (~2 h)</p>
+  <p class="part" id="part-b">Part B — Swift (~2 h)</p>
 
   <h2>B1. Structs are values; classes are references</h2>
   <p>This is the one idea with no TypeScript equivalent. In TS, every object is a reference. In Swift, a <code>struct</code> is a <strong>value type</strong>: assigning it or passing it <em>copies</em> it. A <code>class</code> is a reference type, like a TS object (<a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/classesandstructures/">Swift book: Structures and Classes</a>).</p>

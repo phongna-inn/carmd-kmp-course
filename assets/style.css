@@ -13,6 +13,16 @@
   --card: #fbfaf7;
   --card-strong: #ffffff;
   --max-width: 42em;
+
+  /* Course colour code: which part of the app a diagram box or an excerpt belongs to.
+     Used by every SVG diagram and every excerpt path label. Each has a strong colour
+     (text, strokes) and a soft one (fills, label backgrounds). */
+  --c-core: #6d3fc0;      --c-core-soft: #f1ebfb;
+  --c-inbound: #1f5fbf;   --c-inbound-soft: #e8f0fb;
+  --c-outbound: #b3306c;  --c-outbound-soft: #fbe9f1;
+  --c-android: #2f7d32;   --c-android-soft: #e9f4e9;
+  --c-ios: #9a5b00;       --c-ios-soft: #fbf0df;
+  --hl: #fff0b3;          /* highlighted lines in excerpts */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +38,13 @@
     --err: #ef8a83;
     --card: #211f1b;
     --card-strong: #26241f;
+
+    --c-core: #b79cf2;      --c-core-soft: #2b2340;
+    --c-inbound: #82adf0;   --c-inbound-soft: #1c2a40;
+    --c-outbound: #f08cbc;  --c-outbound-soft: #3a1e2c;
+    --c-android: #82cc85;   --c-android-soft: #1e3020;
+    --c-ios: #f2b45c;       --c-ios-soft: #3a2c16;
+    --hl: #4a3f14;
   }
 }
 
@@ -369,3 +386,70 @@ pre.brief-text { white-space: pre-wrap; font-size: 0.78em; padding-top: 2.2rem; 
 details.callout > summary { cursor: pointer; font-size: 0.9rem; color: var(--ink-soft); }
 details.callout[open] > summary { margin-bottom: 0.6rem; }
 details.callout ul { margin: 0 0 0.75rem; font-size: 0.92rem; }
+
+/* ======================================================================
+   Lesson format: excerpts, full files, SVG diagrams, colour code.
+   Markup conventions: tools/lesson-format/README.md
+   ====================================================================== */
+
+/* A part of the app sets --part / --part-soft from the colour code; anything
+   without data-part (a scratch program, a build file) stays neutral. */
+[data-part="core"]     { --part: var(--c-core);     --part-soft: var(--c-core-soft); }
+[data-part="inbound"]  { --part: var(--c-inbound);  --part-soft: var(--c-inbound-soft); }
+[data-part="outbound"] { --part: var(--c-outbound); --part-soft: var(--c-outbound-soft); }
+[data-part="android"]  { --part: var(--c-android);  --part-soft: var(--c-android-soft); }
+[data-part="ios"]      { --part: var(--c-ios);      --part-soft: var(--c-ios-soft); }
+
+/* ---- Excerpt: a few lines of one file, path label on top ---- */
+figure.excerpt { margin: 1rem 0 1.25rem; min-width: 0; }
+figure.excerpt > figcaption.path,
+details.full-file > summary {
+  font-family: "SF Mono", "Menlo", "Consolas", monospace;
+  font-size: 0.72rem;
+  color: var(--part, var(--ink-soft));
+  background: var(--part-soft, var(--card));
+  border: 1px solid var(--rule);
+  border-left: 4px solid var(--part, var(--rule));
+  padding: 0.3rem 0.7rem;
+  overflow-wrap: anywhere;
+}
+figure.excerpt > figcaption.path { border-bottom: none; border-radius: 6px 6px 0 0; }
+/* The lines the prose discusses. Write <mark>one line</mark> followed by the newline. */
+pre mark { display: inline-block; min-width: 100%; background: var(--hl); color: inherit; }
+/* Lines left out. Write <span class="elide">⋯ what was left out</span> on its own line. */
+pre .elide {
+  display: inline-block; min-width: 100%;
+  color: var(--ink-soft); font-style: italic;
+  border-top: 1px dashed var(--rule); border-bottom: 1px dashed var(--rule);
+}
+
+/* ---- Full files: every file the lesson touches, collapsed ---- */
+details.full-file { margin: 0.6rem 0; }
+details.full-file > summary { cursor: pointer; border-radius: 6px; list-style-position: inside; }
+details.full-file[open] > summary { border-radius: 6px 6px 0 0; border-bottom: none; }
+figure.excerpt > pre,
+details.full-file > pre { margin: 0; border-radius: 0 0 6px 6px; border-left: 4px solid var(--part, var(--rule)); }
+@media print { details.full-file > pre { display: block; } }
+
+/* ---- Colour-code legend ---- */
+ul.legend { list-style: none; display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; padding: 0; margin: 0.4rem 0 0; font-size: 0.78rem; color: var(--ink-soft); }
+ul.legend li::before { content: ""; display: inline-block; width: 0.8em; height: 0.8em; margin-right: 0.35em; vertical-align: -0.05em; border-radius: 2px; background: var(--part-soft); border: 2px solid var(--part); }
+
+/* ---- SVG diagrams: colours come from the tokens, so one copy works in light and dark ---- */
+figure.diagram { margin: 1.25rem 0 1.5rem; }
+figure.diagram > svg { display: block; width: 100%; height: auto; max-width: 40rem; margin: 0 auto; }
+figure.diagram > figcaption { font-size: 0.85rem; color: var(--ink-soft); margin-top: 0.5rem; }
+.dg { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px; }
+.dg text { fill: var(--ink); }
+.dg .mono { font-family: "SF Mono", "Menlo", "Consolas", monospace; font-size: 12px; }
+.dg .small { font-size: 11px; }
+.dg .muted { fill: var(--ink-soft); }
+.dg .box { fill: var(--card-strong); stroke: var(--rule); stroke-width: 1.5; }
+.dg [data-part] .box, .dg .box[data-part] { fill: var(--part-soft); stroke: var(--part); }
+.dg [data-part] text.title, .dg text.title[data-part] { fill: var(--part); font-weight: 600; }
+.dg .edge { fill: none; stroke: var(--ink-soft); stroke-width: 1.5; }
+.dg .edge.dashed { stroke-dasharray: 5 4; }
+.dg .arrowhead { fill: var(--ink-soft); }
+.dg .dot { fill: var(--accent); }
+.dg .dot.dropped { fill: none; stroke: var(--ink-soft); stroke-width: 1.5; stroke-dasharray: 2 2; }
+.dg .axis { stroke: var(--rule); stroke-width: 1.5; }
