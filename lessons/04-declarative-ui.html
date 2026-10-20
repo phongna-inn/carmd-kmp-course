@@ -18,7 +18,7 @@
     <span class="tag">~4.5 h · +2 h per extra UI track</span>
     <span class="tag">Part A: UI as a function of state · Part B: lists, threads, a second screen</span>
     <span class="tag">Milestone: m01 Device Monitor shell</span>
-    <span class="tag">Prereq: <a href="03-anatomy-of-a-kmp-project.html">03</a></span>
+    <span class="tag">Prereq: <a href="05-anatomy-of-a-kmp-project.html">KMP anatomy</a></span>
   </div>
   <div class="switchers">
     <div class="switcher" data-platform="android"></div>
@@ -167,7 +167,7 @@ object SampleDevices {
 }</code></pre>
   <ol class="walk">
     <li><code>Device</code> is a <strong>data class</strong> (Lesson 01), so two devices with the same fields are equal. Its <code>id</code> is the device's <strong>stable identity</strong>; you'll hand it to every list in B1. The fake ids look like Android MAC addresses. On iOS, real BLE ids are per-app UUIDs (Lesson 08).</li>
-    <li><code>object SampleDevices</code> is a singleton. Swift sees it as <code>SampleDevices.shared</code> (Lesson 03's name table), so Swift calls <code>SampleDevices.shared.matching(filter: query)</code> and <code>SampleDevices.shared.find(id: deviceId)</code>. Kotlin parameter names become Swift argument labels.</li>
+    <li><code>object SampleDevices</code> is a singleton. Swift sees it as <code>SampleDevices.shared</code> (the KMP anatomy lesson's name table), so Swift calls <code>SampleDevices.shared.matching(filter: query)</code> and <code>SampleDevices.shared.find(id: deviceId)</code>. Kotlin parameter names become Swift argument labels.</li>
     <li><code>List&lt;Device&gt;</code> arrives in Swift as <code>[Device]</code>, and <code>rssi: Int</code> as <code>Int32</code>.</li>
     <li>The fake scan has no delay. Waiting is the UI's job in m01. In Lesson 05 the delay moves into shared code as a <code>Flow</code>, and Lesson 08 replaces the fake with a real scanner.</li>
   </ol>
@@ -686,7 +686,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
   <ol class="walk">
     <li><strong>State is two properties</strong>, <code>devices</code> and <code>isScanning</code>. The widgets are a copy, and only <code>render()</code> writes to them: the declarative discipline by hand. (The filter text lives in the <code>UITextField</code> itself, and <code>scan()</code> reads it once.)</li>
     <li><strong>Layout: one vertical <code>UIStackView</code></strong> holds the field, button, status row and table. <code>UIStackView</code> arranges its <em>arranged subviews</em> for you, so only the stack itself needs constraints. It's pinned to the layout margins (which include the safe area) on three sides and to the bottom of the view, and the table takes the leftover height.</li>
-    <li><strong><code>translatesAutoresizingMaskIntoConstraints = false</code></strong> on the stack. Without it, UIKit adds constraints of its own that conflict with yours (Lesson 03's label did the same).</li>
+    <li><strong><code>translatesAutoresizingMaskIntoConstraints = false</code></strong> on the stack. Without it, UIKit adds constraints of its own that conflict with yours (the KMP anatomy lesson's label did the same).</li>
     <li><strong><code>UIButton(configuration: .filled())</code></strong> is the modern button API. <code>UIAction { [weak self] _ in self?.scan() }</code> avoids a retain cycle: the view controller owns the button, so the button's closure must not own the view controller.</li>
     <li><strong><code>scan()</code></strong> changes state and renders synchronously, then starts a <code>Task</code>. <code>UIViewController</code> is <code>@MainActor</code>, so the task's code runs on the main thread after <code>await</code> too (B2).</li>
     <li><strong><code>render()</code></strong> sets <em>every</em> widget from state, every time. The table's contents are set the same way, from a snapshot (B1).</li>
@@ -1048,11 +1048,11 @@ class MainActivity : ComponentActivity() {
     <li><strong>Routes are <code>@Serializable</code> types</strong>: an object for a screen without arguments, a data class for one with arguments. That needs the Kotlin serialization plugin (same version as Kotlin) and <code>kotlinx-serialization-core</code> (<a href="https://developer.android.com/guide/navigation#set-up">Navigation setup</a>, <a href="https://developer.android.com/guide/navigation/design/type-safety">type safety</a>). We declare the serialization library ourselves because our code uses <code>@Serializable</code> directly. (<code>kotlinx.coroutines</code>, used for <code>delay</code> and <code>launch</code>, arrives transitively with the Compose runtime. Lesson 05 declares it explicitly, when shared code starts using it.)</li>
     <li><strong><code>NavHost(navController, startDestination = DeviceList)</code></strong> is the back stack's container. <code>composable&lt;DeviceDetail&gt; { entry -&gt; … }</code> maps a route type to a screen, and <code>entry.toRoute()</code> gives back the typed route with its <code>id</code>.</li>
     <li><strong><code>navController.navigate(DeviceDetail(device.id))</code></strong> pushes. The list screen doesn't know about the NavController: it only reports <code>onDeviceClick</code> (events up). The app composable decides what a click means.</li>
-    <li><strong><code>Scaffold</code></strong> supplies <code>innerPadding</code> for the system bars, and <code>Modifier.padding(innerPadding)</code> keeps both screens out from under them (Lesson 03's edge-to-edge).</li>
+    <li><strong><code>Scaffold</code></strong> supplies <code>innerPadding</code> for the system bars, and <code>Modifier.padding(innerPadding)</code> keeps both screens out from under them (the KMP anatomy lesson's edge-to-edge).</li>
     <li><strong><code>dropUnlessResumed { onBack() }</code></strong> ignores the tap unless the screen is fully resumed. Without it, a fast double tap on Back popped twice and left a <strong>blank screen</strong> (B4). System Back (gesture or button) is handled by <code>NavHost</code> itself.</li>
     <li><strong><code>Image(painterResource(R.drawable.ic_bluetooth))</code></strong> draws a vector drawable from <code>res/drawable/</code> (file below, shared by both Android tracks), tinted with the theme colour. <code>contentDescription = null</code> marks it decorative for screen readers.</li>
     <li><strong>The detail screen has no state of its own</strong>: it derives everything from <code>deviceId</code>. If the id is unknown, it shows an error instead of crashing.</li>
-    <li><code>MaterialTheme { … }</code> in <code>MainActivity</code> gives every Material component the default colours and type. Lesson 03's greeting didn't need it. The <code>Button</code> and <code>ListItem</code> do.</li>
+    <li><code>MaterialTheme { … }</code> in <code>MainActivity</code> gives every Material component the default colours and type. The KMP anatomy lesson's greeting didn't need it. The <code>Button</code> and <code>ListItem</code> do.</li>
   </ol>
   <div class="callout">
     <span class="label">Navigation Compose vs Navigation 3</span>
@@ -1446,7 +1446,7 @@ final class DeviceDetailViewController: UIViewController {
 
   <h3>Mixed review (interleaved)</h3>
   <div class="quiz mcq">
-    <p class="q">Swift calls <code>SampleDevices.shared.find(id:)</code>. What is <code>SampleDevices</code> in Kotlin? (Lesson 03)</p>
+    <p class="q">Swift calls <code>SampleDevices.shared.find(id:)</code>. What is <code>SampleDevices</code> in Kotlin? (KMP anatomy lesson)</p>
     <div class="opts">
       <button class="opt">a class with a companion</button>
       <button class="opt" data-correct>an object declaration</button>
@@ -1481,7 +1481,7 @@ final class DeviceDetailViewController: UIViewController {
   <div class="callout brief copy-wrap">
 <pre class="brief-text">Lesson 04 (Declarative UI): build milestone m01, the Device Monitor shell, on top of m00.
 My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
-Starting point: my m00 project in demo/ (Lesson 03). Use exactly the file contents shown in the
+Starting point: my m00 project in demo/ (KMP anatomy lesson). Use exactly the file contents shown in the
 lesson for my tracks, including package lines and imports. All paths relative to demo/.
 
 1. Shared (all tracks), lesson A3. Add, and leave Greeting.kt / Platform*.kt as they are:
@@ -1552,7 +1552,7 @@ show me where SampleDevices appears in Shared.h. Do NOT do the unaided exercises
   </ul>
 
   <nav class="progress-links">
-    <a href="03-anatomy-of-a-kmp-project.html">← 03 Anatomy of a KMP project</a>
+    <a href="05-anatomy-of-a-kmp-project.html">← Anatomy of a KMP project</a>
     <a href="05-shared-viewmodels.html">05 Shared ViewModels and Kotlin↔Swift →</a>
   </nav>
 </main>

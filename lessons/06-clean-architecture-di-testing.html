@@ -102,7 +102,7 @@
     <tr><td><code>KableBleScanner</code></td><td><code>commonMain</code>, library</td><td>both apps, as an alternative</td><td>Extension E3</td></tr>
   </table>
   </div>
-  <p><strong>Why not <code>expect</code>/<code>actual</code>?</strong> Lesson 03 used it for <code>platformName()</code>. It gives exactly one implementation per platform, chosen at compile time, and the iOS one has to be Kotlin. JetBrains' own guidance points to interfaces: "With interfaces, you don't limit your design to one implementation per target platform. Also, it's much easier to substitute a fake implementation in tests". And for dependencies: "In the common code, a component can express its dependencies using regular Kotlin interfaces. The DI framework can then be configured to inject a platform-specific implementation" (<a href="https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html">Expected and actual declarations</a>). We need three implementations at once (simulated, fake, real), and one of them in Swift. That calls for an interface.</p>
+  <p><strong>Why not <code>expect</code>/<code>actual</code>?</strong> The KMP anatomy lesson used it for <code>platformName()</code>. It gives exactly one implementation per platform, chosen at compile time, and the iOS one has to be Kotlin. JetBrains' own guidance points to interfaces: "With interfaces, you don't limit your design to one implementation per target platform. Also, it's much easier to substitute a fake implementation in tests". And for dependencies: "In the common code, a component can express its dependencies using regular Kotlin interfaces. The DI framework can then be configured to inject a platform-specific implementation" (<a href="https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html">Expected and actual declarations</a>). We need three implementations at once (simulated, fake, real), and one of them in Swift. That calls for an interface.</p>
   <p><strong>Use cases.</strong> Android defines the domain layer as the place for "complex business logic, or simple business logic that is reused by multiple ViewModels". Its naming convention is "<em>verb in present tense</em> + <em>noun/what (optional)</em> + <em>UseCase</em>", and it suggests making use cases callable through "the <code>invoke()</code> function with the <code>operator</code> modifier" (<a href="https://developer.android.com/topic/architecture/domain-layer">Domain layer</a>). Our first one is <code>ScanForDevicesUseCase</code>. It holds a rule that m02 didn't need: a real radio hears the same device over and over, once per advertisement packet, so someone has to report each device only once. That rule doesn't change between screens or platforms, so it belongs in the domain, and it's worth testing.</p>
 
   <h2>A3. The shared code, by layer</h2>
@@ -426,7 +426,7 @@ import com.example.devicemonitor.data.SampleDevices   // DeviceDetailFragment.kt
   <pre><code>private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: AppContainer.shared.deviceListViewModelFactory)</code></pre>
   </div>
   </div>
-  <p>Swift needs no import changes. Kotlin packages don't appear in the Objective-C header, so <code>Device</code>, <code>SampleDevices</code> and <code>ScanState</code> keep their Swift names. A Kotlin <code>object</code> is reached through <code>.shared</code>, as in Lesson 03.</p>
+  <p>Swift needs no import changes. Kotlin packages don't appear in the Objective-C header, so <code>Device</code>, <code>SampleDevices</code> and <code>ScanState</code> keep their Swift names. A Kotlin <code>object</code> is reached through <code>.shared</code>, as in the KMP anatomy lesson.</p>
 
   <h2>A5. Test the core</h2>
   <p>Now the payoff. Android's architecture guide promises that a layered app "is easier to test", and the testing guide says to prefer fakes: "Fakes don't require a mocking framework and are lightweight. They are <strong>preferred</strong>." A fake is "a test double that has a 'working' implementation of the class, but it is implemented in a way that makes it good for tests but unsuitable for production" (<a href="https://developer.android.com/training/testing/fundamentals/test-doubles">Use test doubles</a>). Tests in <code>commonTest</code> are written once and run on every target: on the JVM with JUnit 4, and on iOS as "a test binary that is executed by Kotlin/Native's own test runner" (<a href="https://kotlinlang.org/docs/multiplatform/multiplatform-run-tests.html">Test your multiplatform app</a>).</p>
@@ -903,7 +903,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
   </ol>
   </div>
   </div>
-  <p><strong>Why <code>doInitKoin</code>?</strong> Top-level Kotlin functions become class methods on a class named after the file (<code>AppModule.kt</code> → <code>AppModuleKt</code>), as in Lesson 03. Objective-C reserves names that start with <code>init</code> for initializers, so the Kotlin compiler adds a <code>do</code> prefix. You can see it in the generated header: <code>+ (void)doInitKoin __attribute__((swift_name("doInitKoin()")))</code>. SKIE also generates a global Swift <code>doInitKoin()</code>. The course writes <code>AppModuleKt.doInitKoin()</code> so the reader can see where the function lives.</p>
+  <p><strong>Why <code>doInitKoin</code>?</strong> Top-level Kotlin functions become class methods on a class named after the file (<code>AppModule.kt</code> → <code>AppModuleKt</code>), as in the KMP anatomy lesson. Objective-C reserves names that start with <code>init</code> for initializers, so the Kotlin compiler adds a <code>do</code> prefix. You can see it in the generated header: <code>+ (void)doInitKoin __attribute__((swift_name("doInitKoin()")))</code>. SKIE also generates a global Swift <code>doInitKoin()</code>. The course writes <code>AppModuleKt.doInitKoin()</code> so the reader can see where the function lives.</p>
 
   <h2>B4. Ask Koin for the ViewModel</h2>
   <div class="tracks">
@@ -1163,7 +1163,7 @@ class AppModuleTest {
     <p class="why">Koin's <code>viewModel</code> definition creates a new instance per request. Keeping and clearing it is the store's job, and on iOS the owner's <code>deinit</code> calls <code>store.clear()</code>.</p>
   </div>
   <div class="quiz mcq">
-    <p class="q">In Lesson 08, which source set will hold the Android radio adapter? (Lesson 03)</p>
+    <p class="q">In Lesson 08, which source set will hold the Android radio adapter? (KMP anatomy lesson)</p>
     <div class="opts">
       <button class="opt">commonMain, in the same file as the port</button>
       <button class="opt" data-correct>androidMain, which sees Android APIs</button>

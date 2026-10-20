@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lesson 03</p>
+  <p class="kicker">Reference · from Lesson 05</p>
   <h1>KMP Project Anatomy</h1>
-  <p class="source">Compressed from <a href="../lessons/03-anatomy-of-a-kmp-project.html">Lesson 03</a>. Built and checked with Kotlin 2.4.21, AGP 9.4.1, Gradle 9.8.2, Xcode 26.2.</p>
+  <p class="source">Compressed from <a href="../lessons/05-anatomy-of-a-kmp-project.html">Lesson 05</a>. Built and checked with Kotlin 2.4.21, AGP 9.4.1, Gradle 9.8.2, Xcode 26.2.</p>
 
   <h2>Layout</h2>
   <pre><code>DeviceMonitor/
@@ -29,7 +29,7 @@
     <tr><td><code>commonMain</code></td><td>all targets</td><td>stdlib + multiplatform libraries</td></tr>
     <tr><td><code>androidMain</code></td><td>android</td><td>+ Android SDK, Java libraries</td></tr>
     <tr><td><code>iosMain</code> (intermediate)</td><td>iosArm64 + iosSimulatorArm64</td><td>+ <code>platform.UIKit</code>, <code>platform.Foundation</code>, …</td></tr>
-    <tr><td><code>commonTest</code> etc.</td><td>as their <code>Main</code> twin</td><td>+ <code>kotlin.test</code> (Lesson 06)</td></tr>
+    <tr><td><code>commonTest</code> etc.</td><td>as their <code>Main</code> twin</td><td>+ <code>kotlin.test</code> (Lesson 11)</td></tr>
   </table>
   </div>
   <p>A target's binary is <em>all</em> source sets labelled with it, compiled together. Platform source sets see <code>commonMain</code>; <code>commonMain</code> never sees them.</p>
@@ -49,7 +49,7 @@ kotlin {
   <h2>expect / actual</h2>
   <pre><code>// commonMain                         // androidMain                       // iosMain
 expect fun platformName(): String     actual fun platformName() = …Build…   actual fun platformName() = …UIDevice…</code></pre>
-  <p>Same package, same signature, an <code>actual</code> for <strong>every</strong> target, or the build fails. Use it for small leaf facts; for anything with behaviour, prefer an <strong>interface + injected implementation</strong> (a port, from Lesson 06). Expected <em>classes</em> are Beta.</p>
+  <p>Same package, same signature, an <code>actual</code> for <strong>every</strong> target, or the build fails. Use it for small leaf facts; for anything with behaviour, prefer an <strong>interface + injected implementation</strong> (an outbound port, from Lesson 10). Expected <em>classes</em> are Beta.</p>
 
   <h2>Kotlin → what Swift sees</h2>
   <div class="table-wrap">
@@ -60,7 +60,7 @@ expect fun platformName(): String     actual fun platformName() = …Build…   
     <tr><td><code>object Foo</code></td><td><code>Foo.shared</code></td></tr>
     <tr><td><code>interface</code> / <code>List</code> / <code>Map</code> / <code>Unit</code></td><td><code>protocol</code> / <code>Array</code> / <code>Dictionary</code> / <code>Void</code></td></tr>
     <tr><td><code>Int</code> inside generics or lambdas</td><td><code>KotlinInt</code> (boxed)</td></tr>
-    <tr><td><code>suspend</code>, <code>Flow</code>, <code>sealed</code></td><td>awkward without help → SKIE (Lesson 05)</td></tr>
+    <tr><td><code>suspend</code>, <code>Flow</code>, <code>sealed</code></td><td>awkward without help → SKIE (Lesson 09)</td></tr>
   </table>
   </div>
   <p>When in doubt, read the header: <code>shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h</code>.</p>

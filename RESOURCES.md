@@ -70,17 +70,17 @@
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
   Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 04, and the KMP project's `iosApp` from Lesson 05 on.
 - [Kotlin Multiplatform: project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-discover-project.html), [Hierarchical project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-hierarchy.html) and [Expected and actual declarations](https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html)
-  Official JetBrains docs: targets, source sets, intermediate source sets, expect/actual rules and when to prefer interfaces. Use for: Lesson 03 (project structure is the primary source), Lesson 06 (ports).
+  Official JetBrains docs: targets, source sets, intermediate source sets, expect/actual rules and when to prefer interfaces. Use for: Lesson 05 (project structure is the primary source), Lesson 10 (ports).
 - [Android: Set up the Android Gradle Library Plugin for KMP](https://developer.android.com/kotlin/multiplatform/plugin)
-  `com.android.kotlin.multiplatform.library`; `android { }` inside `kotlin { }` from AGP 8.12 (`androidLibrary { }` deprecated); `com.android.library` for KMP deprecated from AGP 9. Use for: Lesson 03.
+  `com.android.kotlin.multiplatform.library`; `android { }` inside `kotlin { }` from AGP 8.12 (`androidLibrary { }` deprecated); `com.android.library` for KMP deprecated from AGP 9. Use for: Lesson 05.
 - [Kotlin/Native: interoperability with Swift/Objective-C](https://kotlinlang.org/docs/native-objc-interop.html)
-  How Kotlin declarations appear in Swift (file-named `…Kt` classes, `object` → `.shared`, type mapping, suspend functions). Use for: Lesson 03, Lesson 05.
+  How Kotlin declarations appear in Swift (file-named `…Kt` classes, `object` → `.shared`, type mapping, suspend functions). Use for: Lesson 05, Lessons 08–09.
 - [KMP: Direct integration with Xcode](https://kotlinlang.org/docs/multiplatform/multiplatform-direct-integration.html)
-  The script build phase running `embedAndSignAppleFrameworkForXcode`, and disabling user script sandboxing. Use for: Lesson 03.
+  The script build phase running `embedAndSignAppleFrameworkForXcode`, and disabling user script sandboxing. Use for: Lesson 05.
 - [Codelab: Get started with Kotlin Multiplatform](https://developer.android.com/codelabs/kmp-get-started) and [JetBrains: share more logic between iOS and Android](https://kotlinlang.org/docs/multiplatform/multiplatform-upgrade-app.html)
-  Google's codelab adds a shared module to existing apps (uses SKIE); JetBrains' tutorial shows the current wizard layout (`sharedLogic`, `androidApp`, `iosApp`). Use for: Lesson 03 further reading, Lesson 05.
+  Google's codelab adds a shared module to existing apps (uses SKIE); JetBrains' tutorial shows the current wizard layout (`sharedLogic`, `androidApp`, `iosApp`). Use for: Lesson 05 further reading, Lesson 09.
 - [Android: Display content edge-to-edge](https://developer.android.com/develop/ui/views/layout/edge-to-edge)
-  targetSdk 35+ draws behind system bars by default; insets handling for Compose and Views. Use for: Lesson 03, Lesson 04.
+  targetSdk 35+ draws behind system bars by default; insets handling for Compose and Views. Use for: Lesson 05, Lesson 06.
 
 - [Thinking in Compose](https://developer.android.com/develop/ui/compose/mental-model), [State and Jetpack Compose](https://developer.android.com/develop/ui/compose/state), [Side-effects in Compose](https://developer.android.com/develop/ui/compose/side-effects), [Lists and grids](https://developer.android.com/develop/ui/compose/lists), [Configure text fields](https://developer.android.com/develop/ui/compose/text/user-input)
   Official Compose guides: the declarative model and recomposition (primary source for Lesson 04), remember/rememberSaveable, hoisting and unidirectional data flow, where side effects go, item keys (Bundle-able), TextFieldState recommendation. Use for: Lesson 04, Lesson 05.
@@ -128,7 +128,7 @@
 - [r/swift](https://reddit.com/r/swift)
   Swift-focused subreddit. Use for: Swift/iOS troubleshooting and idiom questions.
 - [Kotlin Slack, #multiplatform channel](https://surveys.jetbrains.com/s3/kotlin-slack-sign-up)
-  Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 03 on). Channel #koin: Koin's maintainers (Lesson 06 on).
+  Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 05 on). Channel #koin: Koin's maintainers (Lesson 11 on).
 - [Stack Overflow — android-bluetooth / corebluetooth tags](https://stackoverflow.com/questions/tagged/android-bluetooth)
   High-signal Q&A for concrete BLE bugs on both platforms. Use for: debugging real device/peripheral issues.
 

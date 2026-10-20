@@ -562,13 +562,13 @@ class DeviceListFragment : Fragment() {
   <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Both tracks now look the same from the ViewModel's side: get it from the nearest owner (Navigation entry or Fragment), collect while <code>STARTED</code>, render. The Compose version deleted its stateful code and kept its content. The XML version deleted its fields and saved state, but kept its <code>render()</code>. The only XML-only bug came from <code>render()</code> computing each widget separately.</p>
 
   <h2>A5. iOS: own the ViewModel, then bridge the flow by hand</h2>
-  <p>Swift doesn't see Kotlin directly. It sees the Objective-C header from Lesson 03. Here is what the header makes of today's Kotlin, read from <code>Shared.h</code>:</p>
+  <p>Swift doesn't see Kotlin directly. It sees the Objective-C header from the KMP anatomy lesson. Here is what the header makes of today's Kotlin, read from <code>Shared.h</code>:</p>
   <div class="table-wrap">
   <table>
     <tr><th>Kotlin</th><th>What Swift sees (no SKIE)</th><th>Consequence</th></tr>
     <tr><td><code>val uiState: StateFlow&lt;DeviceListUiState&gt;</code></td><td><code>any Kotlinx_coroutines_coreStateFlow</code>, whose <code>value</code> is <code>Any?</code></td><td>The type argument is lost: "Generics can only be defined on classes, not on interfaces" (<a href="https://kotlinlang.org/docs/native-objc-interop.html">Swift/Objective-C interop</a>). There's no way to <code>for await</code> it.</td></tr>
     <tr><td><code>sealed interface ScanState</code> + 3 cases</td><td>protocol <code>ScanState</code>, classes <code>ScanStateIdle</code>, <code>ScanStateScanning</code>, <code>ScanStateFinished</code></td><td>No exhaustive <code>switch</code>, so you cast with <code>as?</code> and the compiler can't help.</td></tr>
-    <tr><td><code>data object Idle</code></td><td><code>ScanStateIdle.shared</code></td><td>Like every Kotlin <code>object</code> (Lesson 03).</td></tr>
+    <tr><td><code>data object Idle</code></td><td><code>ScanStateIdle.shared</code></td><td>Like every Kotlin <code>object</code> (KMP anatomy lesson).</td></tr>
     <tr><td><code>companion object { val Factory }</code></td><td><code>DeviceListViewModel.companion.Factory</code></td><td></td></tr>
     <tr><td><code>fun startScan(filter: String)</code></td><td><code>startScan(filter:)</code></td><td>Parameter names become argument labels.</td></tr>
     <tr><td><code>ViewModel</code>, <code>ViewModelStore</code></td><td><code>ViewModel</code>, <code>ViewModelStore</code></td><td>Clean names, because A3 exported the library.</td></tr>
