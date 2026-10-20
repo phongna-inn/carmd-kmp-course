@@ -91,6 +91,17 @@
 - [SwiftUI: State](https://developer.apple.com/documentation/swiftui/state), [List](https://developer.apple.com/documentation/swiftui/list), [NavigationStack](https://developer.apple.com/documentation/swiftui/navigationstack); [UIKit: UITableViewDiffableDataSource](https://developer.apple.com/documentation/uikit/uitableviewdiffabledatasource)
   Official Apple references: @State as single source of truth (and "safe to mutate from any thread"), Identifiable lists, value-based navigation and path binding, snapshot-diffed tables. Use for: Lesson 04 (State is the iOS primary source), Lesson 05.
 
+- [Android: UI layer](https://developer.android.com/topic/architecture/ui-layer) and [UI events](https://developer.android.com/topic/architecture/ui-layer/events)
+  UI state, immutability, unidirectional data flow, exposing state as `StateFlow`; "ViewModel events should always result in a UI state update" (user message + `messageShown()`), and why Channels can lose events. Use for: Lesson 05 (UI layer is the primary source), Lesson 10 (errors).
+- [Android: ViewModel overview](https://developer.android.com/topic/libraries/architecture/viewmodel), [KMP ViewModel](https://developer.android.com/kotlin/multiplatform/viewmodel), [Coroutines with lifecycle-aware components](https://developer.android.com/topic/libraries/architecture/coroutines) and [for Views](https://developer.android.com/topic/libraries/architecture/views/coroutines-views)
+  ViewModel lifetime and scopes, `viewModelScope`, `SavedStateHandle`; the multiplatform `ViewModel` (2.8+) and the iOS `ViewModelStoreOwner` + `resolveViewModel` pattern; `collectAsStateWithLifecycle`, `repeatOnLifecycle(STARTED)`. Use for: Lesson 05, Lesson 06.
+- [SKIE](https://skie.touchlab.co/): [Flows](https://skie.touchlab.co/features/flows), [Sealed classes](https://skie.touchlab.co/features/sealed); [releases](https://github.com/touchlab/SKIE/releases)
+  Touchlab's compiler plugin: flows as typed `AsyncSequence`, `onEnum(of:)`, suspend as async. Check the release notes for the supported Kotlin versions before bumping Kotlin (0.10.15 supports up to 2.4.20). Use for: Lesson 05 Part B, Lessons 08–10.
+- [Kotlin: Swift export](https://kotlinlang.org/docs/native-swift-export.html)
+  JetBrains' Kotlin→Swift export, Alpha: flows as `AsyncSequence`, sealed types as enums. Use for: Lesson 05 B4 (where interop is heading).
+- [KMP-NativeCoroutines](https://github.com/rickclephas/KMP-NativeCoroutines) and [KMP-ObservableViewModel](https://github.com/rickclephas/KMP-ObservableViewModel); [Compose Multiplatform: common ViewModel](https://kotlinlang.org/docs/multiplatform/compose-viewmodel.html)
+  Alternatives to SKIE + a hand-written owner; JetBrains' page recommends KMP-ObservableViewModel for SwiftUI. Use for: Lesson 05 B4, reading other KMP codebases.
+
 ## Wisdom (Communities)
 
 - [r/androiddev](https://reddit.com/r/androiddev)

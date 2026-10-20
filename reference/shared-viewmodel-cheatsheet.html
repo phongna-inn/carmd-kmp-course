@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shared ViewModel Cheatsheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · from Lesson 05</p>
+  <h1>Shared ViewModels Across Four Tracks</h1>
+  <p class="source">Compressed from <a href="../lessons/05-shared-viewmodels.html">Lesson 05</a>. Built and checked with Kotlin 2.4.20, SKIE 0.10.15, AndroidX Lifecycle 2.11.0, kotlinx-coroutines 1.11.0, AGP 9.4.1, Xcode 26.2 (Swift 6 mode).</p>
+
+  <h2>The rules</h2>
+  <ol>
+    <li><strong>Work lives in the ViewModel, the UI only observes.</strong> Long-running work runs in <code>viewModelScope</code>; it stops when the ViewModel is cleared, not when the UI stops collecting.</li>
+    <li><strong>One immutable UI state</strong>, exposed as <code>StateFlow</code>. State goes down, events (function calls) go up.</li>
+    <li><strong>Sealed types for modes</strong> (<code>Idle</code> / <code>Scanning</code> / <code>Finished</code>), so impossible combinations can't be written and every <code>when</code>/<code>switch</code> is exhaustive.</li>
+    <li><strong>Errors and messages are state</strong>: <code>errorMessage: String?</code> plus <code>errorShown()</code>. No <code>Channel</code>/<code>SharedFlow</code> "events".</li>
+    <li><strong>Input stays in the UI</strong> (text being typed) and is passed as an argument when it's needed: <code>startScan(filter)</code>.</li>
+    <li><strong>Collect only while visible</strong>; every new collector gets the current state first.</li>
+  </ol>
+
+  <h2>The shape (commonMain)</h2>
+<pre><code>data class DeviceListUiState(val scan: ScanState = ScanState.Idle, val errorMessage: String? = null)
+sealed interface ScanState {
+    data object Idle : ScanState
+    data class Scanning(val found: List&lt;Device&gt;) : ScanState
+    data class Finished(val found: List&lt;Device&gt;) : ScanState
+}
+
+class DeviceListViewModel(private val scanner: FakeDeviceScanner) : ViewModel() {
+    private val _uiState = MutableStateFlow(DeviceListUiState())       // backing property
+    val uiState: StateFlow&lt;DeviceListUiState&gt; = _uiState.asStateFlow()
+
+    fun startScan(filter: String) {
+        _uiState.update { it.copy(scan = ScanState.Scanning(emptyList())) }   // state first…
+        viewModelScope.launch { … }                                            // …then the slow part
+    }
+    fun errorShown() = _uiState.update { it.copy(errorMessage = null) }
+
+    companion object {
+        val Factory: ViewModelProvider.Factory = viewModelFactory { initializer { DeviceListViewModel(FakeDeviceScanner()) } }
+    }
+}</code></pre>
+  <ul>
+    <li><code>update { it.copy(…) }</code>, never mutate. Put <strong>copies</strong> of collections in state (<code>found.toList()</code>): <code>StateFlow</code> skips values <code>equals</code> to the current one.</li>
+    <li><code>withTimeoutOrNull(t) { … }</code> stops a never-ending flow and returns <code>null</code>, without throwing.</li>
+    <li>Catch your own exception types only. <code>catch (e: Exception)</code> also swallows <code>CancellationException</code>.</li>
+  </ul>
+
+  <h2>Own and observe, per track</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Track</th><th>Get the ViewModel</th><th>Cleared when</th><th>Observe</th><th>Stops observing</th></tr>
+    <tr><td>Compose</td><td><code>viewModel(factory = VM.Factory)</code></td><td>its nav entry leaves the back stack</td><td><code>val state by vm.uiState.collectAsStateWithLifecycle()</code></td><td>below <code>STARTED</code></td></tr>
+    <tr><td>XML</td><td><code>by viewModels { VM.Factory }</code></td><td>the Fragment leaves the back stack for good</td><td><code>viewLifecycleOwner.lifecycleScope.launch { viewLifecycleOwner.repeatOnLifecycle(STARTED) { vm.uiState.collect { render(it) } } }</code></td><td>below <code>STARTED</code> (view lifecycle)</td></tr>
+    <tr><td>SwiftUI</td><td><code>@State var owner = ViewModelOwner()</code>; <code>owner.viewModel(factory: VM.companion.Factory)</code></td><td>the owner's <code>deinit</code> (view gone for good)</td><td><code>.task { for await s in vm.uiState { state = s } }</code> (SKIE)</td><td>view disappears (<code>.task</code> cancelled)</td></tr>
+    <tr><td>UIKit</td><td><code>let owner = ViewModelOwner()</code>; <code>lazy var vm = owner.viewModel(…)</code></td><td>the view controller is deallocated</td><td><code>viewWillAppear</code>: <code>task?.cancel(); task = Task { for await s in vm.uiState { render(s) } }</code></td><td><code>viewDidDisappear</code>: <code>task?.cancel()</code></td></tr>
+  </table>
+  </div>
+  <p>Android rotation: the ViewModel survives and the new screen re-collects. Process death: the ViewModel is lost (<code>SavedStateHandle</code> to keep it, out of scope).</p>
+
+  <h2>iOS: owning a shared ViewModel</h2>
+<pre><code>// iosMain: ViewModelResolver.kt (Swift can only pass an ObjC class)
+@OptIn(BetaInteropApi::class) @Throws(IllegalArgumentException::class)
+fun ViewModelStore.resolveViewModel(modelClass: ObjCClass, factory: ViewModelProvider.Factory): ViewModel {
+    val vmClass = getOriginalKotlinClass(modelClass) as? KClass&lt;ViewModel&gt;
+    require(vmClass != null) { "The modelClass parameter must be a ViewModel type." }
+    return ViewModelProvider.create(this, factory)[vmClass]
+}
+
+// Swift: ViewModelOwner.swift
+final class ViewModelOwner {
+    private let store = ViewModelStore()
+    func viewModel&lt;VM: ViewModel&gt;(factory: any ViewModelProviderFactory) -&gt; VM {
+        try! store.resolveViewModel(modelClass: VM.self, factory: factory) as! VM   // lesson: do/catch + fatalError
+    }
+    deinit { store.clear() }   // onCleared() + cancels viewModelScope
+}</code></pre>
+  <p>No owner means no <code>clear()</code>: the ViewModel's coroutines outlive the screen (reproduced: an orphaned scan kept finding devices). Don't call <code>ViewModelStore.put</code>; it's <code>@RestrictTo</code>. Keep <code>@State</code> defaults cheap: SwiftUI re-instantiates them whenever it recreates the view.</p>
+
+  <h2>What Swift sees</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Kotlin</th><th>Without SKIE</th><th>With SKIE</th></tr>
+    <tr><td><code>StateFlow&lt;T&gt;</code></td><td><code>any Kotlinx_coroutines_coreStateFlow</code>, <code>value: Any?</code>; not iterable</td><td><code>SkieSwiftStateFlow&lt;T&gt;</code>: <code>AsyncSequence</code> of <code>T</code>, typed <code>value</code></td></tr>
+    <tr><td>sealed interface + cases</td><td>protocol + <code>ScanStateIdle</code>/<code>ScanStateScanning</code>…; cast with <code>as?</code></td><td><code>switch onEnum(of: x) { case .idle: … case .scanning(let s): … }</code>, exhaustive</td></tr>
+    <tr><td><code>data object Idle</code></td><td colspan="2"><code>ScanStateIdle.shared</code></td></tr>
+    <tr><td><code>companion object { val Factory }</code></td><td colspan="2"><code>VM.companion.Factory</code></td></tr>
+    <tr><td>generic interface (<code>Flow&lt;T&gt;</code>)</td><td>type argument lost: generics survive on <em>classes</em> only</td><td>restored by SKIE</td></tr>
+    <tr><td>Kotlin class in a <code>@Sendable</code> closure</td><td>Swift 6 error: non-<code>Sendable</code></td><td>SKIE's generated types handle it</td></tr>
+  </table>
+  </div>
+
+  <h2>Gradle</h2>
+<pre><code>// shared/build.gradle.kts
+plugins { …; id("co.touchlab.skie") }
+target.binaries.framework {
+    export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")              // clean Swift names
+    binaryOption("bundleId", "com.example.devicemonitor.shared")         // else a K/N link warning
+}
+commonMain.dependencies {
+    api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")                  // api: in our public API
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+}
+// root build.gradle.kts: id("co.touchlab.skie") version "0.10.15" apply false
+// Compose: implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")</code></pre>
+  <p><strong>SKIE pins Kotlin.</strong> SKIE 0.10.15 supports Kotlin up to 2.4.20 and refuses 2.4.21 at configuration time. Check SKIE's supported list before bumping Kotlin, and move them together. Swift export (JetBrains, Alpha) is the long-term replacement. SKIE builds also print Gradle "resolved during configuration time" and SLF4J lines (plugin noise, not warnings), and upload build analytics: <code>skie { analytics { enabled.set(false) } }</code> turns that off.</p>
+
+  <h2>Traps</h2>
+  <ul>
+    <li>Imperative <code>render()</code>: a scan now starts as <code>Scanning([])</code>, so "is the list empty?" alone painted "Scanning…" red. Derive each widget from the <em>mode</em> first.</li>
+    <li>XML: collect on <code>viewLifecycleOwner</code>, not the Fragment, so <code>render</code> never touches dead views. Dismiss a dialog in <code>onDestroyView</code> with <code>dismiss()</code>, which doesn't fire the cancel listener, so the error stays in state across rotation.</li>
+    <li>SwiftUI <code>.task</code> re-runs on every return: fine for <em>observing</em>, wrong for <em>starting</em> work.</li>
+    <li>UIKit <code>Task { for await … }</code> captures <code>self</code>: cancel it in <code>viewDidDisappear</code>, and cancel any old one before starting a new one.</li>
+    <li>After SKIE, <code>Shared.h</code> looks unchanged; the typed API is in <code>Shared.apinotes</code> and <code>shared/build/skie/…/swift/generated/</code>.</li>
+    <li>Never check warnings with <code>gradlew -q</code>; the Kotlin/Native link warnings appear inside the Xcode build.</li>
+  </ul>
+</main>
+</body>
+</html>

@@ -44,7 +44,18 @@
     <tr><td>UIKit</td><td>view-controller properties</td><td>yes</td><td>yes (no recreation)</td></tr>
   </table>
   </div>
-  <p>Running work (a coroutine, a scan) is <strong>cancelled</strong> by Android rotation no matter what you save. Long-lived operations belong in a ViewModel (Lesson 05).</p>
+  <p>Running work (a coroutine, a scan) is <strong>cancelled</strong> by Android rotation no matter what you save. Long-lived operations belong in a ViewModel (<a href="shared-viewmodel-cheatsheet.html">Lesson 05 cheatsheet</a>).</p>
+  <h2>Observing a source of state (Lesson 05)</h2>
+  <p>An imperative toolkit is <em>pushed</em> updates (a delegate, callback or listener) and copies them into widgets. A declarative one <em>observes</em> a state source and re-renders.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Track</th><th>Source → screen</th></tr>
+    <tr><td>Compose</td><td><code>val state by vm.uiState.collectAsStateWithLifecycle()</code>: a <code>StateFlow</code> becomes Compose <code>State</code></td></tr>
+    <tr><td>XML</td><td><code>repeatOnLifecycle(STARTED) { vm.uiState.collect { render(it) } }</code>: the flow drives <code>render()</code></td></tr>
+    <tr><td>SwiftUI</td><td>an <code>@Observable</code> object's properties, or <code>.task { for await s in flow { state = s } }</code></td></tr>
+    <tr><td>UIKit</td><td>a delegate/callback that calls <code>render()</code>, or <code>Task { for await s in flow { render(s) } }</code></td></tr>
+  </table>
+  </div>
 
   <h2>Side effects</h2>
   <div class="table-wrap">

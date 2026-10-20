@@ -1,0 +1,1626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>05 — Shared ViewModels</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+<script src="../assets/phone-toy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 05 · Week 2 · Native Device Monitor course</p>
+  <h1>Shared ViewModels and Kotlin↔Swift</h1>
+  <div class="meta">
+    <span class="tag">~3.5 h · +1 h per extra UI track</span>
+    <span class="tag">Part A: one ViewModel, two platforms · Part B: SKIE</span>
+    <span class="tag">Milestone: m02 shell driven by a shared ViewModel</span>
+    <span class="tag">Prereq: <a href="04-declarative-ui.html">04</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> the Device Monitor's real work (scanning, holding a connection, streaming sensor values) must not die when the user rotates the phone or opens another screen. It should also be written once, not twice. In m01 the scan lived inside the screen, and Android rotation cancelled it (<a href="04-declarative-ui.html">Lesson 04</a>, A5). Today the scan moves into a <strong>ViewModel in shared Kotlin</strong>, and both apps only observe it. That's milestone <strong>m02</strong>, and it's the shape of every screen in the team's app: a shared ViewModel with a thin native UI on each platform. From Lesson 06 the ViewModel gets its scanner through a port, and from Lesson 08 that scanner is a real radio.
+  </div>
+
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/topic/architecture/ui-layer">UI layer</a> guide: UI state, state holders, unidirectional data flow and <code>StateFlow</code>, all in one page. Read it after A2. iOS learners add SKIE's <a href="https://skie.touchlab.co/features/flows">Flows</a> page before Part B.</p>
+  <p><span class="tag">Tracks</span> The ViewModel and everything in <code>shared/</code> is the same on every track. Each track only changes how it <em>observes</em> the ViewModel: Compose and XML in A4, SwiftUI and UIKit in A5 and B3. The two Android tracks are finished after Part A, because Part B (SKIE) only changes iOS.</p>
+
+  <!-- ============================== PART A ============================== -->
+  <p class="part">Part A — One ViewModel, two platforms (~2 h)</p>
+
+  <h2>A1. Move the work out of the screen</h2>
+  <p>A screen is the wrong owner for long-running work, because the platform destroys screens whenever it likes. Android recreates the Activity on rotation. Both platforms tear down screens you navigate away from. A <strong>ViewModel</strong> is an object whose lifetime is the screen's <em>logical</em> life rather than its views'. Android defines it as "a business logic or screen level state holder", whose "principal advantage is that it caches state and persists it through configuration changes" (<a href="https://developer.android.com/topic/libraries/architecture/viewmodel">ViewModel overview</a>).</p>
+  <p>The toy below runs the scan both ways. Start a scan, then rotate or leave the screen while it's still running, and watch both logs.</p>
+
+  <div class="toy" id="vm-toy">
+    <div class="toy-controls">
+      <button type="button" data-ev="scan">Tap Scan</button>
+      <button type="button" data-ev="rotate">Rotate the phone</button>
+      <button type="button" data-ev="leave">Leave the screen</button>
+      <button type="button" data-ev="reset">Reset</button>
+      <label class="toy-toggle"><input type="checkbox" id="vm-toy-noowner"> iOS without a ViewModel owner (see A5)</label>
+    </div>
+    <div class="toy-phones">
+      <figure><figcaption>m01: the screen owns the scan</figcaption><div id="vm-toy-screen"></div><pre class="toy-log" id="vm-toy-log-screen"></pre></figure>
+      <figure><figcaption>m02: a ViewModel owns the scan</figcaption><div id="vm-toy-vm"></div><pre class="toy-log" id="vm-toy-log-vm"></pre></figure>
+    </div>
+  </div>
+
+  <div class="quiz mcq">
+    <p class="q">Tap Scan, then rotate while it scans. Why does the m01 phone fall back to "Tap Scan to look for devices."?</p>
+    <div class="opts">
+      <button class="opt" data-correct>the scan's scope died with the old screen</button>
+      <button class="opt">rotation wipes every saved value on Android</button>
+      <button class="opt">the fake scanner restarts after each rotation</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The scan ran in the screen's coroutine scope, which is cancelled when the Activity is destroyed. Saved values do come back, but only the ones written down, and a running scan can't be written down.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Leave the screen during a scan. What stops the m02 scan?</p>
+    <div class="opts">
+      <button class="opt" data-correct>clearing the ViewModel cancels viewModelScope</button>
+      <button class="opt">the UI stops collecting from the uiState flow</button>
+      <button class="opt">the fake scanner notices that nobody is watching</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Stopping observation stops nothing: the UI also stops collecting when you rotate, and the scan carries on. Work stops when its <em>scope</em> is cancelled, and <code>viewModelScope</code> is cancelled when the ViewModel is cleared. Tick the iOS checkbox and leave again to see what happens when nobody clears it.</p>
+  </div>
+
+  <p>When does a ViewModel get cleared? "A <code>ViewModel</code> remains in memory until the <code>ViewModelStoreOwner</code> to which it is scoped disappears": an Activity that finishes, a navigation entry "removed from the back stack", a composable that "exits the Composition" (<a href="https://developer.android.com/topic/libraries/architecture/viewmodel">same page</a>). Any coroutine launched in <code>viewModelScope</code> "is automatically canceled if the <code>ViewModel</code> is cleared" (<a href="https://developer.android.com/topic/libraries/architecture/coroutines">Kotlin coroutines with lifecycle-aware components</a>). The <code>ViewModel</code> class is <strong>multiplatform</strong> since AndroidX Lifecycle 2.8 (<a href="https://developer.android.com/kotlin/multiplatform/viewmodel">KMP ViewModel</a>), so it can live in <code>commonMain</code> and serve both apps.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>After…</th><th>m01: state in the screen</th><th>m02: state in a ViewModel</th></tr>
+    <tr><td>Android: rotating <em>during</em> a scan</td><td>scan cancelled; screen back to "Tap Scan…"</td><td><strong>scan continues</strong>; the new screen picks up the current state</td></tr>
+    <tr><td>opening a device and coming back</td><td>Compose: kept only with <code>rememberSaveable</code>. XML / SwiftUI / UIKit: kept, because the Fragment, root view or view controller stays alive under the detail screen</td><td>kept: the list's ViewModel lives while its entry is on the back stack</td></tr>
+    <tr><td>leaving the screen for good</td><td>scan cancelled</td><td>ViewModel cleared, scan cancelled</td></tr>
+    <tr><td>Android process death (system kills the app in the background)</td><td>saved values restored</td><td><strong>lost</strong>: a ViewModel is memory, not storage. <code>SavedStateHandle</code> fixes that and is out of scope here (<a href="https://developer.android.com/topic/libraries/architecture/viewmodel">same page</a>).</td></tr>
+  </table>
+  </div>
+
+  <h2>A2. Design the UI state first</h2>
+  <p>Android's guide defines it in one line: "if the UI is what the user sees, the UI state is what the app says they should see." Make it immutable, because "immutable objects provide guarantees regarding the state of the application at an instant in time". Expose it from the ViewModel "in an observable data holder like <code>StateFlow</code>". The UI sends events up and gets state back: "the state flows down and the events flow up" (<a href="https://developer.android.com/topic/architecture/ui-layer">UI layer</a>).</p>
+<pre><code>   UI (Compose · XML · SwiftUI · UIKit)
+     │  startScan(filter)            ▲  uiState: StateFlow&lt;DeviceListUiState&gt;
+     │  errorShown()                 │
+     ▼                               │
+   DeviceListViewModel (commonMain) ─┘
+     │  scan(filter): Flow&lt;Device&gt;
+     ▼
+   FakeDeviceScanner (commonMain)  ← a real BLE scanner from Lesson 08</code></pre>
+  <p><strong>Make impossible states impossible.</strong> m01 described a scan with two independent variables. Two variables give four combinations, and one of them means nothing:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th><code>isScanning</code></th><th><code>devices</code></th><th>Meaning</th><th>Sealed <code>ScanState</code></th></tr>
+    <tr><td>false</td><td>null</td><td>never scanned</td><td><code>Idle</code></td></tr>
+    <tr><td>true</td><td>[…]</td><td>scanning, these found so far</td><td><code>Scanning(found)</code></td></tr>
+    <tr><td>false</td><td>[…]</td><td>finished with these</td><td><code>Finished(found)</code></td></tr>
+    <tr><td>true</td><td>null</td><td><strong>nothing</strong>, but the types allow it</td><td>can't be written</td></tr>
+  </table>
+  </div>
+  <p>A <strong>sealed interface</strong> (<a href="01-kotlin-swift-for-typescript-devs.html">Lesson 01</a>) lists exactly the three real states, each carrying only the data that state has. Every <code>when</code> over it must handle all three, so adding a fourth state later makes the compiler point at every screen that needs updating (exercise B1).</p>
+  <p><strong>Errors are state, too.</strong> A scan failure needs a dialog shown once. It's tempting to send it as a one-off "event" through a <code>Channel</code> or <code>SharedFlow</code>. Android's guidance is direct: "ViewModel events should always result in a UI state update", because with Channels or other streams, "when the producer (the ViewModel) outlives the consumer (Compose UI), these solutions don't guarantee the delivery and processing of those events". So the message goes into the state, and when the UI has shown it, it calls back so the ViewModel clears it: "Either the user message is displayed, or it isn't" (<a href="https://developer.android.com/topic/architecture/ui-layer/events#handle-viewmodel-events">UI events</a>). Here that's <code>errorMessage</code> plus <code>errorShown()</code>. A bonus: the dialog survives rotation, because it's just state.</p>
+  <p><strong>What stays in the UI.</strong> The filter text is <em>input</em>: the user owns it while typing, and the ViewModel only needs it when Scan is tapped. So it stays where m01 had it (<code>rememberSaveable</code>, <code>@State</code>, or the text field itself) and goes to the ViewModel as an argument: <code>startScan(filter)</code>. Every keystroke then stays synchronous on every track, with no round trip through a flow.</p>
+  <p class="callout ts"><span class="label">From TypeScript</span><code>ScanState</code> is a discriminated union: <code>type ScanState = { kind: "idle" } | { kind: "scanning"; found: Device[] } | { kind: "finished"; found: Device[] }</code>. Kotlin's <code>when</code> is a <code>switch</code> with the <code>never</code> exhaustiveness check built in. <code>it.copy(scan = …)</code> is <code>{ ...state, scan: … }</code>. A <code>StateFlow</code> is an RxJS <code>BehaviorSubject</code> (or an Angular signal): it always has a current value, and a new subscriber gets that value first. <code>viewModelScope</code> is <code>takeUntil(destroy$)</code> applied to everything the ViewModel starts.</p>
+
+  <h2>A3. The shared code</h2>
+  <p>Four files in <code>shared/</code>: the build file gains the ViewModel library, and three new Kotlin files hold the scanner, the state, and the ViewModel. The m01 files (<code>Device.kt</code>, <code>SampleDevices.kt</code>) stay as they are.</p>
+  <p class="track-name">shared/build.gradle.kts</p>
+  <pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+}
+
+kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+        compileSdk = 37
+        minSdk = 26
+    }
+
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target -&gt;
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            binaryOption("bundleId", "com.example.devicemonitor.shared")
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><code>androidx.lifecycle:lifecycle-viewmodel</code> is Google's multiplatform <code>ViewModel</code>, the same artifact Android apps use (<a href="https://developer.android.com/kotlin/multiplatform/viewmodel">KMP ViewModel</a>). Version 2.11.0 matches the lifecycle libraries already in the app.</li>
+    <li><strong><code>api</code>, not <code>implementation</code></strong>: <code>ViewModel</code> and <code>StateFlow</code> appear in the shared module's <em>public</em> API (the ViewModel extends one and exposes the other), so modules that use <code>:shared</code> need them too. With <code>api</code> the Android app gets coroutines through <code>:shared</code>, so it no longer depends on them only by accident through another library (Lesson 04's note).</li>
+    <li><strong><code>export(…)</code></strong> puts the library's classes into the iOS framework's public header under their own names, so Swift can use <code>ViewModel</code> and <code>ViewModelStore</code> (A5). Android's guide calls for it: "You need the <code>api</code> dependency declaration here if you want better access to the classes from Swift code."</li>
+    <li><strong><code>binaryOption("bundleId", …)</code></strong>: as soon as we exported a library, the Kotlin/Native linker warned <code>Cannot infer a bundle ID from packages of source files and exported dependencies, use the bundle name instead: Shared</code>. Naming the bundle ID explicitly silences it. The course treats warnings as errors.</li>
+  </ol>
+
+  <p class="track-name">shared/src/commonMain/kotlin/com/example/devicemonitor/FakeDeviceScanner.kt</p>
+  <pre><code>package com.example.devicemonitor
+
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+class ScanException(message: String) : Exception(message)
+
+// Stand-in for the BLE scanner of Lesson 08. Like a real scan, devices arrive one at a
+// time and the flow never completes on its own: the collector stops it by cancelling.
+class FakeDeviceScanner {
+    fun scan(filter: String): Flow&lt;Device&gt; = flow {
+        // Test hook until Lesson 06's fake ports: the filter "fail" simulates a radio error.
+        if (filter.trim().equals("fail", ignoreCase = true)) {
+            delay(500)
+            throw ScanException("Bluetooth adapter not responding (simulated).")
+        }
+        for (device in SampleDevices.matching(filter)) {
+            delay(300)
+            emit(device)
+        }
+        awaitCancellation()
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>flow { … }</code></strong> builds a <em>cold</em> <code>Flow</code> (<a href="https://kotlinlang.org/docs/flow.html">Asynchronous Flow</a>): nothing runs until someone collects it, and each collector gets its own run. <code>emit(device)</code> hands one value to the collector, and <code>delay(300)</code> suspends without blocking a thread (Lesson 04, B2).</li>
+    <li><strong><code>awaitCancellation()</code></strong> suspends forever. A real BLE scan has no end, and it reports devices until you stop it. Making the fake behave the same way forces the ViewModel to stop it properly, which is the code Lesson 08 keeps.</li>
+    <li><strong><code>ScanException</code></strong> is our own type, so the ViewModel can catch exactly this failure and nothing else (A3's ViewModel, point 6). The <code>"fail"</code> filter is a test hook, so you can reach the error path by hand. Lesson 06 replaces it with a fake port that tests control.</li>
+  </ol>
+
+  <p class="track-name">shared/src/commonMain/kotlin/com/example/devicemonitor/DeviceListUiState.kt</p>
+  <pre><code>package com.example.devicemonitor
+
+// Everything the device list shows that the user didn't type.
+data class DeviceListUiState(
+    val scan: ScanState = ScanState.Idle,
+    val errorMessage: String? = null,
+)
+
+sealed interface ScanState {
+    data object Idle : ScanState
+    data class Scanning(val found: List&lt;Device&gt;) : ScanState
+    data class Finished(val found: List&lt;Device&gt;) : ScanState
+}</code></pre>
+  <ol class="walk">
+    <li>One immutable <code>data class</code> for the screen. Default values make <code>DeviceListUiState()</code> the initial state. Changes always produce a new object with <code>copy</code>.</li>
+    <li><code>data object Idle</code> is a singleton with a readable <code>toString</code>. <code>Scanning</code> and <code>Finished</code> carry the devices found, because only those states have any.</li>
+  </ol>
+
+  <p class="track-name">shared/src/commonMain/kotlin/com/example/devicemonitor/DeviceListViewModel.kt</p>
+  <pre><code>package com.example.devicemonitor
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
+
+class DeviceListViewModel(
+    private val scanner: FakeDeviceScanner,
+) : ViewModel() {
+    private val _uiState = MutableStateFlow(DeviceListUiState())
+    val uiState: StateFlow&lt;DeviceListUiState&gt; = _uiState.asStateFlow()
+
+    private var scanJob: Job? = null
+
+    fun startScan(filter: String) {
+        if (scanJob?.isActive == true) return
+        _uiState.update { it.copy(scan = ScanState.Scanning(emptyList())) }
+        scanJob = viewModelScope.launch {
+            val found = mutableListOf&lt;Device&gt;()
+            try {
+                withTimeoutOrNull(SCAN_TIMEOUT) {
+                    scanner.scan(filter).collect { device -&gt;
+                        found += device
+                        _uiState.update { it.copy(scan = ScanState.Scanning(found.toList())) }
+                    }
+                }
+                _uiState.update { it.copy(scan = ScanState.Finished(found.toList())) }
+            } catch (e: ScanException) {
+                _uiState.update { it.copy(scan = ScanState.Idle, errorMessage = e.message) }
+            }
+        }
+    }
+
+    fun errorShown() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    companion object {
+        val SCAN_TIMEOUT = 3.seconds
+
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer { DeviceListViewModel(FakeDeviceScanner()) }
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong>The backing property.</strong> <code>_uiState</code> is a private <code>MutableStateFlow</code>; the public <code>uiState</code> is read-only (<code>asStateFlow()</code>). Only the ViewModel can change state, and everyone else can only observe it. "<code>StateFlow</code> is a state-holder observable flow that emits the current and new state updates to its collectors" (<a href="https://developer.android.com/kotlin/flow/stateflow-and-sharedflow">StateFlow and SharedFlow</a>).</li>
+    <li><strong><code>_uiState.update { it.copy(…) }</code></strong> computes the new state from the current one and swaps it in atomically. It's never <code>_uiState.value.scan = …</code>, because the state is immutable.</li>
+    <li><strong><code>if (scanJob?.isActive == true) return</code></strong>: a second <code>startScan</code> during a scan is ignored. The disabled button already prevents it, but the ViewModel shouldn't rely on its UI for correctness.</li>
+    <li><strong>State first, then launch.</strong> <code>Scanning(emptyList())</code> is set synchronously, so the very next frame shows the spinner, which is Lesson 04's rule. Then <code>viewModelScope.launch</code> starts the slow part in the ViewModel's own scope. On both platforms it runs on the main thread (<code>Dispatchers.Main.immediate</code>), and <code>delay</code> keeps it from blocking.</li>
+    <li><strong><code>withTimeoutOrNull(SCAN_TIMEOUT)</code></strong> cancels the block after 3 s and returns <code>null</code> instead of throwing, so execution continues to the <code>Finished</code> line. This is how a never-ending scan stops "on timeout" (requirement A.3).</li>
+    <li><strong><code>catch (e: ScanException)</code></strong>, not <code>catch (e: Exception)</code>. When the scope is cancelled (ViewModel cleared), a <code>CancellationException</code> flies through this code. Catching every <code>Exception</code> would swallow it and keep a dead ViewModel's coroutine running. Catch only what you can handle.</li>
+    <li><strong><code>found.toList()</code></strong> on every update hands the state a <em>copy</em>. A <code>StateFlow</code> only emits a value that isn't <code>equals</code> to the current one. If the state shared the mutable list, the "new" state would already equal the old one. You'll test this in exercise A3.</li>
+    <li><strong><code>Factory</code></strong> tells the platform how to build this ViewModel, because the platform creates it, not you. <code>viewModelFactory { initializer { … } }</code> is the multiplatform way to write one. Both Android tracks and both iOS tracks use this same factory. Lesson 06 replaces it with Koin.</li>
+  </ol>
+
+  <h2>A4. Android: collect while visible</h2>
+  <p>Collecting from the ViewModel is a different job from owning it. The UI collects only while it's on screen: "collection begins when the lifecycle is <code>STARTED</code> and stops when the lifecycle is <code>STOPPED</code>" (<a href="https://developer.android.com/topic/libraries/architecture/coroutines">coroutines with lifecycle-aware components</a>). The ViewModel keeps working the whole time, so when the UI starts collecting again, the <code>StateFlow</code> hands it the latest state first.</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <p class="track-name">Compose track · androidApp/build.gradle.kts: one dependency added</p>
+  <pre><code>plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+android {
+    namespace = "com.example.devicemonitor.android"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.devicemonitor"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures { compose = true }
+}
+
+dependencies {
+    implementation(project(":shared"))
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.12.0")
+}</code></pre>
+  <p class="track-name">Compose track · androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</p>
+  <pre><code>package com.example.devicemonitor.android
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.devicemonitor.Device
+import com.example.devicemonitor.DeviceListViewModel
+import com.example.devicemonitor.ScanState
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+@Composable
+fun DeviceListScreen(
+    onDeviceClick: (Device) -&gt; Unit,
+    viewModel: DeviceListViewModel = viewModel(factory = DeviceListViewModel.Factory),
+) {
+    var filter by rememberSaveable { mutableStateOf("") }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    DeviceListContent(
+        filter = filter,
+        onFilterChange = { filter = it },
+        isScanning = state.scan is ScanState.Scanning,
+        devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        },
+        onScan = { viewModel.startScan(filter) },
+        onDeviceClick = onDeviceClick,
+    )
+
+    state.errorMessage?.let { message -&gt;
+        AlertDialog(
+            onDismissRequest = viewModel::errorShown,
+            confirmButton = { TextButton(onClick = viewModel::errorShown) { Text("OK") } },
+            title = { Text("Scan failed") },
+            text = { Text(message) },
+        )
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+@Composable
+fun DeviceListContent(
+    filter: String,
+    onFilterChange: (String) -&gt; Unit,
+    isScanning: Boolean,
+    devices: List&lt;Device&gt;?,
+    onScan: () -&gt; Unit,
+    onDeviceClick: (Device) -&gt; Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Device Monitor", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = filter,
+            onValueChange = onFilterChange,
+            label = { Text("Device name filter") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = onScan, enabled = !isScanning, modifier = Modifier.fillMaxWidth()) {
+            Text("Scan")
+        }
+        ScanStatus(isScanning = isScanning, devices = devices)
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(devices.orEmpty(), key = { it.id }) { device -&gt;
+                DeviceRow(device = device, onClick = { onDeviceClick(device) })
+                HorizontalDivider()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanStatus(isScanning: Boolean, devices: List&lt;Device&gt;?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            isScanning -&gt; {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Scanning…")
+            }
+            devices == null -&gt; Text("Tap Scan to look for devices.")
+            devices.isEmpty() -&gt; Text(
+                "No devices found. Try another filter.",
+                color = MaterialTheme.colorScheme.error,
+            )
+            else -&gt; Text("Devices found: ${devices.size}")
+        }
+    }
+}
+
+@Composable
+private fun DeviceRow(device: Device, onClick: () -&gt; Unit) {
+    ListItem(
+        headlineContent = { Text(device.name) },
+        supportingContent = { Text(device.id) },
+        trailingContent = { Text("${device.rssi} dBm") },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>viewModel(factory = DeviceListViewModel.Factory)</code></strong> (from <code>lifecycle-viewmodel-compose</code>) returns the ViewModel of the nearest <code>ViewModelStoreOwner</code>. Inside a <code>NavHost</code> that owner is the <strong>navigation entry</strong>, so the ViewModel lives while the list is on the back stack. It survives the trip to the detail screen and rotation, and it's cleared when the entry is popped. As a default parameter, it can be replaced by a fake in a preview or test.</li>
+    <li><strong><code>collectAsStateWithLifecycle()</code></strong> turns the <code>StateFlow</code> into Compose <code>State</code> and collects only while the screen is at least <code>STARTED</code>. Android calls it "the recommended way to collect flows on Android apps". Plain <code>collectAsState</code> is the platform-agnostic version, which keeps collecting in the background (<a href="https://developer.android.com/develop/ui/compose/state">State and Jetpack Compose</a>).</li>
+    <li><strong><code>DeviceListContent</code> didn't change.</strong> Lesson 04 split the screen into a stateful wrapper and stateless content, and promised that a ViewModel would replace only the wrapper. That's what happened. <code>remember</code>, <code>rememberCoroutineScope</code>, <code>delay</code> and <code>SampleDevices</code> all left this file.</li>
+    <li><strong><code>when (val scan = state.scan)</code></strong> maps the sealed state onto the content's two parameters. There's no <code>else</code> branch: the compiler checks that all three cases are handled.</li>
+    <li><strong>The dialog is state.</strong> It exists while <code>errorMessage</code> is non-null. Both "OK" and dismissing (tap outside, Back) call <code>errorShown()</code>, which clears the message, and the next recomposition removes the dialog. Rotation can't lose it.</li>
+    <li><code>viewModel::errorShown</code> is a <em>function reference</em>, a lambda that calls <code>errorShown()</code> on that instance.</li>
+  </ol>
+  </div>
+  <div data-track="xml">
+  <p class="track-name">XML track · androidApp/build.gradle.kts</p>
+  <p>Unchanged. <code>viewModels</code> comes from <code>fragment-ktx</code>, <code>repeatOnLifecycle</code> from <code>lifecycle-runtime-ktx</code>, and the factory helpers and coroutines from <code>:shared</code> (<code>api</code>).</p>
+  <p class="track-name">XML track · androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</p>
+  <pre><code>package com.example.devicemonitor.android
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.DividerItemDecoration
+import com.example.devicemonitor.DeviceListUiState
+import com.example.devicemonitor.DeviceListViewModel
+import com.example.devicemonitor.ScanState
+import com.example.devicemonitor.android.databinding.FragmentDeviceListBinding
+import kotlinx.coroutines.launch
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+    private val viewModel: DeviceListViewModel by viewModels { DeviceListViewModel.Factory }
+
+    private var binding: FragmentDeviceListBinding? = null
+    private var errorDialog: AlertDialog? = null
+    private val adapter = DeviceAdapter { device -&gt;
+        val nav = findNavController()
+        // A fast double tap delivers two clicks; only navigate from the list itself.
+        if (nav.currentDestination?.id == R.id.deviceList) {
+            nav.navigate(R.id.toDetail, Bundle().apply { putString("deviceId", device.id) })
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceListBinding.inflate(inflater, container, false)
+        binding = b
+        b.deviceList.adapter = adapter
+        b.deviceList.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
+        b.scanButton.setOnClickListener { viewModel.startScan(b.filterInput.text.toString()) }
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { render(it) }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        errorDialog?.dismiss() // a dismiss() doesn't call the cancel listener, so the error stays in state
+        errorDialog = null
+        binding?.deviceList?.adapter = null
+        binding = null
+    }
+
+    // The one place that touches views: every new state ends here. The EditText keeps its
+    // own text (and restores it after rotation), so render() never sets it.
+    private fun render(state: DeviceListUiState) {
+        val b = binding ?: return
+        val isScanning = state.scan is ScanState.Scanning
+        val devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        }
+        b.scanButton.isEnabled = !isScanning
+        b.progress.visibility = if (isScanning) View.VISIBLE else View.GONE
+        b.statusText.text = when {
+            isScanning -&gt; "Scanning…"
+            devices == null -&gt; "Tap Scan to look for devices."
+            devices.isEmpty() -&gt; "No devices found. Try another filter."
+            else -&gt; "Devices found: ${devices.size}"
+        }
+        b.statusText.setTextColor(if (devices?.isEmpty() == true &amp;&amp; !isScanning) Color.RED else Color.DKGRAY)
+        adapter.submitList(devices.orEmpty())
+        renderError(state.errorMessage)
+    }
+
+    private fun renderError(message: String?) {
+        if (message == null) {
+            errorDialog?.dismiss()
+            errorDialog = null
+        } else if (errorDialog == null) {
+            errorDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Scan failed")
+                .setMessage(message)
+                .setPositiveButton("OK") { _, _ -&gt; viewModel.errorShown() }
+                .setOnCancelListener { viewModel.errorShown() }
+                .show()
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>by viewModels { DeviceListViewModel.Factory }</code></strong> (from <code>fragment-ktx</code>) scopes the ViewModel to this Fragment. It's created on first access, survives rotation (the Fragment is recreated, but its <code>ViewModelStore</code> isn't), and is cleared when the Fragment leaves the back stack for good.</li>
+    <li><strong>The state fields are gone</strong>, and so are <code>onSaveInstanceState</code> and <code>onCreate</code>. The Fragment holds no screen state any more, only views and the ViewModel reference.</li>
+    <li><strong><code>viewLifecycleOwner.repeatOnLifecycle(STARTED)</code></strong> runs the <code>collect</code> block "every time the lifecycle is in the <code>STARTED</code> state (or above)" and "cancels it when it's <code>STOPPED</code>" (<a href="https://developer.android.com/topic/libraries/architecture/views/coroutines-views">coroutines with Views</a>). Use the <em>view</em> lifecycle, not the Fragment's: the views die while the Fragment sits on the back stack, and <code>render</code> must never touch dead views.</li>
+    <li><strong><code>render(state)</code></strong> is Lesson 04's <code>render()</code>, now with the state as a parameter instead of fields. Every emission ends here, and nothing else touches a widget.</li>
+    <li><strong>The EditText keeps the filter.</strong> It owns its text while the user types, restores it after rotation (it has an id), and is read once, when Scan is tapped.</li>
+    <li><strong>The red colour gained <code>&amp;&amp; !isScanning</code>.</strong> A scan now starts as <code>Scanning(found = [])</code>. Lesson 04's rule (<code>devices?.isEmpty() == true</code>) would paint "Scanning…" red, the same bug as the Lesson 04 toy. Compose and SwiftUI never hit this, because their <code>when</code>/<code>if</code> checks <code>isScanning</code> first. Hand-written <code>render()</code> code computes each widget separately, so each derivation has to be checked again.</li>
+    <li><strong>The dialog</strong> is shown when the state has a message and no dialog is up. "OK" and cancel (Back, tap outside) call <code>errorShown()</code>. In <code>onDestroyView</code>, <code>dismiss()</code> removes the window without calling the cancel listener, so after rotation the message is still in state and the new view shows the dialog again.</li>
+  </ol>
+  </div>
+  </div>
+  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Both tracks now look the same from the ViewModel's side: get it from the nearest owner (Navigation entry or Fragment), collect while <code>STARTED</code>, render. The Compose version deleted its stateful code and kept its content. The XML version deleted its fields and saved state, but kept its <code>render()</code>. The only XML-only bug came from <code>render()</code> computing each widget separately.</p>
+
+  <h2>A5. iOS: own the ViewModel, then bridge the flow by hand</h2>
+  <p>Swift doesn't see Kotlin directly. It sees the Objective-C header from Lesson 03. Here is what the header makes of today's Kotlin, read from <code>Shared.h</code>:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Kotlin</th><th>What Swift sees (no SKIE)</th><th>Consequence</th></tr>
+    <tr><td><code>val uiState: StateFlow&lt;DeviceListUiState&gt;</code></td><td><code>any Kotlinx_coroutines_coreStateFlow</code>, whose <code>value</code> is <code>Any?</code></td><td>The type argument is lost: "Generics can only be defined on classes, not on interfaces" (<a href="https://kotlinlang.org/docs/native-objc-interop.html">Swift/Objective-C interop</a>). There's no way to <code>for await</code> it.</td></tr>
+    <tr><td><code>sealed interface ScanState</code> + 3 cases</td><td>protocol <code>ScanState</code>, classes <code>ScanStateIdle</code>, <code>ScanStateScanning</code>, <code>ScanStateFinished</code></td><td>No exhaustive <code>switch</code>, so you cast with <code>as?</code> and the compiler can't help.</td></tr>
+    <tr><td><code>data object Idle</code></td><td><code>ScanStateIdle.shared</code></td><td>Like every Kotlin <code>object</code> (Lesson 03).</td></tr>
+    <tr><td><code>companion object { val Factory }</code></td><td><code>DeviceListViewModel.companion.Factory</code></td><td></td></tr>
+    <tr><td><code>fun startScan(filter: String)</code></td><td><code>startScan(filter:)</code></td><td>Parameter names become argument labels.</td></tr>
+    <tr><td><code>ViewModel</code>, <code>ViewModelStore</code></td><td><code>ViewModel</code>, <code>ViewModelStore</code></td><td>Clean names, because A3 exported the library.</td></tr>
+  </table>
+  </div>
+  <p>Two jobs, then. <strong>Own</strong> the ViewModel, so it's cleared when the screen goes. <strong>Observe</strong> its <code>StateFlow</code>, which Swift can't do directly.</p>
+
+  <h3>Owning: there is no ViewModelStoreOwner on iOS</h3>
+  <p>"SwiftUI on iOS, however, has no built-in equivalent for the AndroidX ViewModel" (<a href="https://developer.android.com/kotlin/multiplatform/viewmodel">KMP ViewModel</a>). So we write the owner: a Swift class holding a <code>ViewModelStore</code>, which clears it in <code>deinit</code>. These two files follow Android's guide. Every iOS track uses them in both parts.</p>
+  <p class="track-name">shared/src/iosMain/kotlin/com/example/devicemonitor/ViewModelResolver.kt</p>
+  <pre><code>package com.example.devicemonitor
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import kotlinx.cinterop.BetaInteropApi
+import kotlinx.cinterop.ObjCClass
+import kotlinx.cinterop.getOriginalKotlinClass
+import kotlin.reflect.KClass
+
+// Swift can't pass a KClass, only its Objective-C class. This turns it back into the
+// KClass that ViewModelProvider needs. Adapted from Android's KMP ViewModel guide.
+@OptIn(BetaInteropApi::class)
+@Throws(IllegalArgumentException::class)
+fun ViewModelStore.resolveViewModel(
+    modelClass: ObjCClass,
+    factory: ViewModelProvider.Factory,
+): ViewModel {
+    @Suppress("UNCHECKED_CAST")
+    val vmClass = getOriginalKotlinClass(modelClass) as? KClass&lt;ViewModel&gt;
+    require(vmClass != null) { "The modelClass parameter must be a ViewModel type." }
+    return ViewModelProvider.create(this, factory)[vmClass]
+}</code></pre>
+  <p class="track-name">iosApp/iosApp/ViewModelOwner.swift</p>
+  <pre><code>import Shared
+
+// iOS has no ViewModelStoreOwner, so this class plays that role. Keep it in a view's
+// @State (or a view controller's property). When it is deinitialised, clearing the store
+// cancels every viewModelScope in it and calls onCleared().
+final class ViewModelOwner {
+    private let store = ViewModelStore()
+
+    // Returns the store's instance of VM, creating it with the factory on first use.
+    func viewModel&lt;VM: ViewModel&gt;(factory: any ViewModelProviderFactory) -&gt; VM {
+        do {
+            return try store.resolveViewModel(modelClass: VM.self, factory: factory) as! VM
+        } catch {
+            fatalError("Couldn't create \(VM.self): \(error)")
+        }
+    }
+
+    deinit {
+        store.clear()
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>ViewModelProvider.create(store, factory)[vmClass]</code></strong> is what Android does behind <code>viewModels</code>. It returns the store's instance if there is one, and otherwise builds one with the factory and stores it. So calling <code>owner.viewModel(…)</code> repeatedly always returns the same ViewModel.</li>
+    <li><strong>Why a Kotlin helper?</strong> The provider wants a <code>KClass</code>, and Swift can only pass an Objective-C class (<code>VM.self</code>). <code>getOriginalKotlinClass</code> converts it back. It's marked <code>@BetaInteropApi</code>, hence the opt-in. <code>@Throws</code> turns the <code>require</code> failure into a Swift <code>throws</code>.</li>
+    <li><strong><code>deinit { store.clear() }</code></strong> is the point of the class. Clearing the store calls each ViewModel's <code>onCleared()</code> and cancels its <code>viewModelScope</code>. Without it, a ViewModel's work outlives its screen (A6's first gotcha).</li>
+    <li><strong>Creating the owner is cheap on purpose.</strong> You'll keep it in <code>@State</code>, and Apple warns: "A State property always instantiates its default value when SwiftUI instantiates the view. For this reason, avoid side effects and performance-intensive work when initializing the default value" (<a href="https://developer.apple.com/documentation/swiftui/state">State</a>). An empty store costs nothing. The ViewModel itself is created on first use.</li>
+  </ol>
+
+  <h3>Observing: a hand-written bridge</h3>
+  <p>The bridge needs a Kotlin class that collects the flow and calls Swift back. It must be a <em>class</em>, because only classes keep their generic type in Swift. This file is temporary: Part B deletes it.</p>
+  <p class="track-name">shared/src/iosMain/kotlin/com/example/devicemonitor/StateFlowWatcher.kt</p>
+  <pre><code>package com.example.devicemonitor
+
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+
+// Part A only: lets Swift observe a StateFlow without SKIE. Part B deletes this file.
+class StateFlowWatcher&lt;T : Any&gt;(private val flow: StateFlow&lt;T&gt;) {
+    val value: T get() = flow.value
+
+    // Calls onEach on the main thread with the current value, then with every new one,
+    // until the returned Watch is cancelled.
+    fun watch(onEach: (T) -&gt; Unit): Watch {
+        val scope = MainScope()
+        scope.launch { flow.collect { onEach(it) } }
+        return Watch { scope.cancel() }
+    }
+}
+
+class Watch(private val onCancel: () -&gt; Unit) {
+    fun cancel() = onCancel()
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>class StateFlowWatcher&lt;T : Any&gt;</code></strong>: Swift writes <code>StateFlowWatcher&lt;DeviceListUiState&gt;(flow: viewModel.uiState)</code>, and <code>value</code> and the callback come back typed. <code>T : Any</code> makes them non-optional in Swift.</li>
+    <li><strong><code>MainScope()</code></strong> runs the collection on the main thread (<code>Dispatchers.Main</code>), so Swift's callback can touch UI. A <code>StateFlow</code> delivers its current value first, then every new one.</li>
+    <li><strong><code>Watch</code></strong> is the handle Swift keeps. <code>cancel()</code> cancels the scope, which stops the collection. Forgetting to cancel it would keep collecting forever.</li>
+  </ol>
+
+  <div class="tracks">
+  <div data-track="swiftui">
+  <p class="track-name">SwiftUI track · iosApp/iosApp/DeviceListObserver.swift (Part A only)</p>
+  <pre><code>import Observation
+import Shared
+
+// Part A only: the hand-written bridge. Owns the shared ViewModel and mirrors its
+// StateFlow into an @Observable property that SwiftUI can read. Part B deletes this file.
+@Observable
+final class DeviceListObserver {
+    @ObservationIgnored let viewModel: DeviceListViewModel
+    private(set) var state: DeviceListUiState
+
+    @ObservationIgnored private let owner: ViewModelOwner
+    @ObservationIgnored private var watch: Watch?
+
+    init() {
+        let owner = ViewModelOwner()
+        let viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+        let watcher = StateFlowWatcher&lt;DeviceListUiState&gt;(flow: viewModel.uiState)
+        self.owner = owner
+        self.viewModel = viewModel
+        self.state = watcher.value
+        watch = watcher.watch { [weak self] newState in
+            self?.state = newState
+        }
+    }
+
+    deinit {
+        watch?.cancel()
+    }
+}</code></pre>
+  <p class="track-name">SwiftUI track · iosApp/iosApp/DeviceListView.swift (Part A)</p>
+  <pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @State private var observer = DeviceListObserver()
+    @State private var filter = ""
+
+    var body: some View {
+        let viewModel = observer.viewModel
+        let state = observer.state
+        DeviceListContent(
+            filter: $filter,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+    }
+
+    // Without SKIE, Swift sees ScanState as a protocol: no exhaustive switch, so cast.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        if let scanning = scan as? ScanStateScanning { return scanning.found }
+        if let finished = scan as? ScanStateFinished { return finished.found }
+        return nil
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Button(action: onScan) {
+                Text("Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isScanning)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(id: device.id)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>DeviceListObserver</code></strong> is an <code>@Observable</code> class (iOS 17, Lesson 04) with one tracked property, <code>state</code>. The watcher's callback assigns to it, and SwiftUI re-renders whatever read it. <code>@ObservationIgnored</code> keeps the plumbing out of observation.</li>
+    <li><strong><code>[weak self]</code></strong>: the Kotlin scope holds the callback, and the callback must not keep the observer alive. When SwiftUI drops the observer, its <code>deinit</code> cancels the watch, and then the owner's <code>deinit</code> clears the ViewModel.</li>
+    <li><strong>The init does real work</strong> (it creates the ViewModel and starts watching), against Apple's <code>@State</code> advice above. For a root screen that SwiftUI creates once, this is harmless. Part B moves the work out of the initializer.</li>
+    <li><strong>The screen is split like Compose's</strong>: <code>DeviceListView</code> owns the filter and talks to the ViewModel, and <code>DeviceListContent</code> only renders. <code>ScanStatus</code> and <code>DeviceRow</code> are unchanged from m01. <code>filter</code> is plain <code>@State</code>, passed down as a binding and read when Scan is tapped.</li>
+    <li><strong><code>devices(in:)</code></strong> casts with <code>as?</code>, because without SKIE <code>ScanState</code> is a protocol. If a fourth case is added, this function returns <code>nil</code> for it, and nothing warns you.</li>
+    <li><strong>The alert binding</strong> reads <code>errorMessage != nil</code>. When the user taps OK, SwiftUI sets it to <code>false</code>, and that calls <code>errorShown()</code>.</li>
+  </ol>
+  </div>
+  <div data-track="uikit">
+  <p class="track-name">UIKit track · iosApp/iosApp/DeviceListViewController.swift (Part A)</p>
+  <pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+    private var watch: Watch?
+
+    private let filterField = UITextField()
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = SampleDevices.shared.find(id: deviceId) {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            viewModel.startScan(filter: filterField.text ?? "")
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let stack = UIStackView(arrangedSubviews: [filterField, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(StateFlowWatcher&lt;DeviceListUiState&gt;(flow: viewModel.uiState).value)
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        watch?.cancel()
+        watch = StateFlowWatcher&lt;DeviceListUiState&gt;(flow: viewModel.uiState).watch { [weak self] state in
+            self?.render(state)
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        watch?.cancel()
+        watch = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // Without SKIE, Swift sees ScanState as a protocol: no exhaustive switch, so cast.
+        let devices: [Device]? = if let scanning = state.scan as? ScanStateScanning {
+            scanning.found
+        } else if let finished = state.scan as? ScanStateFinished {
+            finished.found
+        } else {
+            nil
+        }
+        scanButton.isEnabled = !isScanning
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath) else { return }
+        navigationController?.pushViewController(DeviceDetailViewController(deviceId: deviceId), animated: true)
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>private let owner = ViewModelOwner()</code></strong>: the view controller is the owner's owner. When the view controller is deallocated (popped, or its window closed), the ViewModel is cleared. <code>lazy var viewModel</code> creates it on first use, after <code>owner</code> exists.</li>
+    <li><strong>Watch in <code>viewWillAppear</code>, cancel in <code>viewDidDisappear</code></strong>: UIKit's version of <code>repeatOnLifecycle(STARTED)</code>, using Lesson 02's view lifecycle. <code>watch?.cancel()</code> before starting a new watch costs nothing and guarantees there is never more than one. While the detail screen is pushed, nothing renders into hidden views. The ViewModel keeps scanning, and when the list reappears, the first value it receives is the latest state.</li>
+    <li><strong><code>[weak self]</code></strong> in the callback: the Kotlin scope holds the closure, and the closure must not keep the view controller alive.</li>
+    <li><strong><code>viewDidLoad</code> renders <code>value</code> once</strong>, so the first frame isn't blank before the watch starts.</li>
+    <li><strong><code>render(_:)</code></strong> is m01's <code>render()</code> with the state as a parameter. The <code>as?</code> chain replaces a switch, because without SKIE <code>ScanState</code> is a protocol. The red colour gained <code>&amp;&amp; !isScanning</code>: a scan now starts as <code>Scanning(found = [])</code>, so m01's rule (<code>devices?.isEmpty == true</code>) alone would paint "Scanning…" red, the bug from Lesson 04's toy. SwiftUI never hits it, because its <code>if</code> checks <code>isScanning</code> first. A hand-written <code>render()</code> computes each widget separately, so each derivation has to be checked again.</li>
+    <li><strong><code>renderError</code></strong> presents an alert when there's a message and nothing is presented already. OK calls <code>errorShown()</code>. The text field owns the filter, and the Scan action reads it.</li>
+  </ol>
+  </div>
+  </div>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>Same owner, same watcher. SwiftUI needs an <code>@Observable</code> object in between, because a view can only re-render from observable state, while UIKit's callback calls <code>render</code> directly. UIKit decides when to observe (<code>viewWillAppear</code>/<code>viewDidDisappear</code>). The SwiftUI observer watches for its whole life, which for the root screen is the app's life.</p>
+
+  <div class="callout gotcha">
+    <span class="label">Gotcha · Swift 6 rejects the obvious bridge</span>
+    The first attempt wrapped the watcher in an <code>AsyncStream</code>, so SwiftUI could <code>for await</code> it in <code>.task</code>. Swift 6 stopped it twice: <code>capture of 'watch' with non-Sendable type 'Watch' in a '@Sendable' closure</code>, and after that was worked around, <code>sending '$0' risks causing data races</code>. Kotlin classes reach Swift without any <code>Sendable</code> information, so every hop across a concurrency boundary is suspect. The callback-into-<code>@Observable</code> shape above crosses no such boundary, so it compiles clean. Part B's SKIE generates bridges that satisfy the checker for you.
+  </div>
+
+  <h2>A6. What actually happens</h2>
+  <p>We built Part A with the brief below (Kotlin 2.4.21, Lifecycle 2.11.0, coroutines 1.11.0, AGP 9.4.1, Xcode 26.2) on all four tracks, and ran it on the Android 16 emulator and the iOS 26.2 simulator. Tap Scan: rows appear one by one under "Scanning…", every 0.3 s. At 3 s the scan stops and the status reads "Devices found: 5". <strong>Rotate during a scan: it carries on</strong>, and the new screen finishes with all five devices (in m01, it fell back to "Tap Scan"). The filter <code>fail</code> shows a "Scan failed" dialog that survives rotation and goes away on OK.</p>
+  <div class="shots">
+    <figure><img src="../assets/l05/android-scanning.png" alt="Android app mid-scan: Scanning… with two device rows"><figcaption>Compose · mid-scan</figcaption></figure>
+    <figure><img src="../assets/l05/android-error.png" alt="Android app showing a Scan failed dialog"><figcaption>Compose · filter "fail"</figcaption></figure>
+    <figure><img src="../assets/l05/ios-scanning.png" alt="iOS app mid-scan: Scanning… with three device rows"><figcaption>SwiftUI · mid-scan</figcaption></figure>
+    <figure><img src="../assets/l05/ios-error.png" alt="iOS app showing a Scan failed alert"><figcaption>SwiftUI · filter "fail"</figcaption></figure>
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · iOS: a ViewModel without an owner keeps working after its screen is gone</span>
+    We held the ViewModel directly in <code>@State</code> (no <code>ViewModelOwner</code>), started a scan, and replaced the list view mid-scan. The log showed <strong>two scans interleaving</strong>: the new screen's, and the old ViewModel's, still finding devices for a screen that no longer existed. <code>onCleared()</code> never ran. With the owner, the old ViewModel was cleared at once and its scan stopped. With a real radio, that orphaned scan is a battery drain nobody can see. Every shared ViewModel on iOS needs an owner that clears it.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · <code>ViewModelStore.put</code> compiles from Swift, but isn't yours to call</span>
+    Our first owner called <code>store.put(key:viewModel:)</code> directly, and it worked. But <code>put</code> is <code>@RestrictTo(LIBRARY_GROUP)</code> in the Lifecycle sources: internal to AndroidX, free to change. Android lint would flag it in Kotlin, but nothing checks Swift. Hence the public <code>ViewModelProvider</code> route in <code>ViewModelResolver.kt</code>.
+  </div>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to trace one emission end to end on your tracks: the line in the ViewModel that changes state, how the new value reaches your UI code (collector, watcher callback, or <code>render</code>), and what re-renders. Then ask: "During a scan I open a device, wait 5 s, and come back. Which lines run, and in what order?"
+  </div>
+
+  <h3>Retrieval check: Part A</h3>
+  <div class="quiz mcq">
+    <p class="q">Where does the scan coroutine run in m02?</p>
+    <div class="opts">
+      <button class="opt">in the screen's own coroutine scope</button>
+      <button class="opt" data-correct>in viewModelScope, owned by the ViewModel</button>
+      <button class="opt">in a global scope that lives forever</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">It's launched in <code>viewModelScope</code>, so it lives as long as the ViewModel and is cancelled when the ViewModel is cleared.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The error dialog is open and the user rotates the phone. What happens?</p>
+    <div class="opts">
+      <button class="opt" data-correct>it shows again: the message is still state</button>
+      <button class="opt">it's lost: one-off events can't survive rotation</button>
+      <button class="opt">it shows twice: once per Activity instance</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>errorMessage</code> stays non-null until <code>errorShown()</code>, so the new screen renders the dialog again. That's why Android recommends state over event streams.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why must Swift's ViewModel owner clear the store in <code>deinit</code>?</p>
+    <div class="opts">
+      <button class="opt">to free the memory the ViewModel used</button>
+      <button class="opt" data-correct>to cancel viewModelScope and its running work</button>
+      <button class="opt">to stop the StateFlow from emitting values</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Memory would be reclaimed anyway. Without <code>clear()</code>, <code>onCleared</code> never runs and coroutines in <code>viewModelScope</code> keep going: the orphaned scan in A6.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Without SKIE, what type does Swift give <code>viewModel.uiState.value</code>?</p>
+    <div class="opts">
+      <button class="opt">DeviceListUiState, as declared</button>
+      <button class="opt" data-correct>Any?, because the generic is lost</button>
+      <button class="opt">StateFlow of DeviceListUiState</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>StateFlow</code> is an interface, which becomes an Objective-C protocol, and protocols keep no generics. That's why <code>StateFlowWatcher</code> is a class.</p>
+  </div>
+
+  <div class="callout exercise">
+    <span class="label">Unaided exercise · Part A (no agent, on your Part A build)</span>
+    <ol>
+      <li><strong>Watch the ViewModel die.</strong> Add <code>override fun onCleared() { println("DeviceListViewModel cleared") }</code> to the ViewModel. <em>Predict first:</em> on Android, does it print when you rotate? When you open a device? When you press Back on the list? On iOS, when? Then check in Logcat and the Xcode console, and explain each answer using A1's lifetime list.</li>
+      <li><strong>Show progress.</strong> Make the status read "Scanning… 3 found" while scanning. Decide first which layer owns that text, then implement it on your tracks <em>without touching the ViewModel</em>.</li>
+      <li><strong>Break the copy.</strong> In <code>startScan</code>, pass <code>found</code> instead of <code>found.toList()</code> to <code>Scanning(…)</code>. Predict what the list shows during a scan, run it, and explain using A3's ViewModel point 7. Revert.</li>
+    </ol>
+  </div>
+
+  <!-- ============================== PART B ============================== -->
+  <p class="part">Part B — SKIE: let the compiler write the bridge (~1.5 h)</p>
+
+  <h2>B1. What SKIE does</h2>
+  <p><a href="https://skie.touchlab.co/">SKIE</a> (Touchlab) is a Kotlin compiler plugin. While the iOS framework is built, it generates extra Swift code into the framework, so Kotlin types arrive in Swift in a Swift shape:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Kotlin</th><th>Without SKIE</th><th>With SKIE</th></tr>
+    <tr><td><code>Flow&lt;T&gt;</code>, <code>StateFlow&lt;T&gt;</code></td><td>untyped protocol, no iteration</td><td><code>SkieSwiftStateFlow&lt;T&gt;</code>: an <code>AsyncSequence</code> of <code>T</code>, with a typed <code>value</code>. "SKIE automatically converts Flows to custom Swift classes that implement <code>AsyncSequence</code>" (<a href="https://skie.touchlab.co/features/flows">Flows</a>)</td></tr>
+    <tr><td>sealed class / interface</td><td>protocol + classes, cast with <code>as?</code></td><td><code>onEnum(of:)</code> returns a generated Swift enum, so <code>switch</code> is exhaustive (<a href="https://skie.touchlab.co/features/sealed">Sealed classes</a>)</td></tr>
+    <tr><td><code>suspend fun</code></td><td>completion handler, or experimental <code>async</code></td><td>Swift <code>async</code> with cancellation (Lessons 08+)</td></tr>
+  </table>
+  </div>
+  <p>Cancellation works in both directions. Ending a Swift <code>for await</code> loop (because its <code>Task</code> was cancelled) cancels the Kotlin collection. "If the Flow is canceled from Kotlin, SKIE automatically cancels the Swift task that collects the Flow", and the loop simply ends without throwing (<a href="https://skie.touchlab.co/features/flows">Flows</a>). This replaces A5's <code>StateFlowWatcher</code> and <code>Watch</code>.</p>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · SKIE is pinned to exact Kotlin versions</span>
+    Adding SKIE 0.10.15 (the latest) to our Kotlin 2.4.21 project failed at configuration time:
+<pre><code>Error: SKIE 0.10.15 does not support Kotlin 2.4.21.
+  Supported versions are: [2.0.0, 2.0.10, …, 2.4.0, 2.4.10, 2.4.20].
+  …
+  New Kotlin versions are usually supported within a few days after they are released.</code></pre>
+    A compiler plugin hooks into compiler internals, so each SKIE release supports a fixed list of Kotlin versions. From m02 on, the course uses <strong>Kotlin 2.4.20</strong>. Rule for the team's app: <strong>check SKIE's supported versions before bumping Kotlin</strong>, and move them together. The error message tells you how to switch SKIE off (<code>skie { isEnabled = false }</code>) if you're blocked.
+  </div>
+
+  <h2>B2. Install it</h2>
+  <p>Two build files change. In the root file, every Kotlin plugin goes to 2.4.20 and the SKIE plugin is declared. Your track decides which plugins the root file has:</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <p class="track-name">Compose track · build.gradle.kts (root)</p>
+  <pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20" apply false
+    id("co.touchlab.skie") version "0.10.15" apply false
+}</code></pre>
+  </div>
+  <div data-track="xml">
+  <p class="track-name">XML track · build.gradle.kts (root)</p>
+  <pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false
+    id("co.touchlab.skie") version "0.10.15" apply false
+}</code></pre>
+  </div>
+  </div>
+  <p class="track-name">shared/build.gradle.kts: one plugin line added, the rest as in A3</p>
+  <pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+    id("co.touchlab.skie")
+}
+
+kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+        compileSdk = 37
+        minSdk = 26
+    }
+
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target -&gt;
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            binaryOption("bundleId", "com.example.devicemonitor.shared")
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+        }
+    }
+}</code></pre>
+  <p>Then delete the bridge: <code>shared/src/iosMain/…/StateFlowWatcher.kt</code>, and on the SwiftUI track <code>iosApp/iosApp/DeviceListObserver.swift</code>. <code>ViewModelResolver.kt</code> and <code>ViewModelOwner.swift</code> stay, because SKIE doesn't own ViewModels. The Android apps don't change at all: SKIE only touches the iOS framework.</p>
+  <p><strong>Expected build noise.</strong> With SKIE, every build also prints about eleven Gradle lines of the form <code>Configuration '…' was resolved during configuration time</code> (naming <code>skieSubPlugin</code>, <code>skieCompilerPlugin</code> and others), and the Xcode build prints <code>SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder"</code>. These come from the plugin, not from our code, and they aren't compiler warnings. The "no warnings" rule is about <code>w:</code> and <code>warning:</code> lines from our Kotlin and Swift.</p>
+  <p><strong>Analytics.</strong> Each iOS link also runs <code>skieUploadAnalytics…</code>. SKIE collects build statistics it calls "non-identifying" (versions, durations, hardware, module and declaration counts, git counts) and uploads them to Touchlab (<a href="https://skie.touchlab.co/Analytics">SKIE Analytics</a>). If your team's policy forbids that, add <code>skie { analytics { enabled.set(false) } }</code> to <code>shared/build.gradle.kts</code>, which turns off both capture and upload. The course leaves the default on.</p>
+
+  <h2>B3. The iOS screens with SKIE</h2>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <p class="track-name">SwiftUI track · iosApp/iosApp/DeviceListView.swift (Part B, final)</p>
+  <pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @State private var owner = ViewModelOwner()
+    @State private var filter = ""
+    @State private var state: DeviceListUiState?
+
+    var body: some View {
+        let viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+        let state = self.state ?? viewModel.uiState.value
+        DeviceListContent(
+            filter: $filter,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+    }
+
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        switch onEnum(of: scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Button(action: onScan) {
+                Text("Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isScanning)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(id: device.id)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>@State private var owner = ViewModelOwner()</code></strong>: a cheap default, as Apple asks. <code>body</code> calls <code>owner.viewModel(…)</code> on every render and always gets the same instance (A5's point 1). We checked: one ViewModel per screen, created on the first render, and cleared when the view was replaced.</li>
+    <li><strong><code>.task { for await newState in viewModel.uiState { … } }</code></strong>: with SKIE, <code>uiState</code> is an <code>AsyncSequence</code> of <code>DeviceListUiState</code>, so no cast is needed. <code>.task</code> starts when the view appears and is cancelled when it disappears, which stops the Kotlin collection. That's SwiftUI's <code>collectAsStateWithLifecycle</code>.</li>
+    <li><strong><code>.task</code> runs again when you come back</strong> from the detail screen (Lesson 04's gotcha). Now that's harmless, because the task only <em>observes</em>. The scan lives in the ViewModel, and re-observing returns the latest state.</li>
+    <li><strong><code>self.state ?? viewModel.uiState.value</code></strong>: before the first emission arrives, read the flow's current value, which SKIE now types. A <code>StateFlow</code> always has one.</li>
+    <li><strong><code>switch onEnum(of: scan)</code></strong> is exhaustive: add a fourth Kotlin case and this stops compiling (exercise B1). Each case binds the typed Kotlin object, such as <code>scanning.found</code>.</li>
+    <li>Compiled in Swift 6 mode with <strong>zero warnings</strong>. The <code>Sendable</code> errors from A5 don't appear, because SKIE's generated types handle the concurrency hand-off.</li>
+  </ol>
+  </div>
+  <div data-track="uikit">
+  <p class="track-name">UIKit track · iosApp/iosApp/DeviceListViewController.swift (Part B, final)</p>
+  <pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let filterField = UITextField()
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = SampleDevices.shared.find(id: deviceId) {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            viewModel.startScan(filter: filterField.text ?? "")
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let stack = UIStackView(arrangedSubviews: [filterField, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(viewModel.uiState.value)
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+        let devices: [Device]? = switch onEnum(of: state.scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+        scanButton.isEnabled = !isScanning
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath) else { return }
+        navigationController?.pushViewController(DeviceDetailViewController(deviceId: deviceId), animated: true)
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><strong><code>observation = Task { for await state in viewModel.uiState { render(state) } }</code></strong> replaces the watcher. The <code>Task</code> inherits <code>@MainActor</code> from the view controller (Lesson 01), so <code>render</code> runs on the main thread. Cancelling it in <code>viewDidDisappear</code> ends the loop and the Kotlin collection.</li>
+    <li>The <code>Task</code> captures <code>self</code> strongly. That's fine here, because <code>viewDidDisappear</code> always cancels it, which ends the loop and releases <code>self</code>. Without that cancel, the loop would keep the view controller alive, and its ViewModel would never be cleared. <code>observation?.cancel()</code> before each new <code>Task</code> makes sure an old loop can never be left running.</li>
+    <li><strong><code>render(viewModel.uiState.value)</code></strong> in <code>viewDidLoad</code>: SKIE types <code>value</code>, so the watcher is no longer needed for the first frame.</li>
+    <li><strong><code>switch onEnum(of: state.scan)</code></strong> replaces the <code>as?</code> chain, and the compiler checks it's exhaustive.</li>
+  </ol>
+  </div>
+  </div>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>Both now do the same thing in their own lifecycle: start a <code>for await</code> over <code>uiState</code> when the screen appears, cancel it when it disappears. SwiftUI's <code>.task</code> does the cancel for you. UIKit stores the <code>Task</code> and cancels it in <code>viewDidDisappear</code>. SKIE removed the 23-line Kotlin watcher on both tracks, plus SwiftUI's 29-line observer, and both screens switched from casts to an exhaustive <code>switch</code>.</p>
+
+  <h2>B4. Where Kotlin↔Swift is heading</h2>
+  <p>JetBrains is building <strong>Swift export</strong>: Kotlin compiled to a real Swift API instead of an Objective-C header, with flows exported "as Swift's <code>AsyncSequence</code>" and sealed types mapped to Swift enums. Today it's in Alpha: "still incomplete, so breaking changes are expected" (<a href="https://kotlinlang.org/docs/native-swift-export.html">Swift export</a>). When it matures, it should do what SKIE does without a third-party plugin, and the Kotlin-version pinning goes away with it. Until then, the course uses SKIE.</p>
+  <p>Other options you'll meet in KMP codebases: <a href="https://github.com/rickclephas/KMP-NativeCoroutines">KMP-NativeCoroutines</a> (annotations that generate Swift wrappers for flows and suspend functions) and <a href="https://github.com/rickclephas/KMP-ObservableViewModel">KMP-ObservableViewModel</a>, which JetBrains' <a href="https://kotlinlang.org/docs/multiplatform/compose-viewmodel.html">Compose Multiplatform ViewModel page</a> recommends for owning shared ViewModels from SwiftUI. Both solve the same two jobs as A5: owning and observing.</p>
+
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to show you what SKIE generated for <code>uiState</code> and <code>ScanState</code>. <code>Shared.h</code> doesn't change: the typed flow is declared in <code>Shared.framework/Headers/Shared.apinotes</code>, and the Swift code (<code>onEnum</code>, <code>SkieSwiftStateFlow</code>) is under <code>shared/build/skie/…/swift/generated/</code>. Then ask: "What would break, and where, if we bumped Kotlin to 2.4.21 tomorrow?"
+  </div>
+
+  <h3>Retrieval check: Part B</h3>
+  <div class="quiz mcq">
+    <p class="q">What does SKIE turn a Kotlin <code>StateFlow&lt;T&gt;</code> into?</p>
+    <div class="opts">
+      <button class="opt">a Combine publisher of T values</button>
+      <button class="opt" data-correct>a typed Swift AsyncSequence of T</button>
+      <button class="opt">an @Observable Swift class holding T</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>SkieSwiftStateFlow&lt;T&gt;</code> conforms to <code>AsyncSequence</code>. You iterate it with <code>for await</code>, typically inside <code>.task</code> or a stored <code>Task</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The team bumps Kotlin to a version released yesterday. What's the likely first failure?</p>
+    <div class="opts">
+      <button class="opt">Swift code that iterates flows stops compiling</button>
+      <button class="opt" data-correct>Gradle configuration fails on the SKIE plugin</button>
+      <button class="opt">the Android app crashes when it starts up</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SKIE checks the Kotlin version when Gradle configures the project and refuses unsupported versions, before anything compiles.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">With SKIE in place, which file does iOS still need?</p>
+    <div class="opts">
+      <button class="opt">StateFlowWatcher, to collect on main</button>
+      <button class="opt" data-correct>ViewModelOwner, to clear the ViewModel</button>
+      <button class="opt">DeviceListObserver, to mirror the state</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SKIE bridges types; it doesn't own anything. Clearing ViewModels is still your job on iOS.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">After rotating, the m02 list collects <code>uiState</code> again. What does a new collector receive first? (Lesson 01)</p>
+    <div class="opts">
+      <button class="opt" data-correct>the current value, then each new one</button>
+      <button class="opt">every value emitted since the start</button>
+      <button class="opt">nothing until the next state change</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A <code>StateFlow</code> always has a value and replays exactly that one to each new collector. That's why rotation shows the scan in progress immediately.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">On iOS, does rotating the phone recreate the list screen? (Lesson 02)</p>
+    <div class="opts">
+      <button class="opt">yes, like an Android Activity</button>
+      <button class="opt" data-correct>no, the same views are relaid</button>
+      <button class="opt">only when the scene is restored</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">iOS doesn't recreate view controllers or views on rotation. The ViewModel still matters on iOS: it keeps work out of views and shares the logic with Android.</p>
+  </div>
+
+  <div class="callout exercise">
+    <span class="label">Unaided exercise · Part B (no agent, on your m02 build)</span>
+    <ol>
+      <li><strong>Let the compilers find the screens.</strong> Add a fourth case, <code>data class Stopped(val found: List&lt;Device&gt;) : ScanState</code>, and build both apps without changing anything else. List every error, with file and line, on each platform. Then go back to your Part A code (where Swift used <code>as?</code>) and repeat: what does the compiler say now, and what would the user see? Remove the case.</li>
+      <li><strong>A Stop button.</strong> Add <code>fun stopScan()</code> to the ViewModel: it cancels the scan, and the screen ends up showing what was found so far. Before writing it, predict whether the <code>_uiState.update { … Finished … }</code> line after <code>withTimeoutOrNull</code> runs when the job is cancelled, and check your prediction. Then make the Scan button read "Stop" while scanning (a derived label) on both of your tracks.</li>
+    </ol>
+  </div>
+
+  <!-- ============================== BRIEF ============================== -->
+  <h2>Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. It builds Part A first, stops for the checks, and only then does Part B. Read its code against the walkthroughs, run both apps yourself, and do the unaided exercises.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 05 (Shared ViewModels and Kotlin↔Swift): build milestone m02 on top of m01, in two stages.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m01 project in demo/ (Lesson 04). Use exactly the file contents shown in the
+lesson for my tracks, including package lines and imports. All paths relative to demo/.
+Commit (or tag) the end of each stage.
+
+STAGE A: shared ViewModel + hand-written iOS bridge (lesson Part A). Kotlin stays 2.4.21.
+1. Shared, all tracks (lesson A3, A5):
+     shared/build.gradle.kts (replaced, full file in A3)
+     shared/src/commonMain/kotlin/com/example/devicemonitor/
+       FakeDeviceScanner.kt, DeviceListUiState.kt, DeviceListViewModel.kt   (new)
+     shared/src/iosMain/kotlin/com/example/devicemonitor/
+       ViewModelResolver.kt, StateFlowWatcher.kt   (new)
+   Keep Device.kt, SampleDevices.kt, Greeting.kt, Platform*.kt as they are.
+2. Android (lesson A4):
+   Compose: androidApp/build.gradle.kts (add lifecycle-viewmodel-compose 2.11.0, full file in A4);
+     androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt (replaced).
+   XML: androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt (replaced).
+     androidApp/build.gradle.kts unchanged.
+   All other Android files unchanged from m01.
+   Build: ./gradlew :androidApp:assembleDebug   (never with -q: it hides w: warning lines)
+3. iOS (lesson A5). Run `xcodegen generate` in iosApp/ after adding or deleting Swift files.
+   Both: iosApp/iosApp/ViewModelOwner.swift (new).
+   SwiftUI: iosApp/iosApp/DeviceListObserver.swift (new), DeviceListView.swift (replaced, Part A).
+   UIKit: iosApp/iosApp/DeviceListViewController.swift (replaced, Part A).
+   All other iOS files unchanged from m01.
+   Build: xcodebuild -project iosApp.xcodeproj -scheme iosApp
+     -destination 'platform=iOS Simulator,name=&lt;an installed iPhone, iOS 17+&gt;' build
+
+STAGE B: SKIE (lesson Part B). Android sources don't change.
+4. build.gradle.kts (root): every Kotlin plugin 2.4.21 -&gt; 2.4.20, and declare
+     id("co.touchlab.skie") version "0.10.15" apply false   (full file per track in B2)
+   shared/build.gradle.kts: add id("co.touchlab.skie") to plugins (full file in B2).
+5. Delete shared/src/iosMain/kotlin/com/example/devicemonitor/StateFlowWatcher.kt.
+   SwiftUI: delete iosApp/iosApp/DeviceListObserver.swift; replace DeviceListView.swift (Part B).
+   UIKit: replace DeviceListViewController.swift (Part B).
+   Keep ViewModelResolver.kt and ViewModelOwner.swift. Run xcodegen generate, then build both apps.
+   Expected and not ours: Gradle "Configuration '…' was resolved during configuration time"
+   lines and an SLF4J line from the SKIE plugin (lesson B2).
+
+Acceptance checks, after EACH stage (emulator + simulator):
+- Both builds succeed with no compiler warnings from our Kotlin or Swift code, including the
+  Kotlin/Native link step that runs inside the Xcode build.
+- Launch: as m01 ("Device Monitor", filter field, Scan button, "Tap Scan to look for devices.").
+- Tap Scan: button disabled, spinner + "Scanning…" in the normal (not red) colour; rows appear one
+  at a time (~0.3 s apart) in SampleDevices order; after ~3 s "Devices found: 5", button enabled.
+- Filter "sens": one row. Filter "zzz": "Scanning…" for ~3 s, then the red
+  "No devices found. Try another filter."
+- Filter "fail": a "Scan failed" dialog/alert with "Bluetooth adapter not responding (simulated).";
+  OK closes it; status "Tap Scan to look for devices."
+- Rows open the detail screen; Back returns with the results still shown.
+- Android: rotate DURING a scan: the scan continues and ends with "Devices found: 5" (m01 lost
+  it). Rotate with the "Scan failed" dialog open: the dialog is still there.
+- iOS: confirm the ViewModel is cleared with its screen. Temporarily add printlns to the
+  ViewModel: in init, in onCleared(), and in the collect block, each printing
+  this@DeviceListViewModel.hashCode() (a bare hashCode() inside launch is the coroutine's).
+  During a scan, replace the list screen: SwiftUI: make ContentView change the list view's
+  .id(); UIKit: set view.window?.rootViewController = UINavigationController(
+  rootViewController: DeviceListViewController()). Check the console: the old ViewModel prints
+  one "cleared", and finds no device after that line. Remove the temporary code.
+Then walk me through each file line by line, tied to the lesson's walkthrough numbers. Show me
+the Swift names in Shared.h for uiState and ScanState before SKIE; after SKIE, show the typed
+flow in Shared.framework/Headers/Shared.apinotes and the generated Swift under
+shared/build/skie/…/swift/generated/ (Shared.h itself doesn't change). Do NOT do the unaided exercises for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/shared-viewmodel-cheatsheet.html">Cheatsheet: shared ViewModels across four tracks</a>: the ViewModel shape, owning and observing per track, what Swift sees with and without SKIE.</li>
+    <li>Android: <a href="https://developer.android.com/topic/architecture/ui-layer">UI layer</a> (primary source), <a href="https://developer.android.com/topic/architecture/ui-layer/events">UI events</a>, <a href="https://developer.android.com/topic/libraries/architecture/viewmodel">ViewModel overview</a>, <a href="https://developer.android.com/kotlin/multiplatform/viewmodel">KMP ViewModel</a>, <a href="https://developer.android.com/kotlin/flow/stateflow-and-sharedflow">StateFlow and SharedFlow</a>, <a href="https://developer.android.com/topic/libraries/architecture/views/coroutines-views">Coroutines with Views (repeatOnLifecycle)</a>.</li>
+    <li>Kotlin↔Swift: <a href="https://kotlinlang.org/docs/native-objc-interop.html">Swift/Objective-C interop</a>, SKIE's <a href="https://skie.touchlab.co/features/flows">Flows</a> and <a href="https://skie.touchlab.co/features/sealed">Sealed classes</a>, <a href="https://kotlinlang.org/docs/native-swift-export.html">Swift export (Alpha)</a>.</li>
+    <li>Apple: <a href="https://developer.apple.com/documentation/swiftui/state">State</a> (the "Store observable objects" section), <a href="https://developer.apple.com/documentation/observation">Observation</a>.</li>
+    <li><a href="../reference/glossary.html">Course glossary</a>: new terms from this lesson are marked (05).</li>
+    <li>Wisdom: the <a href="https://surveys.jetbrains.com/s3/kotlin-slack-sign-up">Kotlin Slack</a>, channel #multiplatform (JetBrains engineers answer KMP questions there), and <a href="https://reddit.com/r/Kotlin">r/Kotlin</a>. Ask or search for "shared ViewModel SwiftUI lifecycle" to see how other teams own shared ViewModels on iOS.</li>
+  </ul>
+
+  <nav class="progress-links">
+    <a href="04-declarative-ui.html">← 04 Declarative UI</a>
+    <span class="muted">Next: 06 Clean architecture, DI, and testing the core</span>
+  </nav>
+</main>
+
+<script>
+// A1 toy: the same scan, owned by the screen (m01) or by a ViewModel (m02).
+// Rotating destroys the screen; leaving destroys it for good. Logs say why each phone acts as it does.
+document.addEventListener("DOMContentLoaded", () => {
+  const SAMPLE = ["OBD-II Adapter", "Heart Rate Monitor", "Tire Pressure Sensor", "Thermometer", "Smart Scale"];
+  const STEP = 700, TIMEOUT = 4200;
+  const $ = (id) => document.getElementById(id);
+  const noOwner = $("vm-toy-noowner");
+  let m01, m02, timers = [];
+
+  const log = (id, line) => { const el = $(id); el.textContent += line + "\n"; el.scrollTop = el.scrollHeight; };
+  const clearTimers = (owner) => { timers = timers.filter((t) => (t.owner === owner ? (clearTimeout(t.id), false) : true)); };
+  const later = (owner, ms, fn) => timers.push({ owner, id: setTimeout(fn, ms) });
+
+  const screenOf = (scan, alive) => {
+    if (!alive) return { title: "(screen gone)", buttonEnabled: false, status: "" };
+    if (scan.kind === "idle") return { status: "Tap Scan to look for devices." };
+    if (scan.kind === "scanning") return { buttonEnabled: false, spinner: true, status: "Scanning…", rows: scan.found };
+    return scan.found.length ? { status: `Devices found: ${scan.found.length}`, rows: scan.found }
+      : { status: "No devices found.", statusError: true };
+  };
+  const draw = () => {
+    PhoneToy.draw($("vm-toy-screen"), screenOf(m01.scan, m01.alive));
+    PhoneToy.draw($("vm-toy-vm"), screenOf(m02.scan, m02.alive));
+  };
+
+  // Streams SAMPLE into target.scan until the timeout, through the given scope (owner key).
+  const runScan = (owner, target, logId) => {
+    target.scan = { kind: "scanning", found: [] };
+    SAMPLE.forEach((name, i) => later(owner, STEP * (i + 1), () => {
+      target.scan.found = [...target.scan.found, name];
+      if (!target.alive) log(logId, `  … found ${name} (nobody is watching)`);
+      draw();
+    }));
+    later(owner, TIMEOUT, () => {
+      target.scan = { kind: "finished", found: target.scan.found };
+      log(logId, target.alive ? "timeout: Finished" : "timeout: Finished, for a screen that's gone");
+      draw();
+    });
+  };
+
+  const reset = () => {
+    clearTimers("m01"); clearTimers("m02");
+    m01 = { alive: true, scan: { kind: "idle" }, saved: null };
+    m02 = { alive: true, scan: { kind: "idle" } };
+    $("vm-toy-log-screen").textContent = ""; $("vm-toy-log-vm").textContent = "";
+    draw();
+  };
+
+  const spin = (el) => { el.classList.add("rotated"); setTimeout(() => el.classList.remove("rotated"), 450); };
+
+  const on = {
+    scan() {
+      if (m01.alive && m01.scan.kind !== "scanning") { log("vm-toy-log-screen", "screen scope: launch scan"); runScan("m01", m01, "vm-toy-log-screen"); }
+      if (m02.alive && m02.scan.kind !== "scanning") { log("vm-toy-log-vm", "viewModelScope: launch scan"); runScan("m02", m02, "vm-toy-log-vm"); }
+    },
+    rotate() {
+      if (m01.alive) {
+        spin($("vm-toy-screen"));
+        const wasScanning = m01.scan.kind === "scanning";
+        clearTimers("m01");
+        // rememberSaveable kept finished results; a running scan can't be saved.
+        m01.scan = m01.scan.kind === "finished" ? m01.scan : { kind: "idle" };
+        log("vm-toy-log-screen", wasScanning ? "Activity destroyed: screen scope cancelled, scan lost" : "Activity destroyed: saved results restored");
+      }
+      if (m02.alive) {
+        spin($("vm-toy-vm"));
+        log("vm-toy-log-vm", "Activity destroyed: ViewModel kept");
+        log("vm-toy-log-vm", `new screen collects uiState: ${m02.scan.kind}${m02.scan.found ? ` (${m02.scan.found.length} found)` : ""}`);
+      }
+    },
+    leave() {
+      if (m01.alive) {
+        m01.alive = false; clearTimers("m01");
+        log("vm-toy-log-screen", "screen destroyed: its scope cancelled, scan stops");
+      }
+      if (m02.alive) {
+        m02.alive = false;
+        if (noOwner.checked) {
+          log("vm-toy-log-vm", "view gone, but nobody clears the ViewModel");
+        } else {
+          clearTimers("m02");
+          log("vm-toy-log-vm", "owner gone: ViewModel cleared, viewModelScope cancelled");
+        }
+      }
+    },
+    reset,
+  };
+
+  document.querySelectorAll("#vm-toy [data-ev]").forEach((b) =>
+    b.addEventListener("click", () => { on[b.dataset.ev](); draw(); }));
+  reset();
+});
+</script>
+</body>
+</html>

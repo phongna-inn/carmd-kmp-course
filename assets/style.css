@@ -336,7 +336,12 @@ pre.brief-text { white-space: pre-wrap; font-size: 0.78em; padding-top: 2.2rem; 
 .phone .p-row { border-bottom: 1px solid var(--rule); padding: 0.25rem 0; }
 @keyframes p-spin { to { transform: rotate(360deg); } }
 .toy pre.toy-state { margin: 0.9rem 0 0; font-size: 0.75em; }
-@media (prefers-reduced-motion: reduce) { .phone .p-spin { animation: none; } }
+/* Event log under a phone, a checkbox among the controls, and a "rotate" flourish (Lesson 05). */
+.toy pre.toy-log { margin: 0.5rem 0 0; font-size: 0.7em; height: 7.5rem; overflow-y: auto; white-space: pre-wrap; }
+.toy-toggle { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.8rem; color: var(--ink-soft); }
+.phone { transition: transform 0.4s ease; }
+.phone.rotated { transform: rotate(90deg) scale(0.6); }
+@media (prefers-reduced-motion: reduce) { .phone .p-spin { animation: none; } .phone { transition: none; } }
 
 /* ---- Screenshot strip (lesson "what actually happens" sections) ---- */
 .shots { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 0.75rem; margin: 1rem 0 1.5rem; }
