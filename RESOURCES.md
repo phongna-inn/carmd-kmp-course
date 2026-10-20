@@ -68,7 +68,7 @@
 - [Apple: Information property list](https://developer.apple.com/documentation/bundleresources/information-property-list) and [Logger](https://developer.apple.com/documentation/os/logger)
   Use for: Lesson 04.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-  Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 04 (before the KMP template from Lesson 05 supplies the project).
+  Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 04, and the KMP project's `iosApp` from Lesson 05 on.
 - [Kotlin Multiplatform: project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-discover-project.html), [Hierarchical project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-hierarchy.html) and [Expected and actual declarations](https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html)
   Official JetBrains docs: targets, source sets, intermediate source sets, expect/actual rules and when to prefer interfaces. Use for: Lesson 03 (project structure is the primary source), Lesson 06 (ports).
 - [Android: Set up the Android Gradle Library Plugin for KMP](https://developer.android.com/kotlin/multiplatform/plugin)

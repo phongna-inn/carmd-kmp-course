@@ -23,14 +23,14 @@
   </div>
 
   <div class="mission-tie">
-    <strong>Why this matters:</strong> the OS, not your code, decides when your app's screens are created, hidden, and destroyed. A BLE connection kept in the wrong object silently disappears when the phone rotates. Today you build a tiny Android app that logs every lifecycle event, then watch the logs while you poke it.
+    <strong>Why this matters:</strong> the OS, not your code, decides when your app's screens are created, hidden, and destroyed. A BLE connection kept in the wrong object silently disappears when the phone rotates. Today you build a tiny Android app that logs its lifecycle callbacks, then watch the logs while you poke it.
   </div>
 
   <p><span class="tag">Primary sources</span> Android's <a href="https://developer.android.com/guide/components/activities/activity-lifecycle">The activity lifecycle</a>, and <a href="https://developer.android.com/guide/topics/resources/runtime-changes">Handle configuration changes</a> for the rotation gotcha.</p>
   <p><span class="tag">Tracks</span> Use the switcher above to pick your UI track. Most of today's ideas are the same on both tracks. Only the code that puts something on screen differs.</p>
 
   <h2>1. What's in an Android project</h2>
-  <p>A Gradle project is a handful of build files plus one module, <code>app</code>. Your code, the manifest and the resources live under <code>app/src/main/</code>.</p>
+  <p>Today's Gradle project is a handful of build files plus one module, <code>app</code>. Your code, the manifest and the resources live under <code>app/src/main/</code>.</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 640 330" role="img" aria-labelledby="l03-tree-title">
       <title id="l03-tree-title">The files of the scratch Android project and what each one does. Project root: settings.gradle.kts says which modules exist and where libraries come from; build.gradle.kts holds plugin versions for the whole project; gradle.properties holds project-wide Gradle settings; gradle/wrapper pins the Gradle version. Inside app: build.gradle.kts holds the module's SDK levels, features and dependencies; src/main/AndroidManifest.xml declares the app's components and permissions to the OS; src/main/java/…/MainActivity.kt is the app's one Activity; src/main/res holds resources such as layouts, strings and images.</title>
@@ -129,7 +129,7 @@ dependencies {
   <p>The <strong>Manifest</strong> declares components to the OS. The <code>MAIN</code> + <code>LAUNCHER</code> intent filter is what puts the app's icon in the launcher (<a href="https://developer.android.com/guide/topics/manifest/manifest-intro">Android: App manifest</a>). Permissions get declared here as well, from Lesson 12.</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 640 200" role="img" aria-labelledby="l03-intent-title">
-      <title id="l03-intent-title">Two paths through the Android OS. Top: you tap the app's icon in the launcher, the OS finds MainActivity through the MAIN and LAUNCHER intent filter in the manifest, and MainActivity is created. Bottom: MainActivity calls startActivity with an implicit intent, the OS looks for an app with a matching intent filter, and for example a browser's Activity opens on top of yours.</title>
+      <title id="l03-intent-title">Two paths through the Android OS. Top: the launcher shows an icon for MainActivity because its manifest has the MAIN and LAUNCHER intent filter; you tap the icon, the launcher asks the OS to start that Activity, and MainActivity is created. Bottom: MainActivity calls startActivity with an implicit intent, the OS looks for an app with a matching intent filter, and for example a browser's Activity opens on top of yours.</title>
       <defs><marker id="l03-intent-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <text class="small muted" x="20" y="14">Starting your app</text>
       <rect class="box" x="20" y="24" width="170" height="54" rx="6"/>
@@ -137,7 +137,7 @@ dependencies {
       <text class="small muted" x="105" y="64" text-anchor="middle">you tap the icon</text>
       <rect class="box" x="235" y="24" width="170" height="54" rx="6"/>
       <text class="mono" x="320" y="46" text-anchor="middle">Android OS</text>
-      <text class="small muted" x="320" y="64" text-anchor="middle">reads MAIN + LAUNCHER</text>
+      <text class="small muted" x="320" y="64" text-anchor="middle">starts the icon's Activity</text>
       <rect class="box" x="450" y="24" width="170" height="54" rx="6"/>
       <text class="mono" x="535" y="46" text-anchor="middle">MainActivity</text>
       <text class="small muted" x="535" y="64" text-anchor="middle">created, then started</text>
@@ -156,7 +156,7 @@ dependencies {
       <path class="edge" d="M190,153 L233,153" marker-end="url(#l03-intent-arrow)"/>
       <path class="edge" d="M405,153 L448,153" marker-end="url(#l03-intent-arrow)"/>
     </svg>
-    <figcaption>The manifest is what the OS reads to find your Activity. An Intent is the message that asks the OS to start one.</figcaption>
+    <figcaption>The launcher shows an icon for each Activity whose manifest entry has the <code>MAIN</code> + <code>LAUNCHER</code> intent filter. An Intent is the message that asks the OS to start an Activity.</figcaption>
   </figure>
   <div class="tracks">
   <div data-track="compose">
@@ -200,7 +200,7 @@ dependencies {
   </div>
   </div>
   <ol class="walk">
-    <li>The <code>MAIN</code> action and <code>LAUNCHER</code> category are what make this Activity the one the launcher starts. <code>android:exported="true"</code> lets another app, here the launcher, start it. Since Android 12 you must say so explicitly on any Activity that has an intent filter (<a href="https://developer.android.com/guide/topics/manifest/activity-element#exported"><code>&lt;activity&gt;</code> reference</a>).</li>
+    <li>The <code>MAIN</code> action and <code>LAUNCHER</code> category are what make this Activity the one the launcher starts. <code>android:exported="true"</code> lets another app, here the launcher, start it. If the app targets Android 12 (API 31) or higher, as ours does, you must say so explicitly on any Activity that has an intent filter, or the app won't install (<a href="https://developer.android.com/about/versions/12/behavior-changes-12#exported">Android 12 behaviour changes</a>, <a href="https://developer.android.com/guide/topics/manifest/activity-element#exported"><code>&lt;activity&gt;</code> reference</a>).</li>
     <li data-track="xml">The XML track's <code>AppCompatActivity</code> crashes at launch unless the theme is an AppCompat theme.</li>
   </ol>
   <p>The Intent in the app is the one the button sends. Opening a web page is an <em>implicit</em> intent: you name the action and the data, not a class, and the OS finds an app that can handle it.</p>

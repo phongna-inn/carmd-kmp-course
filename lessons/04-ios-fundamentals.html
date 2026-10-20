@@ -216,7 +216,7 @@ struct ContentView: View {
   <ol class="walk">
     <li><code>@main struct … : App</code> is the entry point. There's no AppDelegate; SwiftUI owns the app object.</li>
     <li><code>@Environment(\.scenePhase)</code> reads a value SwiftUI provides. Watching it with <code>.onChange(of:)</code> at the <code>Scene</code> level gives you the app-level lifecycle.</li>
-    <li>Each log message is a fixed string per case. Logger treats <em>interpolated</em> values as private by default and can show them as <code>&lt;private&gt;</code> in stored logs. Fixed strings never are.</li>
+    <li>Each log message is a fixed string per case. Logger redacts <em>interpolated</em> strings and objects by default and can show them as <code>&lt;private&gt;</code> in stored logs. Fixed strings never are.</li>
     <li><code>@unknown default</code> handles phases Apple may add in future iOS versions. <code>ScenePhase</code> isn't a closed enum the way your own are.</li>
     <li><code>onAppear</code>/<code>onDisappear</code> are attached to views. They report what happens <em>inside</em> the app (navigation), not whether the app is in front.</li>
   </ol>
@@ -306,7 +306,7 @@ final class DetailViewController: UIViewController {
     <li><code>SceneDelegate</code> creates the window and its root: a <code>UINavigationController</code>, which gives you push/pop navigation and a back button.</li>
     <li>The four <code>scene…</code> methods are the app-level lifecycle you'd hook a background monitor into.</li>
     <li>The UI is built in code (no storyboard): create a view, add it, constrain it. <code>[weak self]</code> avoids a retain cycle between the view controller and its own button's action.</li>
-    <li>The view controller's callbacks are the view-level lifecycle. <code>viewDidLoad</code> runs when the screen's view is first created. The four appear/disappear callbacks run each time the screen is shown or hidden. Each override calls <code>super</code> first.</li>
+    <li>The view controller's callbacks are the view-level lifecycle. <code>viewDidLoad</code> runs when the screen's view is first created. The four appear/disappear callbacks run each time navigation shows or hides the screen (a push or a pop). Pressing Home fires none of them (section 4). Each override calls <code>super</code> first.</li>
     <li>Info.plist needs the <code>UIApplicationSceneManifest</code> entry from <code>project.yml</code>, shown in section 2. Without it the <code>SceneDelegate</code> never runs.</li>
   </ol>
   </div>
