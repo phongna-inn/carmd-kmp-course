@@ -135,7 +135,7 @@ fun render() = Screen(
   <table>
     <tr><th>Where</th><th>Compose</th><th>SwiftUI</th><th>XML / UIKit</th></tr>
     <tr><td>an <strong>event callback</strong> (a tap)</td><td><code>onClick = { … }</code>, plus <code>rememberCoroutineScope().launch</code> for async</td><td><code>Button(action:)</code>, plus <code>Task { }</code> for async</td><td>click listener / <code>UIAction</code>, then call <code>render()</code></td></tr>
-    <tr><td>a <strong>lifecycle-bound effect</strong> (on appear)</td><td><code>LaunchedEffect(key)</code></td><td><code>.task { }</code> / <code>.task(id:)</code></td><td><code>onViewCreated</code> / <code>viewDidLoad</code> (Lesson 02)</td></tr>
+    <tr><td>a <strong>lifecycle-bound effect</strong> (on appear)</td><td><code>LaunchedEffect(key)</code></td><td><code>.task { }</code> / <code>.task(id:)</code></td><td><code>onViewCreated</code> / <code>viewDidLoad</code> (Lesson 04)</td></tr>
   </table>
   </div>
   <p>The scan starts on a tap, so in m01 it lives in a callback. Android's guide says the same: "trigger side-effects from callbacks such as <code>onClick</code> that always execute on the UI thread" (<a href="https://developer.android.com/develop/ui/compose/mental-model">same page</a>).</p>
@@ -702,13 +702,13 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
   <table>
     <tr><th>After…</th><th>Compose</th><th>XML</th><th>SwiftUI / UIKit</th></tr>
     <tr><td>opening a device and coming back</td><td>filter + results kept (<code>rememberSaveable</code>). With plain <code>remember</code>, the results <strong>were lost</strong>: the list screen leaves composition while the detail is shown.</td><td>kept: the Fragment stays on the back stack, and only its views are rebuilt</td><td>kept: the list stays alive underneath the pushed screen</td></tr>
-    <tr><td>rotating, results on screen</td><td>kept (saved state)</td><td>kept (saved state)</td><td>kept: iOS doesn't recreate screens on rotation (Lesson 02)</td></tr>
+    <tr><td>rotating, results on screen</td><td>kept (saved state)</td><td>kept (saved state)</td><td>kept: iOS doesn't recreate screens on rotation (Lesson 04)</td></tr>
     <tr><td>rotating <em>during</em> a scan</td><td colspan="2">the scan is <strong>silently cancelled</strong> and the screen returns to "Tap Scan to look for devices."</td><td>the scan completes</td></tr>
   </table>
   </div>
   <div class="callout gotcha">
     <span class="label">Gotcha · Android forgets a running operation on rotation</span>
-    Rotation recreates the Activity (Lesson 02). That cancels the scope running the scan, and only explicitly saved values come back. For a fake scan that's an annoyance. For a BLE connection in Lesson 08 it's a dropped device. The fix isn't more saved state: move the operation <em>out of the screen</em>, into a ViewModel that survives configuration changes. That's Lesson 05, and it's why m02 exists.
+    Rotation recreates the Activity (Lesson 03). That cancels the scope running the scan, and only explicitly saved values come back. For a fake scan that's an annoyance. For a BLE connection in Lesson 08 it's a dropped device. The fix isn't more saved state: move the operation <em>out of the screen</em>, into a ViewModel that survives configuration changes. That's Lesson 05, and it's why m02 exists.
   </div>
 
   <h3>Retrieval check: Part A</h3>
@@ -1396,7 +1396,7 @@ final class DeviceDetailViewController: UIViewController {
   </div>
   <div class="callout gotcha">
     <span class="label">Gotcha · SwiftUI: <code>.task</code> and <code>onAppear</code> run again when you come back</span>
-    We logged a <code>.task</code> on the list view. It ran at launch and <strong>again</strong> after popping back from the detail screen, while the <code>@State</code> was untouched. Don't start a scan in <code>.task</code> or <code>onAppear</code> unless you want it on every return. This is Lesson 02's view lifecycle at work.
+    We logged a <code>.task</code> on the list view. It ran at launch and <strong>again</strong> after popping back from the detail screen, while the <code>@State</code> was untouched. Don't start a scan in <code>.task</code> or <code>onAppear</code> unless you want it on every return. This is Lesson 04's view lifecycle at work.
   </div>
   <div class="callout gotcha">
     <span class="label">Gotcha · layout surprises we hit</span>

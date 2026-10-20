@@ -1,0 +1,842 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>03 — Android Fundamentals</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 03 · Week 1 · Day 3 · Native Device Monitor course</p>
+  <h1>Android Fundamentals</h1>
+  <div class="meta">
+    <span class="tag">~1.75 h · +0.5 h per extra UI track</span>
+    <span class="tag">Milestone: scratch app (Android)</span>
+    <span class="tag">Prereq: <a href="02-swift-for-typescript-devs.html">02</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> the OS, not your code, decides when your app's screens are created, hidden, and destroyed. A BLE connection kept in the wrong object silently disappears when the phone rotates. Today you build a tiny Android app that logs every lifecycle event, then watch the logs while you poke it.
+  </div>
+
+  <p><span class="tag">Primary sources</span> Android's <a href="https://developer.android.com/guide/components/activities/activity-lifecycle">The activity lifecycle</a>, and <a href="https://developer.android.com/guide/topics/resources/runtime-changes">Handle configuration changes</a> for the rotation gotcha.</p>
+  <p><span class="tag">Tracks</span> Use the switcher above to pick your UI track. Most of today's ideas are the same on both tracks. Only the code that puts something on screen differs.</p>
+
+  <h2>1. What's in an Android project</h2>
+  <p>A Gradle project is a handful of build files plus one module, <code>app</code>. Your code, the manifest and the resources live under <code>app/src/main/</code>.</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 330" role="img" aria-labelledby="l03-tree-title">
+      <title id="l03-tree-title">The files of the scratch Android project and what each one does. Project root: settings.gradle.kts says which modules exist and where libraries come from; build.gradle.kts holds plugin versions for the whole project; gradle.properties holds project-wide Gradle settings; gradle/wrapper pins the Gradle version. Inside app: build.gradle.kts holds the module's SDK levels, features and dependencies; src/main/AndroidManifest.xml declares the app's components and permissions to the OS; src/main/java/…/MainActivity.kt is the app's one Activity; src/main/res holds resources such as layouts, strings and images.</title>
+      <text class="mono" x="20" y="16">Lesson03Android/</text>
+      <rect class="box" x="20" y="28" width="260" height="28" rx="6"/><text class="mono small" x="30" y="46">settings.gradle.kts</text>
+      <text class="small muted" x="300" y="46">which modules exist, and where libraries come from</text>
+      <rect class="box" x="20" y="64" width="260" height="28" rx="6"/><text class="mono small" x="30" y="82">build.gradle.kts</text>
+      <text class="small muted" x="300" y="82">plugin versions for the whole project</text>
+      <rect class="box" x="20" y="100" width="260" height="28" rx="6"/><text class="mono small" x="30" y="118">gradle.properties</text>
+      <text class="small muted" x="300" y="118">project-wide Gradle settings</text>
+      <rect class="box" x="20" y="136" width="260" height="28" rx="6"/><text class="mono small" x="30" y="154">gradle/wrapper/</text>
+      <text class="small muted" x="300" y="154">pins the Gradle version; build with ./gradlew</text>
+      <rect class="box" x="20" y="172" width="260" height="28" rx="6"/><text class="mono small" x="30" y="190">app/build.gradle.kts</text>
+      <text class="small muted" x="300" y="190">this module: SDK levels, features, dependencies</text>
+      <rect class="box" x="20" y="208" width="260" height="28" rx="6"/><text class="mono small" x="30" y="226">app/src/main/AndroidManifest.xml</text>
+      <text class="small muted" x="300" y="226">components and permissions, declared to the OS</text>
+      <rect class="box" x="20" y="244" width="260" height="28" rx="6"/><text class="mono small" x="30" y="262">app/src/main/java/…/MainActivity.kt</text>
+      <text class="small muted" x="300" y="262">the app's one Activity</text>
+      <rect class="box" x="20" y="280" width="260" height="28" rx="6"/><text class="mono small" x="30" y="298">app/src/main/res/</text>
+      <text class="small muted" x="300" y="298">resources: layouts (XML track), strings, images</text>
+    </svg>
+    <figcaption>The files that matter today. The project's other generated folders (<code>build/</code>, <code>.gradle/</code>) aren't part of your source.</figcaption>
+  </figure>
+  <p>The module build file is where you'll spend most of your Gradle time (<a href="https://developer.android.com/build/gradle-build-overview">Android: Gradle build overview</a>). Each excerpt below shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt">
+    <figcaption class="path">app/build.gradle.kts</figcaption>
+<pre><code>plugins {
+    id("com.android.application")
+<mark>    id("org.jetbrains.kotlin.plugin.compose")</mark>
+}
+
+android {
+    namespace = "com.example.lesson03"
+<mark>    compileSdk = 37</mark>
+
+    defaultConfig {
+        applicationId = "com.example.lesson03"
+<mark>        minSdk = 26</mark>
+<mark>        targetSdk = 36</mark>
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures { compose = true }
+}
+<span class="elide">⋯ dependencies { }</span></code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">app/build.gradle.kts</figcaption>
+<pre><code><span class="elide">⋯ plugins { } and android { }</span>
+dependencies {
+<mark>    implementation(platform("androidx.compose:compose-bom:2026.09.00"))</mark>
+<mark>    implementation("androidx.core:core-ktx:1.19.1")</mark>
+    implementation("androidx.activity:activity-compose:1.13.0")
+<mark>    implementation("androidx.compose.material3:material3")</mark>
+}</code></pre>
+  </figure>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt">
+    <figcaption class="path">app/build.gradle.kts</figcaption>
+<pre><code>plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.example.lesson03"
+<mark>    compileSdk = 37</mark>
+
+    defaultConfig {
+        applicationId = "com.example.lesson03"
+<mark>        minSdk = 26</mark>
+<mark>        targetSdk = 36</mark>
+        versionCode = 1
+        versionName = "1.0"
+    }
+}
+
+dependencies {
+<mark>    implementation("androidx.core:core-ktx:1.19.1")</mark>
+<mark>    implementation("androidx.appcompat:appcompat:1.8.0")</mark>
+}</code></pre>
+  </figure>
+  </div>
+  </div>
+  <ol class="walk">
+    <li><strong>No Kotlin plugin.</strong> Since Android Gradle Plugin 9, Kotlin support is built in. Applying the old <code>org.jetbrains.kotlin.android</code> plugin now <em>fails the build</em>, so delete it if older tutorials tell you to add it (<a href="https://developer.android.com/build/migrate-to-built-in-kotlin">Android: Migrate to built-in Kotlin</a>). <span data-track="compose">The Compose track still applies the Compose <em>compiler</em> plugin.</span><span data-track="xml">The XML track needs no other plugin.</span></li>
+    <li><strong>Three SDK numbers, three different jobs.</strong> <code>compileSdk</code> is which Android APIs your code can <em>see</em> (current Compose libraries require 37). <code>minSdk</code> is the oldest Android version that can <em>install</em> the app. <code>targetSdk</code> is which version's <em>runtime behaviour</em> you opt into.</li>
+    <li><span data-track="compose">The <strong>BOM</strong> (bill of materials) pins one tested set of Compose library versions, which is why <code>material3</code> has no version of its own.</span><span data-track="xml"><code>appcompat</code> provides <code>AppCompatActivity</code> and backward-compatible themes for the View system.</span> <code>core-ktx</code> provides Kotlin helpers such as <code>String.toUri()</code>. Declare it explicitly instead of relying on another library to pull it in for you.</li>
+  </ol>
+
+  <h2>2. Activity, Context, Intent, Manifest</h2>
+  <p>An <strong>Activity</strong> is one entry point with a window and a lifecycle. Our app has exactly one, and so will the Native Device Monitor. A <strong>Context</strong> is your handle to the system: resources, system services (the Bluetooth service, later), and starting other components (<a href="https://developer.android.com/reference/android/content/Context">reference</a>). An Activity <em>is</em> a Context. An <strong>Intent</strong> is a message asking the OS to start something. It can be <em>explicit</em> (a class you own) or <em>implicit</em> ("anyone who can view a web page") (<a href="https://developer.android.com/guide/components/intents-filters">Android: Intents</a>).</p>
+  <p>The <strong>Manifest</strong> declares components to the OS. The <code>MAIN</code> + <code>LAUNCHER</code> intent filter is what puts the app's icon in the launcher (<a href="https://developer.android.com/guide/topics/manifest/manifest-intro">Android: App manifest</a>). Permissions get declared here as well, from Lesson 12.</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 200" role="img" aria-labelledby="l03-intent-title">
+      <title id="l03-intent-title">Two paths through the Android OS. Top: you tap the app's icon in the launcher, the OS finds MainActivity through the MAIN and LAUNCHER intent filter in the manifest, and MainActivity is created. Bottom: MainActivity calls startActivity with an implicit intent, the OS looks for an app with a matching intent filter, and for example a browser's Activity opens on top of yours.</title>
+      <defs><marker id="l03-intent-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small muted" x="20" y="14">Starting your app</text>
+      <rect class="box" x="20" y="24" width="170" height="54" rx="6"/>
+      <text class="mono" x="105" y="46" text-anchor="middle">Launcher</text>
+      <text class="small muted" x="105" y="64" text-anchor="middle">you tap the icon</text>
+      <rect class="box" x="235" y="24" width="170" height="54" rx="6"/>
+      <text class="mono" x="320" y="46" text-anchor="middle">Android OS</text>
+      <text class="small muted" x="320" y="64" text-anchor="middle">reads MAIN + LAUNCHER</text>
+      <rect class="box" x="450" y="24" width="170" height="54" rx="6"/>
+      <text class="mono" x="535" y="46" text-anchor="middle">MainActivity</text>
+      <text class="small muted" x="535" y="64" text-anchor="middle">created, then started</text>
+      <path class="edge" d="M190,51 L233,51" marker-end="url(#l03-intent-arrow)"/>
+      <path class="edge" d="M405,51 L448,51" marker-end="url(#l03-intent-arrow)"/>
+      <text class="small muted" x="20" y="116">Your app starting another one</text>
+      <rect class="box" x="20" y="126" width="170" height="54" rx="6"/>
+      <text class="mono" x="105" y="148" text-anchor="middle">MainActivity</text>
+      <text class="small muted" x="105" y="166" text-anchor="middle">startActivity(intent)</text>
+      <rect class="box" x="235" y="126" width="170" height="54" rx="6"/>
+      <text class="mono" x="320" y="148" text-anchor="middle">Android OS</text>
+      <text class="small muted" x="320" y="166" text-anchor="middle">finds a matching filter</text>
+      <rect class="box" x="450" y="126" width="170" height="54" rx="6"/>
+      <text class="mono" x="535" y="148" text-anchor="middle">A browser's Activity</text>
+      <text class="small muted" x="535" y="166" text-anchor="middle">opens on top of yours</text>
+      <path class="edge" d="M190,153 L233,153" marker-end="url(#l03-intent-arrow)"/>
+      <path class="edge" d="M405,153 L448,153" marker-end="url(#l03-intent-arrow)"/>
+    </svg>
+    <figcaption>The manifest is what the OS reads to find your Activity. An Intent is the message that asks the OS to start one.</figcaption>
+  </figure>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/AndroidManifest.xml</figcaption>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+
+    &lt;application
+        android:label="Lesson 03"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"&gt;
+
+        &lt;activity
+            android:name=".MainActivity"
+<mark>            android:exported="true"&gt;</mark>
+            &lt;intent-filter&gt;
+<mark>                &lt;action android:name="android.intent.action.MAIN" /&gt;</mark>
+<mark>                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;</mark>
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+  </figure>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/AndroidManifest.xml</figcaption>
+<pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;application
+        android:label="Lesson 03"
+<mark>        android:theme="@style/Theme.AppCompat.Light.NoActionBar"&gt;</mark>
+<mark>        &lt;activity android:name=".MainActivity" android:exported="true"&gt;</mark>
+            &lt;intent-filter&gt;
+<mark>                &lt;action android:name="android.intent.action.MAIN" /&gt;</mark>
+<mark>                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;</mark>
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+  </figure>
+  </div>
+  </div>
+  <ol class="walk">
+    <li>The <code>MAIN</code> action and <code>LAUNCHER</code> category are what make this Activity the one the launcher starts. <code>android:exported="true"</code> lets another app, here the launcher, start it. Since Android 12 you must say so explicitly on any Activity that has an intent filter (<a href="https://developer.android.com/guide/topics/manifest/activity-element#exported"><code>&lt;activity&gt;</code> reference</a>).</li>
+    <li data-track="xml">The XML track's <code>AppCompatActivity</code> crashes at launch unless the theme is an AppCompat theme.</li>
+  </ol>
+  <p>The Intent in the app is the one the button sends. Opening a web page is an <em>implicit</em> intent: you name the action and the data, not a class, and the OS finds an app that can handle it.</p>
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/java/com/example/lesson03/MainActivity.kt</figcaption>
+<pre><code><span class="elide">⋯ onCreate(), the lifecycle callbacks</span>
+    private fun openWebPage() {
+<mark>        val intent = Intent(Intent.ACTION_VIEW, "https://developer.android.com".toUri())</mark>
+<mark>        startActivity(intent)</mark>
+    }
+<span class="elide">⋯ onStart(), onResume(), onPause(), onStop(), onDestroy()</span></code></pre>
+  </figure>
+
+  <h2>3. The activity lifecycle, logged</h2>
+  <p>The OS calls a callback on your Activity at each step of its life (<a href="https://developer.android.com/guide/components/activities/activity-lifecycle">Android: Activity lifecycle</a>). This app logs six of them with tag <code>Lifecycle</code>: <code>onCreate → onStart → onResume</code> on the way in, and <code>onPause → onStop → onDestroy</code> on the way out. A seventh, <code>onRestart</code>, runs when a stopped Activity comes back. You add it in the exercise. In Android Studio's Logcat, filter on <code>tag:Lifecycle</code> (<a href="https://developer.android.com/studio/debug/logcat">Logcat docs</a>).</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 200" role="img" aria-labelledby="l03-life-title">
+      <title id="l03-life-title">The Activity lifecycle callbacks in order: onCreate, onStart, onResume, onPause, onStop, onDestroy. A dashed arrow from onStop back to onStart is labelled onRestart, for an Activity coming back after being stopped. Three brackets underneath: the Activity is in front and interactive from onResume to onPause, visible from onStart to onStop, and exists from onCreate to onDestroy.</title>
+      <defs><marker id="l03-life-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box" x="10" y="50" width="90" height="40" rx="6"/><text class="mono" x="55" y="75" text-anchor="middle">onCreate</text>
+      <rect class="box" x="116" y="50" width="90" height="40" rx="6"/><text class="mono" x="161" y="75" text-anchor="middle">onStart</text>
+      <rect class="box" x="222" y="50" width="90" height="40" rx="6"/><text class="mono" x="267" y="75" text-anchor="middle">onResume</text>
+      <rect class="box" x="328" y="50" width="90" height="40" rx="6"/><text class="mono" x="373" y="75" text-anchor="middle">onPause</text>
+      <rect class="box" x="434" y="50" width="90" height="40" rx="6"/><text class="mono" x="479" y="75" text-anchor="middle">onStop</text>
+      <rect class="box" x="540" y="50" width="90" height="40" rx="6"/><text class="mono" x="585" y="75" text-anchor="middle">onDestroy</text>
+      <path class="edge" d="M100,70 L114,70" marker-end="url(#l03-life-arrow)"/>
+      <path class="edge" d="M206,70 L220,70" marker-end="url(#l03-life-arrow)"/>
+      <path class="edge" d="M312,70 L326,70" marker-end="url(#l03-life-arrow)"/>
+      <path class="edge" d="M418,70 L432,70" marker-end="url(#l03-life-arrow)"/>
+      <path class="edge" d="M524,70 L538,70" marker-end="url(#l03-life-arrow)"/>
+      <path class="edge dashed" d="M479,50 L479,28 L161,28 L161,48" marker-end="url(#l03-life-arrow)"/>
+      <text class="small muted" x="320" y="20" text-anchor="middle">onRestart: coming back after the Activity was stopped</text>
+      <path class="edge" d="M222,112 L222,118 L418,118 L418,112"/>
+      <text class="small muted" x="320" y="133" text-anchor="middle">in front and interactive</text>
+      <path class="edge" d="M116,142 L116,148 L524,148 L524,142"/>
+      <text class="small muted" x="320" y="163" text-anchor="middle">visible</text>
+      <path class="edge" d="M10,172 L10,178 L630,178 L630,172"/>
+      <text class="small muted" x="320" y="190" text-anchor="middle">exists</text>
+    </svg>
+    <figcaption>The six logged callbacks, with the span of life each pair of them brackets.</figcaption>
+  </figure>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/java/com/example/lesson03/MainActivity.kt</figcaption>
+<pre><code><span class="elide">⋯ package, imports</span>
+private const val TAG = "Lifecycle"
+
+class MainActivity : ComponentActivity() {
+
+<mark>    override fun onCreate(savedInstanceState: Bundle?) {</mark>
+<mark>        super.onCreate(savedInstanceState)</mark>
+<mark>        Log.d(TAG, "onCreate (restored=${savedInstanceState != null})")</mark>
+<mark>        setContent {</mark>
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text("Lesson 03: watch Logcat, filter tag:Lifecycle")
+                Button(onClick = { openWebPage() }) {
+                    Text("Open a web page")
+                }
+            }
+        }
+    }
+<span class="elide">⋯ openWebPage(), the other lifecycle callbacks</span></code></pre>
+  </figure>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/res/layout/activity_main.xml</figcaption>
+<pre><code>&lt;LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"&gt;
+
+    &lt;TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Lesson 03: watch Logcat, filter tag:Lifecycle" /&gt;
+
+    &lt;Button
+<mark>        android:id="@+id/openWebButton"</mark>
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Open a web page" /&gt;
+&lt;/LinearLayout&gt;</code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/java/com/example/lesson03/MainActivity.kt</figcaption>
+<pre><code><span class="elide">⋯ package, imports</span>
+private const val TAG = "Lifecycle"
+
+class MainActivity : AppCompatActivity() {
+
+<mark>    override fun onCreate(savedInstanceState: Bundle?) {</mark>
+<mark>        super.onCreate(savedInstanceState)</mark>
+<mark>        Log.d(TAG, "onCreate (restored=${savedInstanceState != null})")</mark>
+<mark>        setContentView(R.layout.activity_main)</mark>
+<mark>        findViewById&lt;Button&gt;(R.id.openWebButton).setOnClickListener { openWebPage() }</mark>
+    }
+<span class="elide">⋯ openWebPage(), the other lifecycle callbacks</span></code></pre>
+  </figure>
+  </div>
+  </div>
+  <figure class="excerpt">
+    <figcaption class="path">app/src/main/java/com/example/lesson03/MainActivity.kt</figcaption>
+<pre><code><span class="elide">⋯ onCreate(), openWebPage()</span>
+    override fun onStart() {
+<mark>        super.onStart()</mark>
+        Log.d(TAG, "onStart")
+    }
+
+<span class="elide">⋯ onResume(), onPause(), onStop(): identical shape, one Log.d each</span>
+
+    override fun onDestroy() {
+        super.onDestroy()
+<mark>        Log.d(TAG, "onDestroy (changingConfigurations=$isChangingConfigurations)")</mark>
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li>Every override calls <code>super</code> first. The framework does its own work in these methods, and skipping <code>super</code> throws at runtime.</li>
+    <li><code>savedInstanceState</code> is non-null when the OS is <em>recreating</em> this Activity after destroying an earlier instance. Logging <code>restored=</code> makes recreation visible.</li>
+    <li><span data-track="compose"><code>setContent { }</code> hands the window to Compose. The UI is a function call tree, not an XML file. Lesson 06 explains it properly.</span><span data-track="xml"><code>setContentView</code> inflates the XML layout into View objects, and <code>findViewById</code> fetches one by its <code>@+id</code>. Lesson 06 replaces this with ViewBinding.</span></li>
+    <li><code>isChangingConfigurations</code> in <code>onDestroy</code> tells you <em>why</em> the Activity is dying: <code>true</code> means a configuration change such as rotation (it's coming straight back), and <code>false</code> means it's really finishing.</li>
+  </ol>
+  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Only the lines that put UI on screen differ: <code>setContentView</code> + <code>findViewById</code> + a listener, versus <code>setContent { … }</code> with the click handler inline. The Activity, its lifecycle, the Manifest and Intents are identical, which is why the lifecycle you learn today holds on both tracks.</p>
+
+  <h2>4. What actually happens</h2>
+  <p>We ran this app on an Android 16 emulator (targetSdk 36) and drove it step by step. The log, condensed:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>You do</th><th>Logcat shows</th><th>Meaning</th></tr>
+    <tr><td>Launch</td><td><code>onCreate (restored=false) · onStart · onResume</code></td><td>Fresh instance, now interactive</td></tr>
+    <tr><td>Press Home</td><td><code>onPause · onStop</code></td><td>Hidden but <strong>alive</strong>: no <code>onDestroy</code></td></tr>
+    <tr><td>Reopen</td><td><code>onStart · onResume</code></td><td>Same instance; <code>onCreate</code> doesn't run again</td></tr>
+    <tr><td>Open a web page</td><td><code>onPause · onStop</code></td><td>Another app covers yours, just like Home</td></tr>
+    <tr><td><strong>Rotate</strong></td><td><code>onPause · onStop · onDestroy (changingConfigurations=true) · onCreate (restored=true) · onStart · onResume</code></td><td><strong>Destroyed and rebuilt</strong>, in under a second</td></tr>
+    <tr><td>Back on the main screen</td><td><code>onPause · onStop · onDestroy (changingConfigurations=false)</code></td><td>Finished; the next launch starts with <code>onCreate</code></td></tr>
+  </table>
+  </div>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 200" role="img" aria-labelledby="l03-inst-title">
+      <title id="l03-inst-title">Two runs compared. Top: launch, press Home, then reopen. The same instance logs onCreate, onStart, onResume; then onPause, onStop; then onStart, onResume. Bottom: rotate the phone. The old instance logs onPause, onStop, onDestroy with changingConfigurations true, and a new instance logs onCreate with restored true, then onStart, onResume.</title>
+      <defs><marker id="l03-inst-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="title" x="8" y="14" font-weight="600">Home, then reopen</text>
+      <rect class="edge dashed" x="8" y="22" width="592" height="64" rx="8"/>
+      <text class="small muted" x="16" y="36">one instance the whole time</text>
+      <rect class="box" x="15" y="44" width="210" height="32" rx="6"/><text class="mono small" x="120" y="64" text-anchor="middle">onCreate · onStart · onResume</text>
+      <rect class="box" x="270" y="44" width="130" height="32" rx="6"/><text class="mono small" x="335" y="64" text-anchor="middle">onPause · onStop</text>
+      <rect class="box" x="445" y="44" width="145" height="32" rx="6"/><text class="mono small" x="517" y="64" text-anchor="middle">onStart · onResume</text>
+      <path class="edge" d="M225,60 L268,60" marker-end="url(#l03-inst-arrow)"/>
+      <text class="small muted" x="247" y="54" text-anchor="middle">Home</text>
+      <path class="edge" d="M400,60 L443,60" marker-end="url(#l03-inst-arrow)"/>
+      <text class="small muted" x="422" y="54" text-anchor="middle">reopen</text>
+      <text class="title" x="8" y="114" font-weight="600">Rotate</text>
+      <rect class="edge dashed" x="8" y="122" width="232" height="64" rx="8"/>
+      <text class="small muted" x="16" y="136">old instance</text>
+      <rect class="box" x="15" y="144" width="218" height="32" rx="6"/><text class="mono small" x="124" y="164" text-anchor="middle">onPause · onStop · onDestroy</text>
+      <rect class="edge dashed" x="272" y="122" width="232" height="64" rx="8"/>
+      <text class="small muted" x="280" y="136">new instance (restored)</text>
+      <rect class="box" x="279" y="144" width="218" height="32" rx="6"/><text class="mono small" x="388" y="164" text-anchor="middle">onCreate · onStart · onResume</text>
+      <path class="edge" d="M233,160 L277,160" marker-end="url(#l03-inst-arrow)"/>
+    </svg>
+    <figcaption>Home keeps the instance. Rotation replaces it, so anything stored in the old instance's fields is gone.</figcaption>
+  </figure>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · rotation destroys the Activity</span>
+    By default, a configuration change such as rotation, a dark-mode toggle, or a font-size change destroys the Activity and creates a new instance (<a href="https://developer.android.com/guide/topics/resources/runtime-changes">Android: Handle configuration changes</a>). Anything stored in the old instance's fields is gone. A BLE connection object held in the Activity gets dropped mid-connection while the radio link may still be open. That's why, from Lesson 08, state lives in a <strong>ViewModel</strong>, which survives configuration changes, never in the Activity.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · Back is not as stable as Home</span>
+    Android 12 documented that pressing Back on a launcher activity at the root of its task moves the task to the background instead of finishing it (<a href="https://developer.android.com/about/versions/12/behavior-changes-all">Android 12 behaviour changes</a>). On our Android 16 / targetSdk 36 test run it <em>was</em> finished (<code>onDestroy</code>, <code>changingConfigurations=false</code>), and the next launch was a cold <code>onCreate</code>. Back handling has kept changing (<a href="https://developer.android.com/guide/navigation/custom-back/predictive-back-gesture">predictive back</a>). Don't build anything that depends on Back keeping you alive, and check Logcat on your own device.
+  </div>
+  <p data-track="xml" class="callout gotcha"><span class="label">Gotcha · XML track: the right layout file</span>Android Studio's multi-screen templates put the Activity's layout (holding a nav host) and each screen's layout (<code>fragment_*.xml</code>) in separate files. Adding widgets to the Activity layout can push out the container that hosts your screens, and then the screen you expect never appears. Always edit the file the lesson names.</p>
+
+  <h2>Where this goes in the app</h2>
+  <p>In the Native Device Monitor the Activity is a thin Android shell that the OS can rebuild at any moment, so it owns nothing that has to outlive a rotation. Each thing you'd be tempted to keep in it has a home elsewhere. Colours are the course's <strong>colour code</strong>, the same as in Lessons 00–02.</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 190" role="img" aria-labelledby="l03-map-title">
+      <title id="l03-map-title">Where each job belongs. Showing the screen stays in Android, in the Activity, a thin shell that can be rebuilt on rotation. Holding screen state belongs in a shared Kotlin ViewModel, an inbound adapter, which survives rotation (Lesson 08). Holding a BLE connection belongs in an Android BLE adapter, an outbound adapter behind an outbound port, outside the Activity (Lesson 14).</title>
+      <defs><marker id="l03-map-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small muted" x="120" y="14" text-anchor="middle">Jobs in the app</text>
+      <text class="small muted" x="460" y="14" text-anchor="middle">Where each belongs</text>
+      <rect class="box" x="20" y="24" width="200" height="44" rx="6"/><text class="mono" x="120" y="51" text-anchor="middle">Showing the screen</text>
+      <rect class="box" x="20" y="80" width="200" height="44" rx="6"/><text class="mono" x="120" y="107" text-anchor="middle">Holding screen state</text>
+      <rect class="box" x="20" y="136" width="200" height="44" rx="6"/><text class="mono" x="120" y="163" text-anchor="middle">Holding a BLE connection</text>
+      <path class="edge" d="M220,46 L298,46" marker-end="url(#l03-map-arrow)"/>
+      <path class="edge" d="M220,102 L298,102" marker-end="url(#l03-map-arrow)"/>
+      <path class="edge" d="M220,158 L298,158" marker-end="url(#l03-map-arrow)"/>
+      <g data-part="android">
+        <rect class="box" x="300" y="24" width="320" height="44" rx="6"/>
+        <text class="title" x="314" y="42">Android</text>
+        <text class="small muted" x="314" y="59">stays, as a thin shell that can be rebuilt</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="300" y="80" width="320" height="44" rx="6"/>
+        <text class="title" x="314" y="98">Inbound adapter (Kotlin)</text>
+        <text class="small muted" x="314" y="115">a shared ViewModel, which survives rotation</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="300" y="136" width="320" height="44" rx="6"/>
+        <text class="title" x="314" y="154">Outbound adapter (Kotlin, Android)</text>
+        <text class="small muted" x="314" y="171">behind an outbound port, outside the Activity</text>
+      </g>
+    </svg>
+    <figcaption>
+      The Activity shows the screen and forwards input. Lesson 08 adds the ViewModel, and Lesson 14 adds the BLE connection adapter. Lesson 10 explains ports and adapters.
+      <ul class="legend">
+        <li data-part="android">Android</li>
+        <li data-part="inbound">Inbound</li>
+        <li data-part="outbound">Outbound</li>
+      </ul>
+    </figcaption>
+  </figure>
+
+  <h2>5. Reading Java</h2>
+  <p>Older parts of the team's Android code may still be Java. You only need to <em>read</em> it, not write it: class, constructor, field, interface, <code>@Override</code>, generics, callbacks. Work through the <a href="../reference/java-reading-cheatsheet.html">Java reading cheatsheet</a>, which has a labelled example and a self-check.</p>
+
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to explain anything that surprised you in the logs. Surprises are the point of this lesson. For example: "What would change in the log if the Activity declared <code>android:configChanges="orientation"</code>?"
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">You press Home, then reopen the app. Which callback does <em>not</em> run again?</p>
+    <div class="opts">
+      <button class="opt">onStart</button>
+      <button class="opt" data-correct>onCreate</button>
+      <button class="opt">onResume</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Home only stops the Activity. The same instance resumes, so one-time setup in <code>onCreate</code> is skipped.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">After a rotation, what is <code>savedInstanceState</code> in <code>onCreate</code>?</p>
+    <div class="opts">
+      <button class="opt">always null</button>
+      <button class="opt" data-correct>not null</button>
+      <button class="opt">the old UI</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The OS is recreating a destroyed instance, so it passes the saved state bundle.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which SDK number decides the oldest Android version that can install your app?</p>
+    <div class="opts">
+      <button class="opt" data-correct>minSdk</button>
+      <button class="opt">maxSdk</button>
+      <button class="opt">tgtSdk</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>compileSdk</code> = which APIs you can see; <code>targetSdk</code> = which runtime behaviour you opt into.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which file tells the OS that <code>MainActivity</code> is the one the launcher starts?</p>
+    <div class="opts">
+      <button class="opt">app/build.gradle.kts</button>
+      <button class="opt" data-correct>AndroidManifest.xml</button>
+      <button class="opt">settings.gradle.kts</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The manifest's <code>MAIN</code> + <code>LAUNCHER</code> intent filter marks the launcher entry point. The Gradle files configure the build, not the installed app's components.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">In <code>onCreate(savedInstanceState: Bundle?)</code>, what does the <code>?</code> mean? (Lesson 01)</p>
+    <div class="opts">
+      <button class="opt" data-correct>The value can be null</button>
+      <button class="opt">The parameter may be left out</button>
+      <button class="opt">The type is checked at runtime</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">It's Kotlin's nullable type, like <code>Bundle | null</code> in TypeScript. A first launch passes null.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">In Swift (Lesson 02), <code>var b = a</code> gives <code>b</code> its own copy when <code>a</code> is a:</p>
+    <div class="opts">
+      <button class="opt" data-correct>struct</button>
+      <button class="opt">class</button>
+      <button class="opt">protocol</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Structs are value types. Class instances are shared by reference.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent)</span>
+    <ol>
+      <li>Before touching the app, write down your <em>predicted</em> Logcat lines for: launch → Home → reopen → rotate → open a web page → come back → Back. Then do it and diff your prediction against reality.</li>
+      <li>Add an <code>onRestart()</code> override that logs <code>"onRestart"</code>. Predict which of your steps will print it, then check.</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your track. Then read its code against the walkthroughs above, run the app yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 03 (Android fundamentals): build a scratch Android app that logs lifecycle events.
+My track: Android = [Compose | XML]  (default Compose).
+Starting point: nothing. Work in scratch/lesson-03/android/ in my workspace.
+Prereqs: JDK 17+, Android SDK (ANDROID_HOME, or sdk.dir in local.properties), any Gradle
+install to bootstrap the wrapper once (`brew install gradle`, or let Android Studio open the
+project).
+
+1. Gradle wrapper: run `gradle wrapper --gradle-version 9.8.2` in the folder. It writes
+   gradlew, gradlew.bat, gradle/wrapper/gradle-wrapper.jar and
+   gradle/wrapper/gradle-wrapper.properties. AGP 9.4 needs Gradle 9.6 or newer.
+2. Create exactly these files, complete, as in the lesson's "Full files" section for my
+   track:
+     settings.gradle.kts
+     build.gradle.kts            (Compose track has the extra Compose compiler plugin line)
+     gradle.properties
+     app/build.gradle.kts
+     app/src/main/AndroidManifest.xml
+     app/src/main/java/com/example/lesson03/MainActivity.kt
+     XML track only: app/src/main/res/layout/activity_main.xml
+   Do NOT apply org.jetbrains.kotlin.android (AGP 9 has built-in Kotlin; it fails the
+   build). compileSdk 37 is required by current Compose/AndroidX libs.
+3. Build: ./gradlew :app:assembleDebug
+
+Acceptance checks:
+- The build succeeds with no compiler warnings from our own code (lint suggestions such as
+  hard-coded strings are fine for a scratch app; don't use -q to check warnings). Gradle's
+  "Deprecated Gradle features ... incompatible with Gradle 10" line, which comes from a
+  plugin, and the packaging note "Unable to strip the following libraries" are expected.
+- Launch logs (tag Lifecycle), read with `adb logcat -d -s Lifecycle:D` after installing
+  and launching on an emulator or device: "onCreate (restored=false)", "onStart",
+  "onResume".
+Then walk me through each file line by line. Do NOT run the lifecycle experiments or the
+unaided exercise for me; I do those myself.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/platform-lifecycles-cheatsheet.html">Cheatsheet: platform lifecycles</a>, both platforms and all tracks on one page.</li>
+    <li><a href="../reference/java-reading-cheatsheet.html">Java reading cheatsheet</a></li>
+    <li><a href="../reference/glossary.html">Course glossary</a></li>
+    <li>Wisdom: <a href="https://reddit.com/r/androiddev">r/androiddev</a> for "is this lifecycle behaviour normal?" questions.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson creates, complete. Open one to check your work. The Gradle wrapper files are generated by <code>gradle wrapper</code>.</p>
+
+    <details class="full-file">
+      <summary>settings.gradle.kts</summary>
+<pre><code>pluginManagement {
+    repositories {
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.name = "Lesson03Android"
+include(":app")</code></pre>
+    </details>
+
+    <details class="full-file" data-track="compose">
+      <summary>build.gradle.kts</summary>
+<pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21" apply false
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="xml">
+      <summary>build.gradle.kts</summary>
+<pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+}</code></pre>
+    </details>
+
+    <details class="full-file">
+      <summary>gradle.properties</summary>
+<pre><code>android.useAndroidX=true</code></pre>
+    </details>
+
+    <details class="full-file" data-track="compose">
+      <summary>app/build.gradle.kts</summary>
+<pre><code>plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.example.lesson03"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.lesson03"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures { compose = true }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.compose.material3:material3")
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="xml">
+      <summary>app/build.gradle.kts</summary>
+<pre><code>plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.example.lesson03"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.lesson03"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="compose">
+      <summary>app/src/main/AndroidManifest.xml</summary>
+<pre><code>&lt;?xml version="1.0" encoding="utf-8"?&gt;
+&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+
+    &lt;application
+        android:label="Lesson 03"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"&gt;
+
+        &lt;activity
+            android:name=".MainActivity"
+            android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+    </details>
+
+    <details class="full-file" data-track="xml">
+      <summary>app/src/main/AndroidManifest.xml</summary>
+<pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;application
+        android:label="Lesson 03"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"&gt;
+        &lt;activity android:name=".MainActivity" android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+    </details>
+
+    <details class="full-file" data-track="compose">
+      <summary>app/src/main/java/com/example/lesson03/MainActivity.kt</summary>
+<pre><code>package com.example.lesson03
+
+import android.content.Intent
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
+
+private const val TAG = "Lifecycle"
+
+class MainActivity : ComponentActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate (restored=${savedInstanceState != null})")
+        setContent {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text("Lesson 03: watch Logcat, filter tag:Lifecycle")
+                Button(onClick = { openWebPage() }) {
+                    Text("Open a web page")
+                }
+            }
+        }
+    }
+
+    private fun openWebPage() {
+        val intent = Intent(Intent.ACTION_VIEW, "https://developer.android.com".toUri())
+        startActivity(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d(TAG, "onStart")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "onResume")
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Log.d(TAG, "onPause")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Log.d(TAG, "onStop")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "onDestroy (changingConfigurations=$isChangingConfigurations)")
+    }
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="xml">
+      <summary>app/src/main/res/layout/activity_main.xml</summary>
+<pre><code>&lt;LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"&gt;
+
+    &lt;TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Lesson 03: watch Logcat, filter tag:Lifecycle" /&gt;
+
+    &lt;Button
+        android:id="@+id/openWebButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Open a web page" /&gt;
+&lt;/LinearLayout&gt;</code></pre>
+    </details>
+
+    <details class="full-file" data-track="xml">
+      <summary>app/src/main/java/com/example/lesson03/MainActivity.kt</summary>
+<pre><code>package com.example.lesson03
+
+import android.content.Intent
+import android.os.Bundle
+import android.util.Log
+import android.widget.Button
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
+
+private const val TAG = "Lifecycle"
+
+class MainActivity : AppCompatActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate (restored=${savedInstanceState != null})")
+        setContentView(R.layout.activity_main)
+        findViewById&lt;Button&gt;(R.id.openWebButton).setOnClickListener { openWebPage() }
+    }
+
+    private fun openWebPage() {
+        val intent = Intent(Intent.ACTION_VIEW, "https://developer.android.com".toUri())
+        startActivity(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d(TAG, "onStart")
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Log.d(TAG, "onResume")
+    }
+
+    override fun onPause() {
+        super.onPause()
+        Log.d(TAG, "onPause")
+    }
+
+    override fun onStop() {
+        super.onStop()
+        Log.d(TAG, "onStop")
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "onDestroy (changingConfigurations=$isChangingConfigurations)")
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="02-swift-for-typescript-devs.html">← 02 Swift for TypeScript developers</a>
+    <a href="04-ios-fundamentals.html">Next: 04 iOS fundamentals →</a>
+  </nav>
+</main>
+</body>
+</html>

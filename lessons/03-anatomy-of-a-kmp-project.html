@@ -17,7 +17,7 @@
     <span class="tag">~2.5 h · +0.25 h per extra UI track</span>
     <span class="tag">Part A: the shared module · Part B: two apps use it</span>
     <span class="tag">Milestone: m00 skeleton</span>
-    <span class="tag">Prereq: <a href="02-platform-fundamentals.html">02</a></span>
+    <span class="tag">Prereq: <a href="04-ios-fundamentals.html">04</a></span>
   </div>
   <div class="switchers">
     <div class="switcher" data-platform="android"></div>
@@ -61,7 +61,7 @@
 │       └── iosMain/kotlin/com/example/devicemonitor/      Platform.ios.kt
 ├── androidApp/                // an ordinary Android app module that depends on :shared
 │   ├── build.gradle.kts
-│   └── src/main/…             // AndroidManifest.xml, MainActivity.kt (Lesson 02 shape)
+│   └── src/main/…             // AndroidManifest.xml, MainActivity.kt (Lesson 03 shape)
 └── iosApp/                    // an ordinary Xcode project, NOT part of the Gradle build
     ├── project.yml            // XcodeGen spec → iosApp.xcodeproj
     └── iosApp/                // Swift sources + Info.plist</code></pre>
@@ -90,7 +90,7 @@ kotlin {
 }</code></pre>
   <ol class="walk">
     <li><strong>Two plugins.</strong> <code>kotlin.multiplatform</code> provides the <code>kotlin { }</code> block, targets and source sets. <code>com.android.kotlin.multiplatform.library</code> is Google's plugin for the Android target of a KMP library. The older <code>com.android.library</code> route is deprecated from AGP 9 (<a href="https://developer.android.com/kotlin/multiplatform/plugin">Android: KMP library plugin</a>).</li>
-    <li><strong><code>android { }</code> sits <em>inside</em> <code>kotlin { }</code>.</strong> Since AGP 8.12 the Android target is configured there. Tutorials showing <code>androidLibrary { }</code> are older, and that name is deprecated. The three SDK numbers mean what they meant in Lesson 02.</li>
+    <li><strong><code>android { }</code> sits <em>inside</em> <code>kotlin { }</code>.</strong> Since AGP 8.12 the Android target is configured there. Tutorials showing <code>androidLibrary { }</code> are older, and that name is deprecated. The three SDK numbers mean what they meant in Lesson 03.</li>
     <li><strong>Declaring a target is one call:</strong> <code>iosArm64()</code> and <code>iosSimulatorArm64()</code> each add a target and return it. We loop over both to give each one the same output.</li>
     <li><strong><code>binaries.framework</code></strong> makes each iOS target produce an Apple <em>framework</em>, a bundle containing the compiled binary plus a header that Swift can import. <code>baseName = "Shared"</code> is the name Swift uses: <code>import Shared</code>. <code>isStatic = true</code> links the Kotlin code straight into the app binary.</li>
     <li>No <code>sourceSets { }</code> block: the folders in A2 follow the default naming, so Gradle finds them on its own. You add that block in Lesson 05, when <code>commonMain</code> gets its first library.</li>
@@ -495,7 +495,7 @@ final class ViewController: UIViewController {
 
   <h3>Mixed review (interleaved)</h3>
   <div class="quiz mcq">
-    <p class="q">Where should a live BLE connection object live on Android? (Lesson 02)</p>
+    <p class="q">Where should a live BLE connection object live on Android? (Lesson 03)</p>
     <div class="opts">
       <button class="opt">in the Activity</button>
       <button class="opt" data-correct>in a ViewModel</button>
@@ -532,7 +532,7 @@ My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose 
 Starting point: nothing. Create the project in demo/ in my workspace; later lessons build on it.
 Prereqs: JDK 17+, Android SDK (ANDROID_HOME, or sdk.dir in local.properties), Xcode,
 XcodeGen (`brew install xcodegen`), any Gradle install to bootstrap the wrapper once
-(`brew install gradle`), or copy the wrapper files from Lesson 02's project.
+(`brew install gradle`), or copy the wrapper files from Lesson 03's project.
 
 Use exactly the file contents shown in the lesson for my tracks, including package lines and
 imports. Layout (all paths relative to demo/):
@@ -622,7 +622,7 @@ Do NOT do the unaided exercises for me.</pre>
   </ul>
 
   <nav class="progress-links">
-    <a href="02-platform-fundamentals.html">← 02 Platform fundamentals</a>
+    <a href="04-ios-fundamentals.html">← 04 iOS fundamentals</a>
     <a href="04-declarative-ui.html">04 Declarative UI →</a>
   </nav>
 </main>

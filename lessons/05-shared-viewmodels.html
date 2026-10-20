@@ -939,7 +939,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
 }</code></pre>
   <ol class="walk">
     <li><strong><code>private let owner = ViewModelOwner()</code></strong>: the view controller is the owner's owner. When the view controller is deallocated (popped, or its window closed), the ViewModel is cleared. <code>lazy var viewModel</code> creates it on first use, after <code>owner</code> exists.</li>
-    <li><strong>Watch in <code>viewWillAppear</code>, cancel in <code>viewDidDisappear</code></strong>: UIKit's version of <code>repeatOnLifecycle(STARTED)</code>, using Lesson 02's view lifecycle. <code>watch?.cancel()</code> before starting a new watch costs nothing and guarantees there is never more than one. While the detail screen is pushed, nothing renders into hidden views. The ViewModel keeps scanning, and when the list reappears, the first value it receives is the latest state.</li>
+    <li><strong>Watch in <code>viewWillAppear</code>, cancel in <code>viewDidDisappear</code></strong>: UIKit's version of <code>repeatOnLifecycle(STARTED)</code>, using Lesson 04's view lifecycle. <code>watch?.cancel()</code> before starting a new watch costs nothing and guarantees there is never more than one. While the detail screen is pushed, nothing renders into hidden views. The ViewModel keeps scanning, and when the list reappears, the first value it receives is the latest state.</li>
     <li><strong><code>[weak self]</code></strong> in the callback: the Kotlin scope holds the closure, and the closure must not keep the view controller alive.</li>
     <li><strong><code>viewDidLoad</code> renders <code>value</code> once</strong>, so the first frame isn't blank before the watch starts.</li>
     <li><strong><code>render(_:)</code></strong> is m01's <code>render()</code> with the state as a parameter. The <code>as?</code> chain replaces a switch, because without SKIE <code>ScanState</code> is a protocol. The red colour gained <code>&amp;&amp; !isScanning</code>: a scan now starts as <code>Scanning(found = [])</code>, so m01's rule (<code>devices?.isEmpty == true</code>) alone would paint "Scanning…" red, the bug from Lesson 04's toy. SwiftUI never hits it, because its <code>if</code> checks <code>isScanning</code> first. A hand-written <code>render()</code> computes each widget separately, so each derivation has to be checked again.</li>
@@ -1424,7 +1424,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
     <p class="why">A <code>StateFlow</code> always has a value and replays exactly that one to each new collector. That's why rotation shows the scan in progress immediately.</p>
   </div>
   <div class="quiz mcq">
-    <p class="q">On iOS, does rotating the phone recreate the list screen? (Lesson 02)</p>
+    <p class="q">On iOS, does rotating the phone recreate the list screen? (Lesson 04)</p>
     <div class="opts">
       <button class="opt">yes, like an Android Activity</button>
       <button class="opt" data-correct>no, the same views are relaid</button>

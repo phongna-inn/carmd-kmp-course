@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>04 — iOS Fundamentals</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 04 · Week 1 · Day 4 · Native Device Monitor course</p>
+  <h1>iOS Fundamentals</h1>
+  <div class="meta">
+    <span class="tag">~1.75 h · +0.5 h per extra UI track</span>
+    <span class="tag">Milestone: scratch app (iOS)</span>
+    <span class="tag">Prereq: <a href="03-android-fundamentals.html">03</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> a background monitor hooked to the wrong lifecycle never notices that the app went to the background. iOS splits "is the app in front?" from "is this screen showing?", and only one of them tells you. Today you build a tiny iOS app that logs both kinds of event, then watch the logs while you poke it.
+  </div>
+
+  <p><span class="tag">Primary sources</span> Apple's <a href="https://developer.apple.com/documentation/uikit/managing-your-app-s-life-cycle">Managing your app's life cycle</a>, plus SwiftUI's <a href="https://developer.apple.com/documentation/swiftui/scenephase"><code>ScenePhase</code></a>.</p>
+  <p><span class="tag">Tracks</span> Use the switcher above to pick your UI track. Most of today's ideas are the same on both tracks. Only the code that puts something on screen differs.</p>
+
+  <h2>1. What's in an iOS project</h2>
+  <p>Here the Xcode project is <em>generated</em> from a small <code>project.yml</code> by <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>, so it can be created and diffed as text. Creating the project through Xcode's "New Project" dialog gives the same structure.</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 176" role="img" aria-labelledby="l04-tree-swiftui-title">
+      <title id="l04-tree-swiftui-title">The files of the scratch iOS project on the SwiftUI track and what each one does. project.yml is the XcodeGen spec that generates Lesson04iOS.xcodeproj. Sources/Lesson04App.swift is the @main App, the entry point and its scenes. Sources/ContentView.swift holds the views. Sources/Info.plist holds app metadata and permission strings, and XcodeGen generates it from project.yml.</title>
+      <text class="mono" x="20" y="16">Lesson04iOS/</text>
+      <rect class="box" x="20" y="28" width="240" height="28" rx="6"/><text class="mono small" x="30" y="46">project.yml</text>
+      <text class="small muted" x="280" y="46">XcodeGen spec → generates Lesson04iOS.xcodeproj</text>
+      <rect class="box" x="20" y="64" width="240" height="28" rx="6"/><text class="mono small" x="30" y="82">Sources/Lesson04App.swift</text>
+      <text class="small muted" x="280" y="82">@main App: the entry point and scenes</text>
+      <rect class="box" x="20" y="100" width="240" height="28" rx="6"/><text class="mono small" x="30" y="118">Sources/ContentView.swift</text>
+      <text class="small muted" x="280" y="118">the views</text>
+      <rect class="box" x="20" y="136" width="240" height="28" rx="6"/><text class="mono small" x="30" y="154">Sources/Info.plist</text>
+      <text class="small muted" x="280" y="154">app metadata + permission strings; generated</text>
+    </svg>
+    <figcaption>The SwiftUI track's project.</figcaption>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 212" role="img" aria-labelledby="l04-tree-uikit-title">
+      <title id="l04-tree-uikit-title">The files of the scratch iOS project on the UIKit track and what each one does. project.yml is the XcodeGen spec that generates Lesson04iOS.xcodeproj. Sources/AppDelegate.swift is the @main class for process-level events. Sources/SceneDelegate.swift handles window and scene events and builds the first screen. Sources/ViewController.swift holds the first screen and the detail screen. Sources/Info.plist holds metadata, permission strings and the scene configuration, and XcodeGen generates it from project.yml.</title>
+      <text class="mono" x="20" y="16">Lesson04iOS/</text>
+      <rect class="box" x="20" y="28" width="240" height="28" rx="6"/><text class="mono small" x="30" y="46">project.yml</text>
+      <text class="small muted" x="280" y="46">XcodeGen spec → generates Lesson04iOS.xcodeproj</text>
+      <rect class="box" x="20" y="64" width="240" height="28" rx="6"/><text class="mono small" x="30" y="82">Sources/AppDelegate.swift</text>
+      <text class="small muted" x="280" y="82">@main: process-level events</text>
+      <rect class="box" x="20" y="100" width="240" height="28" rx="6"/><text class="mono small" x="30" y="118">Sources/SceneDelegate.swift</text>
+      <text class="small muted" x="280" y="118">window/scene events; builds the first screen</text>
+      <rect class="box" x="20" y="136" width="240" height="28" rx="6"/><text class="mono small" x="30" y="154">Sources/ViewController.swift</text>
+      <text class="small muted" x="280" y="154">the first screen and the detail screen</text>
+      <rect class="box" x="20" y="172" width="240" height="28" rx="6"/><text class="mono small" x="30" y="190">Sources/Info.plist</text>
+      <text class="small muted" x="280" y="190">metadata, scene configuration; generated</text>
+    </svg>
+    <figcaption>The UIKit track's project.</figcaption>
+  </figure>
+  </div>
+  </div>
+  <p>If you've just done Lesson 03, these are the rough Android counterparts:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Android</th><th>iOS</th></tr>
+    <tr><td><code>AndroidManifest.xml</code></td><td><code>Info.plist</code></td></tr>
+    <tr><td>Gradle module</td><td>Xcode target</td></tr>
+    <tr><td>Activity</td><td><span data-track="swiftui">a <code>Scene</code> plus its root view</span><span data-track="uikit">a scene plus its root view controller</span></td></tr>
+  </table>
+  </div>
+
+  <h2>2. Info.plist</h2>
+  <p>Info.plist is the app's metadata dictionary: display name, version, launch screen, and later the <strong>usage-description strings</strong> that iOS shows in permission prompts (<a href="https://developer.apple.com/documentation/bundleresources/information-property-list">Apple: Information property list</a>). Requesting Bluetooth without <code>NSBluetoothAlwaysUsageDescription</code> doesn't get you a polite denial; the app is terminated. You'll add it in Lesson 12.</p>
+  <p>With XcodeGen you don't write Info.plist by hand. The <code>info</code> section of <code>project.yml</code> holds its contents, and <code>xcodegen generate</code> writes the file.</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt">
+    <figcaption class="path">project.yml</figcaption>
+<pre><code>name: Lesson04iOS
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Lesson04iOS:
+    type: application
+    platform: iOS
+    sources: [Sources]
+<mark>    info:</mark>
+<mark>      path: Sources/Info.plist</mark>
+<mark>      properties:</mark>
+<mark>        CFBundleDisplayName: Lesson 04</mark>
+        UILaunchScreen: {}
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"</code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt">
+    <figcaption class="path">project.yml</figcaption>
+<pre><code><span class="elide">⋯ name, options, target type, settings</span>
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Lesson 04"
+        UILaunchScreen: {}
+<mark>        UIApplicationSceneManifest:</mark>
+<mark>          UIApplicationSupportsMultipleScenes: false</mark>
+<mark>          UISceneConfigurations:</mark>
+<mark>            UIWindowSceneSessionRoleApplication:</mark>
+<mark>              - UISceneConfigurationName: "Default Configuration"</mark>
+<mark>                UISceneDelegateClassName: "$(PRODUCT_MODULE_NAME).SceneDelegate"</mark></code></pre>
+  </figure>
+  </div>
+  </div>
+  <p data-track="swiftui">The SwiftUI track needs nothing beyond a display name and a launch screen. SwiftUI's <code>App</code> creates its own scene.</p>
+  <p data-track="uikit">The <code>UIApplicationSceneManifest</code> entry is how UIKit finds your scene delegate: it names the <code>SceneDelegate</code> class that runs each window. Without it, the scene delegate never runs and no window appears.</p>
+
+  <h2>3. Two lifecycles, not one</h2>
+  <p>Android tied "is this screen visible?" and "is the app in front?" to the same Activity callbacks. iOS separates them:</p>
+  <ul>
+    <li><strong>App/scene level:</strong> is the app's window active, inactive, or in the background? <span data-track="swiftui">SwiftUI exposes this as <a href="https://developer.apple.com/documentation/swiftui/scenephase"><code>scenePhase</code></a>.</span><span data-track="uikit">UIKit delivers it to the <a href="https://developer.apple.com/documentation/uikit/uiscenedelegate">scene delegate</a> (<code>sceneDidBecomeActive</code>, <code>sceneDidEnterBackground</code>, …).</span></li>
+    <li><strong>View level:</strong> did <em>this screen</em> appear or disappear inside the app? <span data-track="swiftui"><a href="https://developer.apple.com/documentation/swiftui/view/onappear(perform:)"><code>onAppear</code></a> / <code>onDisappear</code>.</span><span data-track="uikit"><a href="https://developer.apple.com/documentation/uikit/uiviewcontroller"><code>viewDidLoad</code>, <code>viewWillAppear</code>, <code>viewDidAppear</code>, <code>viewWillDisappear</code>, <code>viewDidDisappear</code></a>.</span></li>
+  </ul>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 230" role="img" aria-labelledby="l04-levels-title">
+      <title id="l04-levels-title">The two iOS lifecycle levels. The app and scene level answers whether the app's window is in front of the user, and moves between background, inactive and active. The view level answers whether a screen appeared or disappeared inside the app, and moves between disappeared and appeared. The two levels are independent: a screen can stay appeared while the scene goes to the background.</title>
+      <defs><marker id="l04-levels-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="edge" x="20" y="14" width="600" height="98" rx="8"/>
+      <text x="36" y="36" font-weight="600">App / scene level</text>
+      <text class="small muted" x="36" y="52">Is the app's window in front of the user?</text>
+      <rect class="box" x="40" y="64" width="150" height="34" rx="6"/><text class="mono" x="115" y="86" text-anchor="middle">background</text>
+      <rect class="box" x="245" y="64" width="150" height="34" rx="6"/><text class="mono" x="320" y="86" text-anchor="middle">inactive</text>
+      <rect class="box" x="450" y="64" width="150" height="34" rx="6"/><text class="mono" x="525" y="86" text-anchor="middle">active</text>
+      <path class="edge" d="M192,81 L243,81" marker-start="url(#l04-levels-arrow)" marker-end="url(#l04-levels-arrow)"/>
+      <path class="edge" d="M397,81 L448,81" marker-start="url(#l04-levels-arrow)" marker-end="url(#l04-levels-arrow)"/>
+      <rect class="edge" x="20" y="126" width="600" height="92" rx="8"/>
+      <text x="36" y="148" font-weight="600">View level</text>
+      <text class="small muted" x="36" y="164">Did this screen appear or disappear inside the app?</text>
+      <rect class="box" x="140" y="176" width="150" height="34" rx="6"/><text class="mono" x="215" y="198" text-anchor="middle">disappeared</text>
+      <rect class="box" x="350" y="176" width="150" height="34" rx="6"/><text class="mono" x="425" y="198" text-anchor="middle">appeared</text>
+      <path class="edge" d="M292,193 L348,193" marker-start="url(#l04-levels-arrow)" marker-end="url(#l04-levels-arrow)"/>
+    </svg>
+    <figcaption>Two separate questions with two separate sets of callbacks. Navigating inside the app moves the bottom row; leaving the app moves the top row.</figcaption>
+  </figure>
+  <p>Logging uses Apple's <a href="https://developer.apple.com/documentation/os/logger"><code>Logger</code></a>, the counterpart of Android's <code>Log.d(TAG, …)</code>: subsystem + category ↔ tag. Output shows in Xcode's console, where you can filter on <code>Lifecycle</code>. The subsystem is any string you choose (here <code>com.example.lesson04</code>, not the bundle ID), so filter on it or on the category. Each excerpt below shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt">
+    <figcaption class="path">Sources/Lesson04App.swift</figcaption>
+<pre><code><span class="elide">⋯ imports</span>
+<mark>let lifecycleLog = Logger(subsystem: "com.example.lesson04", category: "Lifecycle")</mark>
+
+<mark>@main</mark>
+<mark>struct Lesson04App: App {</mark>
+<mark>    @Environment(\.scenePhase) private var scenePhase</mark>
+
+    init() {
+        lifecycleLog.notice("App init")
+    }
+<span class="elide">⋯ var body</span>
+}</code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">Sources/Lesson04App.swift</figcaption>
+<pre><code><span class="elide">⋯ imports, lifecycleLog, init()</span>
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+<mark>        .onChange(of: scenePhase) { _, newPhase in</mark>
+            switch newPhase {
+<mark>            case .active: lifecycleLog.notice("scenePhase → active")</mark>
+            case .inactive: lifecycleLog.notice("scenePhase → inactive")
+            case .background: lifecycleLog.notice("scenePhase → background")
+<mark>            @unknown default: lifecycleLog.notice("scenePhase → unknown")</mark>
+            }
+        }
+    }
+}</code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">Sources/ContentView.swift</figcaption>
+<pre><code><span class="elide">⋯ import SwiftUI</span>
+struct ContentView: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Lesson 04: watch the Xcode console")
+                NavigationLink("Open detail screen") {
+                    DetailView()
+                }
+            }
+            .navigationTitle("Lifecycle")
+<mark>            .onAppear { lifecycleLog.notice("ContentView onAppear") }</mark>
+<mark>            .onDisappear { lifecycleLog.notice("ContentView onDisappear") }</mark>
+        }
+    }
+}
+<span class="elide">⋯ DetailView: the same two modifiers on a Text</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><code>@main struct … : App</code> is the entry point. There's no AppDelegate; SwiftUI owns the app object.</li>
+    <li><code>@Environment(\.scenePhase)</code> reads a value SwiftUI provides. Watching it with <code>.onChange(of:)</code> at the <code>Scene</code> level gives you the app-level lifecycle.</li>
+    <li>Each log message is a fixed string per case. Logger treats <em>interpolated</em> values as private by default and can show them as <code>&lt;private&gt;</code> in stored logs. Fixed strings never are.</li>
+    <li><code>@unknown default</code> handles phases Apple may add in future iOS versions. <code>ScenePhase</code> isn't a closed enum the way your own are.</li>
+    <li><code>onAppear</code>/<code>onDisappear</code> are attached to views. They report what happens <em>inside</em> the app (navigation), not whether the app is in front.</li>
+  </ol>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt">
+    <figcaption class="path">Sources/AppDelegate.swift</figcaption>
+<pre><code><span class="elide">⋯ imports, lifecycleLog</span>
+<mark>@main</mark>
+<mark>final class AppDelegate: UIResponder, UIApplicationDelegate {</mark>
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        lifecycleLog.notice("didFinishLaunching")
+        return true
+    }
+
+<mark>    func application(_ application: UIApplication,</mark>
+<mark>                     configurationForConnecting connectingSceneSession: UISceneSession,</mark>
+<mark>                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {</mark>
+<mark>        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)</mark>
+    }
+}</code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">Sources/SceneDelegate.swift</figcaption>
+<pre><code><span class="elide">⋯ import UIKit</span>
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+               options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: windowScene)
+<mark>        window.rootViewController = UINavigationController(rootViewController: ViewController())</mark>
+        window.makeKeyAndVisible()
+        self.window = window
+        lifecycleLog.notice("scene willConnect")
+    }
+
+<mark>    func sceneWillEnterForeground(_ scene: UIScene) { lifecycleLog.notice("sceneWillEnterForeground") }</mark>
+<mark>    func sceneDidBecomeActive(_ scene: UIScene) { lifecycleLog.notice("sceneDidBecomeActive") }</mark>
+<mark>    func sceneWillResignActive(_ scene: UIScene) { lifecycleLog.notice("sceneWillResignActive") }</mark>
+<mark>    func sceneDidEnterBackground(_ scene: UIScene) { lifecycleLog.notice("sceneDidEnterBackground") }</mark>
+}</code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">Sources/ViewController.swift</figcaption>
+<pre><code><span class="elide">⋯ import UIKit</span>
+final class ViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        lifecycleLog.notice("ViewController viewDidLoad")
+        title = "Lifecycle"
+        view.backgroundColor = .systemBackground
+
+        let button = UIButton(type: .system)
+        button.setTitle("Open detail screen", for: .normal)
+<mark>        button.addAction(UIAction { [weak self] _ in</mark>
+            self?.navigationController?.pushViewController(DetailViewController(), animated: true)
+        }, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            button.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+<span class="elide">⋯ viewWillAppear, viewDidAppear, viewWillDisappear, viewDidDisappear</span></code></pre>
+  </figure>
+  <figure class="excerpt">
+    <figcaption class="path">Sources/ViewController.swift</figcaption>
+<pre><code><span class="elide">⋯ ViewController.viewDidLoad</span>
+<mark>    override func viewWillAppear(_ animated: Bool) {</mark>
+        super.viewWillAppear(animated)
+<mark>        lifecycleLog.notice("ViewController viewWillAppear")</mark>
+    }
+
+<span class="elide">⋯ viewDidAppear, viewWillDisappear, viewDidDisappear: identical shape, one log each</span>
+}
+
+final class DetailViewController: UIViewController {
+<span class="elide">⋯ viewDidLoad, and the four appear/disappear callbacks, each logging "DetailViewController …"</span>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><code>AppDelegate</code> owns process-level events. The scene configuration names the delegate class (via Info.plist) that runs each window.</li>
+    <li><code>SceneDelegate</code> creates the window and its root: a <code>UINavigationController</code>, which gives you push/pop navigation and a back button.</li>
+    <li>The four <code>scene…</code> methods are the app-level lifecycle you'd hook a background monitor into.</li>
+    <li>The UI is built in code (no storyboard): create a view, add it, constrain it. <code>[weak self]</code> avoids a retain cycle between the view controller and its own button's action.</li>
+    <li>The view controller's callbacks are the view-level lifecycle. <code>viewDidLoad</code> runs when the screen's view is first created. The four appear/disappear callbacks run each time the screen is shown or hidden. Each override calls <code>super</code> first.</li>
+    <li>Info.plist needs the <code>UIApplicationSceneManifest</code> entry from <code>project.yml</code>, shown in section 2. Without it the <code>SceneDelegate</code> never runs.</li>
+  </ol>
+  </div>
+  </div>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>UIKit splits the lifecycle across three objects you write yourself (AppDelegate, SceneDelegate, view controllers). SwiftUI turns both levels into <em>state you observe</em>: <code>scenePhase</code> for the app, and <code>onAppear</code>/<code>onDisappear</code> modifiers for views. The two-lifecycle model underneath is the same.</p>
+
+  <h2>4. What actually happens</h2>
+  <p>We drove this app on an iOS 26.2 simulator with a UI test (launch, push the detail screen, go back, press Home, return) and read the log:</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <div class="table-wrap">
+  <table>
+    <tr><th>You do</th><th>Log shows (SwiftUI)</th></tr>
+    <tr><td>Launch</td><td><code>App init · ContentView onAppear · scenePhase → active</code></td></tr>
+    <tr><td>Push detail</td><td><code>DetailView onAppear · ContentView onDisappear</code></td></tr>
+    <tr><td>Back</td><td><code>ContentView onAppear · DetailView onDisappear</code></td></tr>
+    <tr><td>Press Home</td><td><code>scenePhase → inactive · scenePhase → background</code></td></tr>
+    <tr><td>Return</td><td><code>scenePhase → inactive · scenePhase → active</code></td></tr>
+  </table>
+  </div>
+  </div>
+  <div data-track="uikit">
+  <div class="table-wrap">
+  <table>
+    <tr><th>You do</th><th>Log shows (UIKit)</th></tr>
+    <tr><td>Launch</td><td><code>didFinishLaunching · scene willConnect · sceneWillEnterForeground · ViewController viewDidLoad · viewWillAppear · viewDidAppear · sceneDidBecomeActive</code></td></tr>
+    <tr><td>Push detail</td><td><code>Detail viewDidLoad · ViewController viewWillDisappear · Detail viewWillAppear · ViewController viewDidDisappear · Detail viewDidAppear</code></td></tr>
+    <tr><td>Back</td><td><code>Detail viewWillDisappear · ViewController viewWillAppear · Detail viewDidDisappear · ViewController viewDidAppear</code></td></tr>
+    <tr><td>Press Home</td><td><code>sceneWillResignActive · sceneDidEnterBackground</code></td></tr>
+    <tr><td>Return</td><td><code>sceneWillEnterForeground · sceneDidBecomeActive</code></td></tr>
+  </table>
+  </div>
+  </div>
+  </div>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 190" role="img" aria-labelledby="l04-home-title">
+      <title id="l04-home-title">What fires when you press Home, in order. On Android, the Activity logs onPause and then onStop. On iOS, the app and scene level goes inactive and then to the background. On iOS, the view level fires nothing, because no screen was pushed or popped.</title>
+      <path class="edge dashed" d="M200,30 L200,178"/>
+      <text class="small muted" x="200" y="22" text-anchor="middle">press Home</text>
+      <text class="small muted" x="10" y="64">Android Activity</text>
+      <path class="axis" d="M150,60 L630,60"/>
+      <circle class="dot" cx="300" cy="60" r="5"/><text class="mono small" x="300" y="48" text-anchor="middle">onPause</text>
+      <circle class="dot" cx="440" cy="60" r="5"/><text class="mono small" x="440" y="48" text-anchor="middle">onStop</text>
+      <text class="small muted" x="10" y="114">iOS app / scene level</text>
+      <path class="axis" d="M150,110 L630,110"/>
+      <circle class="dot" cx="300" cy="110" r="5"/><text class="mono small" x="300" y="98" text-anchor="middle">inactive</text>
+      <circle class="dot" cx="440" cy="110" r="5"/><text class="mono small" x="440" y="98" text-anchor="middle">background</text>
+      <text class="small muted" x="10" y="164">iOS view level</text>
+      <path class="axis" d="M150,160 L630,160"/>
+      <circle class="dot dropped" cx="370" cy="160" r="5"/><text class="small muted" x="370" y="148" text-anchor="middle">nothing fires</text>
+    </svg>
+    <figcaption>The order of events, not their timing. Android reports leaving the screen through the Activity. iOS reports it at the app/scene level only.</figcaption>
+  </figure>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · backgrounding fires no view callbacks</span>
+    Press Home and <em>no</em> view-level "disappear" callback fires. Only the scene/app level changes. View callbacks report navigation inside the app, not the app leaving the screen. So a background monitor (Lesson 18) built on view callbacks would silently never notice the app going away: hook the <strong>app/scene</strong> level.
+    <span data-track="swiftui">Also note the order during navigation: the new view's <code>onAppear</code> runs <em>before</em> the old view's <code>onDisappear</code>.</span><span data-track="uikit">Also note the order during navigation: the two screens' callbacks interleave (old <code>viewWillDisappear</code>, new <code>viewWillAppear</code>, old <code>viewDidDisappear</code>, new <code>viewDidAppear</code>).</span> Don't write code that depends on either screen's callbacks running first.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · no callback when a suspended app is killed</span>
+    Swiping the app away in the app switcher, or the OS reclaiming memory, ends a suspended app with no notice at all. <code>applicationWillTerminate</code> isn't called for suspended apps (<a href="https://developer.apple.com/documentation/uikit/uiapplicationdelegate/applicationwillterminate(_:)">Apple docs</a>). Save anything important when you enter the background, not "on exit".
+  </div>
+
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to explain anything that surprised you in the logs. Surprises are the point of this lesson. For example: "Why does Android rebuild the Activity on rotation but iOS doesn't rebuild the view?"
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">You press Home on the detail screen. Which events fire?</p>
+    <div class="opts">
+      <button class="opt">view disappear events only</button>
+      <button class="opt" data-correct>scene/app-level events only</button>
+      <button class="opt">both view and scene events</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Backgrounding doesn't change what's on the navigation stack, so no view callback runs.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which file holds the text iOS shows in a Bluetooth permission prompt?</p>
+    <div class="opts">
+      <button class="opt">Package.swift</button>
+      <button class="opt" data-correct>Info.plist</button>
+      <button class="opt">project.yml</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Usage descriptions are Info.plist keys. A missing one terminates the app when the permission is requested.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Where would a background monitor hook in to learn that the app left the screen?</p>
+    <div class="opts">
+      <button class="opt">A view's <code>onDisappear</code> / <code>viewDidDisappear</code></button>
+      <button class="opt" data-correct>The app/scene level</button>
+      <button class="opt">The Info.plist</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Backgrounding is an app/scene event. The view level only reports navigation inside the app.</p>
+  </div>
+
+  <div class="quiz mcq">
+    <p class="q"><code>ScenePhase</code> can gain new cases in a future iOS. What does <code>@unknown default</code> add to a <code>switch</code> over it?</p>
+    <div class="opts">
+      <button class="opt">It makes the switch non-exhaustive</button>
+      <button class="opt" data-correct>A branch for future cases, while the compiler still warns about missing known ones</button>
+      <button class="opt">It silences every compiler check on the switch</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">With plain <code>default</code>, a newly added case would be handled silently. <code>@unknown default</code> keeps the exhaustiveness check for the cases you know.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">Android's closest equivalent to iOS's Info.plist is: (Lesson 03)</p>
+    <div class="opts">
+      <button class="opt">build.gradle.kts</button>
+      <button class="opt" data-correct>AndroidManifest.xml</button>
+      <button class="opt">settings.gradle.kts</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Both are the file that declares the app to the OS: its components and permissions on Android, its metadata and permission strings on iOS.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which event destroys and recreates the screen object by default? (Lesson 03)</p>
+    <div class="opts">
+      <button class="opt" data-correct>Android rotation</button>
+      <button class="opt">iOS pressing Home</button>
+      <button class="opt">iOS rotating the phone</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Android destroys and recreates the Activity on a configuration change such as rotation. Pressing Home on iOS only moves the scene to the background.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent)</span>
+    <ol>
+      <li>Predict the full log for: launch → push detail → press Home → return → back. Run it and diff.</li>
+      <li>Add a log for when the detail screen's view is first created (<span data-track="swiftui">tip: a custom <code>init()</code> on <code>DetailView</code></span><span data-track="uikit">it's already <code>viewDidLoad</code>; push, go back and push again, and count how often it fires</span>). How often does it run compared with the appear callbacks? Why?</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your track. Then read its code against the walkthroughs above, run the app yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 04 (iOS fundamentals): build a scratch iOS app that logs lifecycle events.
+My track: iOS = [SwiftUI | UIKit]  (default SwiftUI).
+Starting point: nothing. Work in scratch/lesson-04/ios/ in my workspace.
+Prereqs: Xcode, XcodeGen (`brew install xcodegen`).
+
+1. Create exactly these files, complete, as in the lesson's "Full files" section for my
+   track:
+     project.yml
+     SwiftUI track: Sources/Lesson04App.swift, Sources/ContentView.swift
+     UIKit track: Sources/AppDelegate.swift, Sources/SceneDelegate.swift,
+       Sources/ViewController.swift
+   Do NOT write Sources/Info.plist: XcodeGen generates it from project.yml.
+2. Run `xcodegen generate`. Pick an iPhone simulator on iOS 17 or newer (the deployment
+   target) from `xcrun simctl list devices available`, then build for it, as one command:
+     xcodebuild -project Lesson04iOS.xcodeproj -scheme Lesson04iOS \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' \
+       -derivedDataPath build build
+3. Boot that simulator, then install and launch the app (bundle ID
+   com.example.Lesson04iOS) with `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/Lesson04iOS.app`
+   and `xcrun simctl launch booted com.example.Lesson04iOS`. Read its log with
+     xcrun simctl spawn booted log show --last 2m --info --predicate 'category == "Lifecycle"'
+
+Acceptance checks:
+- The build succeeds with no compiler warnings from our own code (don't use -q to check
+  warnings; read the build output). Xcode's own "appintentsmetadataprocessor ... warning:
+  Metadata extraction skipped" line is expected and isn't from our code.
+- Launch logs (category Lifecycle) start with "App init" (SwiftUI) or "didFinishLaunching"
+  (UIKit) and include the first screen's appear callback.
+Then walk me through each file line by line. Do NOT run the lifecycle experiments or the
+unaided exercise for me; I do those myself.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/platform-lifecycles-cheatsheet.html">Cheatsheet: platform lifecycles</a>, both platforms and all tracks on one page.</li>
+    <li><a href="../reference/glossary.html">Course glossary</a></li>
+    <li>Wisdom: <a href="https://reddit.com/r/iOSProgramming">r/iOSProgramming</a> for "is this lifecycle behaviour normal?" questions.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson creates, complete. Open one to check your work. <code>Sources/Info.plist</code> is generated by <code>xcodegen generate</code> from <code>project.yml</code>.</p>
+
+    <details class="full-file" data-track="swiftui">
+      <summary>project.yml</summary>
+<pre><code>name: Lesson04iOS
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Lesson04iOS:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Lesson 04
+        UILaunchScreen: {}
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"</code></pre>
+    </details>
+
+    <details class="full-file" data-track="uikit">
+      <summary>project.yml</summary>
+<pre><code>name: Lesson04iOS
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  Lesson04iOS:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: "Lesson 04"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: "Default Configuration"
+                UISceneDelegateClassName: "$(PRODUCT_MODULE_NAME).SceneDelegate"</code></pre>
+    </details>
+
+    <details class="full-file" data-track="swiftui">
+      <summary>Sources/Lesson04App.swift</summary>
+<pre><code>import SwiftUI
+import os
+
+let lifecycleLog = Logger(subsystem: "com.example.lesson04", category: "Lifecycle")
+
+@main
+struct Lesson04App: App {
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        lifecycleLog.notice("App init")
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active: lifecycleLog.notice("scenePhase → active")
+            case .inactive: lifecycleLog.notice("scenePhase → inactive")
+            case .background: lifecycleLog.notice("scenePhase → background")
+            @unknown default: lifecycleLog.notice("scenePhase → unknown")
+            }
+        }
+    }
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="swiftui">
+      <summary>Sources/ContentView.swift</summary>
+<pre><code>import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Lesson 04: watch the Xcode console")
+                NavigationLink("Open detail screen") {
+                    DetailView()
+                }
+            }
+            .navigationTitle("Lifecycle")
+            .onAppear { lifecycleLog.notice("ContentView onAppear") }
+            .onDisappear { lifecycleLog.notice("ContentView onDisappear") }
+        }
+    }
+}
+
+struct DetailView: View {
+    var body: some View {
+        Text("Detail screen")
+            .onAppear { lifecycleLog.notice("DetailView onAppear") }
+            .onDisappear { lifecycleLog.notice("DetailView onDisappear") }
+    }
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="uikit">
+      <summary>Sources/AppDelegate.swift</summary>
+<pre><code>import UIKit
+import os
+
+let lifecycleLog = Logger(subsystem: "com.example.lesson04", category: "Lifecycle")
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        lifecycleLog.notice("didFinishLaunching")
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {
+        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="uikit">
+      <summary>Sources/SceneDelegate.swift</summary>
+<pre><code>import UIKit
+
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+               options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: windowScene)
+        window.rootViewController = UINavigationController(rootViewController: ViewController())
+        window.makeKeyAndVisible()
+        self.window = window
+        lifecycleLog.notice("scene willConnect")
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) { lifecycleLog.notice("sceneWillEnterForeground") }
+    func sceneDidBecomeActive(_ scene: UIScene) { lifecycleLog.notice("sceneDidBecomeActive") }
+    func sceneWillResignActive(_ scene: UIScene) { lifecycleLog.notice("sceneWillResignActive") }
+    func sceneDidEnterBackground(_ scene: UIScene) { lifecycleLog.notice("sceneDidEnterBackground") }
+}</code></pre>
+    </details>
+
+    <details class="full-file" data-track="uikit">
+      <summary>Sources/ViewController.swift</summary>
+<pre><code>import UIKit
+
+final class ViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        lifecycleLog.notice("ViewController viewDidLoad")
+        title = "Lifecycle"
+        view.backgroundColor = .systemBackground
+
+        let button = UIButton(type: .system)
+        button.setTitle("Open detail screen", for: .normal)
+        button.addAction(UIAction { [weak self] _ in
+            self?.navigationController?.pushViewController(DetailViewController(), animated: true)
+        }, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            button.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        lifecycleLog.notice("ViewController viewWillAppear")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        lifecycleLog.notice("ViewController viewDidAppear")
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        lifecycleLog.notice("ViewController viewWillDisappear")
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        lifecycleLog.notice("ViewController viewDidDisappear")
+    }
+}
+
+final class DetailViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        lifecycleLog.notice("DetailViewController viewDidLoad")
+        view.backgroundColor = .systemBackground
+        let label = UILabel()
+        label.text = "Detail screen"
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        lifecycleLog.notice("DetailViewController viewWillAppear")
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        lifecycleLog.notice("DetailViewController viewDidAppear")
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        lifecycleLog.notice("DetailViewController viewWillDisappear")
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        lifecycleLog.notice("DetailViewController viewDidDisappear")
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="03-android-fundamentals.html">← 03 Android fundamentals</a>
+    <a href="03-anatomy-of-a-kmp-project.html">Next: 05 Anatomy of a KMP project →</a>
+  </nav>
+</main>
+</body>
+</html>

@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lesson 02</p>
+  <p class="kicker">Reference · from Lessons 03–04</p>
   <h1>Platform Lifecycles</h1>
-  <p class="source">Compressed from <a href="../lessons/02-platform-fundamentals.html">Lesson 02</a>. Sequences were observed on an Android 16 emulator (targetSdk 36) and an iOS 26.2 simulator.</p>
+  <p class="source">Compressed from <a href="../lessons/03-android-fundamentals.html">Lesson 03</a> (Android) and <a href="../lessons/04-ios-fundamentals.html">Lesson 04</a> (iOS). Sequences were observed on an Android 16 emulator (targetSdk 36) and an iOS 26.2 simulator.</p>
 
   <h2>Android: Activity (same on the XML and Compose tracks)</h2>
   <pre><code>onCreate → onStart → onResume      … interactive …      onPause → onStop → onDestroy</code></pre>
@@ -24,7 +24,7 @@
     <tr><td>Back on root screen</td><td>onPause · onStop · onDestroy (observed on 16 / targetSdk 36)</td><td>finished; behaviour varies by version</td></tr>
   </table>
   </div>
-  <p><strong>Rule:</strong> never keep long-lived state (connections, scans) in the Activity. It belongs in a ViewModel (Lesson 05).</p>
+  <p><strong>Rule:</strong> never keep long-lived state (connections, scans) in the Activity. It belongs in a ViewModel (Lesson 08).</p>
 
   <h2>iOS: two lifecycles</h2>
   <div class="table-wrap">

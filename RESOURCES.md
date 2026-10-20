@@ -58,17 +58,17 @@
   Run Kotlin in the browser. Use for: quick experiments without a project.
 
 - [Android: Handle configuration changes](https://developer.android.com/guide/topics/resources/runtime-changes), [Intents and intent filters](https://developer.android.com/guide/components/intents-filters), [App manifest overview](https://developer.android.com/guide/topics/manifest/manifest-intro), [Gradle build overview](https://developer.android.com/build/gradle-build-overview), [Logcat](https://developer.android.com/studio/debug/logcat)
-  Official Android guides. Use for: Lesson 02 Part A.
+  Official Android guides. Use for: Lesson 03.
 - [Android: Migrate to built-in Kotlin](https://developer.android.com/build/migrate-to-built-in-kotlin) and [AGP release notes](https://developer.android.com/build/releases/gradle-plugin)
-  AGP 9+: Kotlin built in, `org.jetbrains.kotlin.android` fails the build, KMP modules need `com.android.kotlin.multiplatform.library`; AGP 9.4 needs Gradle 9.6+. Use for: Lesson 02, Lesson 03.
+  AGP 9+: Kotlin built in, `org.jetbrains.kotlin.android` fails the build, KMP modules need `com.android.kotlin.multiplatform.library`; AGP 9.4 needs Gradle 9.6+. Use for: Lesson 03, Lesson 05.
 - [Android 12 behaviour changes: Back on root launcher activities](https://developer.android.com/about/versions/12/behavior-changes-all) and [Predictive back](https://developer.android.com/guide/navigation/custom-back/predictive-back-gesture)
-  Use for: the Lesson 02 "Back" gotcha (documented vs observed behaviour).
+  Use for: the Lesson 03 "Back" gotcha (documented vs observed behaviour).
 - [SwiftUI: ScenePhase](https://developer.apple.com/documentation/swiftui/scenephase), [App](https://developer.apple.com/documentation/swiftui/app), [onAppear](https://developer.apple.com/documentation/swiftui/view/onappear(perform:)); [UIKit: UISceneDelegate](https://developer.apple.com/documentation/uikit/uiscenedelegate), [applicationWillTerminate](https://developer.apple.com/documentation/uikit/uiapplicationdelegate/applicationwillterminate(_:))
-  Official Apple references for both lifecycle levels, per track. Use for: Lesson 02 Part B.
+  Official Apple references for both lifecycle levels, per track. Use for: Lesson 04.
 - [Apple: Information property list](https://developer.apple.com/documentation/bundleresources/information-property-list) and [Logger](https://developer.apple.com/documentation/os/logger)
-  Use for: Lesson 02 Part B.
+  Use for: Lesson 04.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
-  Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 02 (before the KMP template from Lesson 03 supplies the project).
+  Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 04 (before the KMP template from Lesson 05 supplies the project).
 - [Kotlin Multiplatform: project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-discover-project.html), [Hierarchical project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-hierarchy.html) and [Expected and actual declarations](https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html)
   Official JetBrains docs: targets, source sets, intermediate source sets, expect/actual rules and when to prefer interfaces. Use for: Lesson 03 (project structure is the primary source), Lesson 06 (ports).
 - [Android: Set up the Android Gradle Library Plugin for KMP](https://developer.android.com/kotlin/multiplatform/plugin)
