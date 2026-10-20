@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Course Glossary</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · grows with every lesson</p>
+  <h1>Course Glossary</h1>
+  <p class="source">Every lesson uses these terms with exactly these meanings. Each entry names the lesson that introduces it.</p>
+
+  <h2>Course terms</h2>
+  <dl>
+    <dt><strong>Milestone</strong> (m00…m10, e1…e3)</dt>
+    <dd>The finished demo state a lesson produces. Each lesson's agent brief starts from the previous milestone. (Plan)</dd>
+    <dt><strong>UI track</strong></dt>
+    <dd>Your choice of UI stack per platform: Android <em>XML</em> or <em>Compose</em>, iOS <em>UIKit</em> or <em>SwiftUI</em>. The default is Compose + SwiftUI. (Plan)</dd>
+    <dt><strong>Agent brief</strong></dt>
+    <dd>The copy-paste block at the end of each lesson that tells a coding agent what to build and how to check it. (Plan)</dd>
+    <dt><strong>Unaided exercise</strong></dt>
+    <dd>A small change you make without an agent. Not optional. (Plan)</dd>
+  </dl>
+
+  <h2>Language and concurrency</h2>
+  <dl>
+    <dt><strong>Data class</strong> (Kotlin)</dt>
+    <dd>A class for holding values; the compiler generates <code>equals</code>, <code>hashCode</code>, <code>toString</code>, <code>copy</code>. (01)</dd>
+    <dt><strong>Sealed interface</strong> (Kotlin) / <strong>enum with associated values</strong> (Swift)</dt>
+    <dd>A closed set of cases known at compile time, so <code>when</code>/<code>switch</code> over it must be exhaustive. Used for every UI state. (01)</dd>
+    <dt><strong>Extension</strong></dt>
+    <dd>Adding members to an existing type without subclassing it; statically resolved. (01)</dd>
+    <dt><strong>Value type / reference type</strong></dt>
+    <dd>A value type (Swift <code>struct</code>) is copied on assignment; a reference type (<code>class</code>) is shared. (01)</dd>
+    <dt><strong>Optional / nullable type</strong></dt>
+    <dd><code>T?</code>: a type that may hold no value. Must be unwrapped or given a fallback before use. (01)</dd>
+    <dt><strong>Coroutine</strong></dt>
+    <dd>A suspendable unit of work in Kotlin, started by a builder such as <code>launch</code>. (01)</dd>
+    <dt><strong>Suspend function</strong></dt>
+    <dd>A Kotlin function that can pause without blocking a thread; callable only from a coroutine or another suspend function. (01)</dd>
+    <dt><strong>Coroutine scope / structured concurrency</strong></dt>
+    <dd>A scope owns the coroutines launched in it; cancelling the scope cancels them all. (01)</dd>
+    <dt><strong>Flow</strong> (cold)</dt>
+    <dd>An async stream whose producer runs only when collected, once per collector. (01)</dd>
+    <dt><strong>StateFlow</strong> (hot, conflated)</dt>
+    <dd>A flow that always holds one current value; collectors see only the latest value, not a backlog. (01)</dd>
+    <dt><strong>Conflation</strong></dt>
+    <dd>Dropping intermediate values so a slow consumer sees only the most recent one. (01)</dd>
+    <dt><strong>Backing property</strong></dt>
+    <dd>Private mutable state exposed as a public read-only view (<code>_state</code> / <code>state</code>; Swift <code>private(set)</code>). (01)</dd>
+    <dt><strong>AsyncSequence / AsyncStream</strong> (Swift)</dt>
+    <dd>Swift's async stream protocol and its push-based implementation (<code>yield</code>, <code>finish</code>), consumed with <code>for await</code>. (01)</dd>
+    <dt><strong>Task</strong> (Swift)</dt>
+    <dd>A unit of async work. A bare <code>Task { }</code> is unstructured: nothing cancels it automatically. (01)</dd>
+    <dt><strong>Main actor</strong> (<code>@MainActor</code>)</dt>
+    <dd>The isolation domain for UI work; code marked with it runs only there, and the compiler enforces that. (01)</dd>
+  </dl>
+</main>
+</body>
+</html>

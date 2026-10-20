@@ -10,7 +10,25 @@
   --code-bg: #f4f2ec;
   --ok: #2f6f4f;
   --err: #a4302a;
-  --max-width: 40em;
+  --card: #fbfaf7;
+  --card-strong: #ffffff;
+  --max-width: 42em;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #e8e4da;
+    --ink-soft: #b3ad9f;
+    --paper: #1b1a17;
+    --rule: #3a372f;
+    --accent: #e09a6b;
+    --accent-soft: #2e241c;
+    --code-bg: #24221d;
+    --ok: #7fc39d;
+    --err: #ef8a83;
+    --card: #211f1b;
+    --card-strong: #26241f;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -113,7 +131,7 @@ pre code { background: none; padding: 0; }
 
 .callout {
   border: 1px solid var(--rule);
-  background: #fbfaf7;
+  background: var(--card);
   padding: 1rem 1.1rem;
   border-radius: 6px;
   margin: 1.25rem 0;
@@ -137,7 +155,7 @@ pre code { background: none; padding: 0; }
   border-radius: 6px;
   padding: 1rem 1.1rem;
   margin: 1rem 0;
-  background: #fff;
+  background: var(--card-strong);
 }
 
 .quiz .q { font-weight: 600; margin-bottom: 0.6rem; }
@@ -199,7 +217,85 @@ pre code { background: none; padding: 0; }
   margin-right: 0.4em;
 }
 
+/* ---- Lesson header ---- */
+.meta { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.5rem 0 1.5rem; }
+.meta .tag { margin: 0; }
+
+/* ---- Part A / Part B dividers ---- */
+.part {
+  margin: 3.5rem 0 0.5rem;
+  padding: 0.6rem 0;
+  border-top: 3px double var(--rule);
+  border-bottom: 1px solid var(--rule);
+  font-family: "Courier New", monospace;
+  font-size: 0.8rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.part + h2 { border-top: none; padding-top: 0; margin-top: 1.25rem; }
+
+/* ---- Tables (concept maps, cheatsheets) ---- */
+table { border-collapse: collapse; width: 100%; margin: 1rem 0 1.5rem; font-size: 0.85rem; }
+th, td { text-align: left; vertical-align: top; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--rule); }
+th { font-family: "Courier New", monospace; font-size: 0.72rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); font-weight: normal; }
+td code { font-size: 0.82em; white-space: nowrap; }
+.table-wrap { overflow-x: auto; }
+
+/* ---- Side-by-side code (TS | Kotlin | Swift, or track vs track) ---- */
+.compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr)); gap: 0.75rem; margin: 1rem 0 1.5rem; }
+.compare figure { margin: 0; min-width: 0; }
+.compare figcaption { font-family: "Courier New", monospace; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 0.3rem; }
+.compare pre { margin: 0; font-size: 0.78em; height: calc(100% - 1.3rem); }
+
+/* ---- Line-by-line walkthrough under a code block ---- */
+ol.walk { margin: -0.25rem 0 1.5rem; padding-left: 1.4rem; font-size: 0.92rem; }
+ol.walk li { margin-bottom: 0.45rem; }
+ol.walk li::marker { color: var(--ink-soft); font-family: "Courier New", monospace; font-size: 0.8rem; }
+
+/* ---- Callout variants ---- */
+.callout.gotcha { border-left: 4px solid var(--err); }
+.callout.ts { border-left: 4px solid #3178c6; }
+.callout.brief { border-left: 4px solid var(--ink); }
+.callout.ask-agent { border-left: 4px solid var(--ink-soft); font-size: 0.92rem; }
+.callout pre { margin-bottom: 0.25rem; }
+
+/* ---- Copy button (agent brief) ---- */
+.copy-wrap { position: relative; }
+.copy-btn {
+  position: absolute; top: 0.5rem; right: 0.5rem;
+  font-family: inherit; font-size: 0.75rem;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--rule); border-radius: 4px;
+  background: var(--card-strong); color: var(--ink); cursor: pointer;
+}
+.copy-btn:hover { border-color: var(--accent); }
+pre.brief-text { white-space: pre-wrap; font-size: 0.78em; padding-top: 2.2rem; }
+
+/* ---- Multiple-choice quiz ---- */
+.mcq .opts { display: grid; gap: 0.4rem; }
+.mcq button.opt {
+  margin: 0; text-align: left;
+  font-family: "SF Mono", "Menlo", "Consolas", monospace; font-size: 0.82rem;
+  background: var(--paper); color: var(--ink);
+  border: 1px solid var(--rule); padding: 0.5rem 0.7rem;
+}
+.mcq button.opt:hover { border-color: var(--accent); opacity: 1; }
+.mcq button.opt.picked-right { border-color: var(--ok); background: var(--ok); color: var(--paper); }
+.mcq button.opt.picked-wrong { border-color: var(--err); color: var(--err); text-decoration: line-through; }
+.mcq .why { display: none; margin-top: 0.6rem; font-size: 0.88rem; color: var(--ink-soft); }
+.mcq.answered .why { display: block; }
+
+/* ---- Lesson nav ---- */
+.progress-links .muted { color: var(--ink-soft); }
+
+@media (max-width: 640px) {
+  body { padding: 2rem 1rem 4rem; font-size: 17px; }
+}
+
 @media print {
+  .copy-btn, .mcq .opts button:not(.picked-right) { display: none; }
+  .mcq .why { display: block; }
   body { padding: 0; font-size: 12pt; }
   .quiz button, .ask-agent { display: none; }
   a { color: var(--ink); }

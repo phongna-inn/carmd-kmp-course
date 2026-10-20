@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>01 — Kotlin + Swift for TypeScript Developers</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 01 · Week 1 · Native Device Monitor course</p>
+  <h1>Kotlin + Swift for TypeScript Developers</h1>
+  <div class="meta">
+    <span class="tag">~4 h</span>
+    <span class="tag">Part A: Kotlin · Part B: Swift</span>
+    <span class="tag">Milestone: scratch exercises</span>
+    <span class="tag">Prereq: TypeScript</span>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> our app's shared core is Kotlin, and its iOS edges are Swift. By the end of this lesson you'll have written the same small program twice: a fake BLE scan that streams devices into a piece of observable state. That shape is exactly what the real app does from Lesson 05 on, with a real radio behind it.
+  </div>
+
+  <p><span class="tag">Primary sources</span> Kotlin's <a href="https://kotlinlang.org/docs/coroutines-basics.html">Coroutines basics</a> and <a href="https://kotlinlang.org/docs/flow.html">Asynchronous Flow</a>, and the Swift book's <a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/">Concurrency</a> chapter. Coroutines and Swift concurrency are where TypeScript intuition helps least, so read those three alongside this lesson.</p>
+
+  <h2>The map: what you already know</h2>
+  <p>Most syntax transfers almost one to one. Skim this table now and come back to it later. The rows marked <strong>new</strong> have no real TypeScript equivalent, and that's where this lesson spends its time.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Idea</th><th>TypeScript</th><th>Kotlin</th><th>Swift</th></tr>
+    <tr><td>Constant / variable</td><td><code>const</code> / <code>let</code></td><td><code>val</code> / <code>var</code></td><td><code>let</code> / <code>var</code></td></tr>
+    <tr><td>Nullable type</td><td><code>string | null</code></td><td><code>String?</code></td><td><code>String?</code></td></tr>
+    <tr><td>Safe access / fallback</td><td><code>a?.b ?? x</code></td><td><code>a?.b ?: x</code></td><td><code>a?.b ?? x</code></td></tr>
+    <tr><td>"Trust me, not null"</td><td><code>a!</code> (unchecked)</td><td><code>a!!</code> (throws)</td><td><code>a!</code> (crashes)</td></tr>
+    <tr><td>Contract</td><td><code>interface</code></td><td><code>interface</code></td><td><code>protocol</code></td></tr>
+    <tr><td>Value object with equality, copy <strong>(new)</strong></td><td>none (objects compare by reference)</td><td><code>data class</code></td><td><code>struct</code> (a value type)</td></tr>
+    <tr><td>Discriminated union</td><td><code>{kind:'a'} | {kind:'b'}</code></td><td><code>sealed interface</code></td><td><code>enum</code> with associated values</td></tr>
+    <tr><td>Arrow function</td><td><code>(x) =&gt; x * 2</code></td><td><code>{ x -&gt; x * 2 }</code>, or <code>it</code></td><td><code>{ x in x * 2 }</code>, or <code>$0</code></td></tr>
+    <tr><td>Add a method to an existing type</td><td>(prototype hacks)</td><td>extension function</td><td><code>extension</code></td></tr>
+    <tr><td>Async function <strong>(new semantics)</strong></td><td><code>async</code> / <code>await</code>, Promise</td><td><code>suspend fun</code>, no Promise</td><td><code>async</code> / <code>await</code></td></tr>
+    <tr><td>Async stream of values</td><td>RxJS <code>Observable</code>, async generator</td><td><code>Flow</code></td><td><code>AsyncSequence</code> / <code>AsyncStream</code></td></tr>
+    <tr><td>"Current value" holder</td><td>RxJS <code>BehaviorSubject</code></td><td><code>StateFlow</code></td><td>a property (later: <code>@Observable</code>)</td></tr>
+    <tr><td>"Only on the UI thread" <strong>(new)</strong></td><td>n/a (one thread)</td><td><code>Dispatchers.Main</code></td><td><code>@MainActor</code></td></tr>
+  </table>
+  </div>
+
+  <!-- ============================== PART A ============================== -->
+  <p class="part">Part A — Kotlin (~2 h)</p>
+
+  <h2>A1. Declarations and null safety</h2>
+  <p><code>val</code> is TypeScript's <code>const</code>; default to it. Types come after names, as in TS. The real upgrade is that null safety is part of the type system <em>and enforced everywhere</em>, with no <code>strictNullChecks</code> toggle and no <code>any</code> escape hatch (<a href="https://kotlinlang.org/docs/null-safety.html">Kotlin docs: Null safety</a>).</p>
+  <div class="compare">
+    <figure><figcaption>TypeScript</figcaption><pre><code>const name: string | null = scan();
+const label = name ?? "Unknown";
+const len = name?.length;</code></pre></figure>
+    <figure><figcaption>Kotlin</figcaption><pre><code>val name: String? = scan()
+val label = name ?: "Unknown"
+val len = name?.length</code></pre></figure>
+  </div>
+  <p>Kotlin's fallback operator is <code>?:</code> (the "Elvis" operator), not <code>??</code>. And <code>name!!</code> really does throw a <code>NullPointerException</code> if <code>name</code> is null. In TS, <code>name!</code> only silences the compiler.</p>
+
+  <h2>A2. Data classes and sealed interfaces</h2>
+  <p>A <code>data class</code> is a class whose job is to hold values. Kotlin generates <code>equals()</code>, <code>hashCode()</code>, <code>toString()</code> and <code>copy()</code> from the constructor properties (<a href="https://kotlinlang.org/docs/data-classes.html">docs</a>). Two devices with the same fields are <code>==</code>, which never happens with plain TS objects.</p>
+  <pre><code>data class Device(val name: String?, val address: String, val rssi: Int)
+
+val a = Device("OBD-II Dongle", "AA:01", -48)
+a == a.copy()             // true: structural equality
+a.copy(rssi = -50)        // a new Device; `a` is untouched</code></pre>
+  <p>A <code>sealed interface</code> is a closed set of subtypes, all known at compile time (<a href="https://kotlinlang.org/docs/sealed-classes.html">docs</a>). It's TypeScript's discriminated union, without the hand-written <code>kind</code> field:</p>
+  <div class="compare">
+    <figure><figcaption>TypeScript</figcaption><pre><code>type ScanState =
+  | { kind: "idle" }
+  | { kind: "scanning"; found: number }
+  | { kind: "done"; devices: Device[] };</code></pre></figure>
+    <figure><figcaption>Kotlin</figcaption><pre><code>sealed interface ScanState {
+    data object Idle : ScanState
+    data class Scanning(val found: Int) : ScanState
+    data class Done(val devices: List&lt;Device&gt;) : ScanState
+}</code></pre></figure>
+  </div>
+  <p>Because the set is closed, a <code>when</code> expression over it must handle every case, and the compiler checks that for you. TypeScript needs the <code>never</code> trick to get the same guarantee. You'll lean on this constantly: every screen in the app renders a sealed <code>UiState</code>.</p>
+
+  <h2>A3. Lambdas, collections, extension functions</h2>
+  <p>Collections read like JS arrays: <code>filter</code>, <code>map</code>, <code>joinToString</code>. A lambda's single parameter is implicitly named <code>it</code>. When the last argument is a lambda, it moves outside the parentheses (a "trailing lambda") (<a href="https://kotlinlang.org/docs/lambdas.html">docs</a>).</p>
+  <pre><code>devices.filter { it.rssi &gt; -80 }.map { it.name ?: "Unknown" }</code></pre>
+  <p>An <strong>extension function</strong> adds a method to a type you don't own, without subclassing or touching a prototype. It's resolved statically, so it's just a function with nicer syntax (<a href="https://kotlinlang.org/docs/extensions.html">docs</a>):</p>
+  <pre><code>fun Device.label(): String = "${name ?: "Unknown"} ($address) $rssi dBm"</code></pre>
+
+  <h2>A4. Coroutines: <code>suspend</code> is not <code>async</code></h2>
+  <p>This is where TS intuition misleads. In JS, calling an <code>async function</code> starts it immediately and hands back a Promise, which can outlive whoever called it. Kotlin's version differs in two ways (<a href="https://kotlinlang.org/docs/coroutines-basics.html">docs</a>):</p>
+  <ol>
+    <li><strong>A <code>suspend fun</code> can only be called from another suspend function or a coroutine.</strong> There's no Promise object. It pauses at <code>delay()</code> or another suspend call without blocking the thread, then resumes.</li>
+    <li><strong>Coroutines are started by a builder (<code>launch</code>) inside a <code>CoroutineScope</code>.</strong> The scope owns them: cancel the scope and every coroutine in it is cancelled. This is called <em>structured concurrency</em>, and it's why a screen closing in Lesson 05 automatically stops its BLE scan.</li>
+  </ol>
+  <p><code>runBlocking { }</code> bridges normal code into coroutines by blocking the current thread until everything inside finishes. Use it in <code>main()</code> and tests only, never in app code.</p>
+
+  <h2>A5. Flow and StateFlow</h2>
+  <p>A <code>Flow</code> is an asynchronous stream of values. It's <em>cold</em>, like an RxJS Observable: the <code>flow { }</code> body doesn't run until someone calls <code>collect</code>, and it runs again for each collector (<a href="https://kotlinlang.org/docs/flow.html">docs</a>). A <code>StateFlow</code> is <em>hot</em> and always holds exactly one current value, like a BehaviorSubject. It's how every ViewModel in this course exposes UI state (<a href="https://developer.android.com/kotlin/flow/stateflow-and-sharedflow">Android docs: StateFlow</a>).</p>
+  <p>Here is the whole Part A program. It's a fake BLE scan: devices trickle in, weak ones are filtered out, and a <code>StateFlow</code> tracks the scan's state while <code>main</code> prints each state it sees.</p>
+  <pre><code>data class Device(val name: String?, val address: String, val rssi: Int)
+
+fun Device.label(): String = "${name ?: "Unknown"} ($address) $rssi dBm"
+
+sealed interface ScanState {
+    data object Idle : ScanState
+    data class Scanning(val found: Int) : ScanState
+    data class Done(val devices: List&lt;Device&gt;) : ScanState
+}</code></pre>
+  <ol class="walk">
+    <li>The device model is immutable (<code>val</code>s only). A scan result is a snapshot, so nobody should edit it in place.</li>
+    <li>The extension function gives every <code>Device</code> a display label, using <code>?:</code> for the nameless ones.</li>
+    <li><code>ScanState</code> has three states. <code>Idle</code> carries no data, so it's a <code>data object</code> (a singleton with a readable <code>toString</code>).</li>
+  </ol>
+  <pre><code>fun fakeScan(): Flow&lt;Device&gt; = flow {
+    val nearby = listOf(
+        Device("OBD-II Dongle", "AA:01", -48),
+        Device(null, "BB:02", -91),
+        Device("Heart Rate", "CC:03", -67),
+    )
+    for (device in nearby) {
+        delay(300)
+        emit(device)
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><code>fakeScan()</code> is a <em>normal</em> function that returns a Flow. Calling it does nothing yet, because the flow is cold.</li>
+    <li>Inside <code>flow { }</code> you're in a coroutine, so you can call suspend functions. <code>delay(300)</code> pauses without blocking a thread, standing in for radio latency.</li>
+    <li><code>emit(device)</code> pushes one value to whoever is collecting. In Lesson 08, a real <code>BluetoothLeScanner</code> callback takes this line's place.</li>
+  </ol>
+  <pre><code>class Scanner(private val scope: CoroutineScope) {
+    private val _state = MutableStateFlow&lt;ScanState&gt;(ScanState.Idle)
+    val state: StateFlow&lt;ScanState&gt; = _state.asStateFlow()
+
+    fun start() {
+        scope.launch {
+            val found = mutableListOf&lt;Device&gt;()
+            fakeScan()
+                .filter { it.rssi &gt; -80 }
+                .collect { device -&gt;
+                    found += device
+                    _state.value = ScanState.Scanning(found.size)
+                }
+            _state.value = ScanState.Done(found.toList())
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li>The scanner doesn't create its own scope; it's <em>given</em> one. Whoever owns the scope controls its lifetime. That's the seed of dependency injection (Lesson 06).</li>
+    <li>The <strong>backing-property pattern</strong>: a private <code>MutableStateFlow</code> that only the class can write, exposed publicly as a read-only <code>StateFlow</code>. Every shared ViewModel in this course does exactly this.</li>
+    <li><code>start()</code> is not <code>suspend</code>. It <code>launch</code>es a coroutine in the scope and returns immediately, so it's "fire and track".</li>
+    <li><code>filter</code> is a Flow operator. It builds a new cold flow and runs nothing yet. <code>collect</code> is the terminal call that actually starts <code>fakeScan()</code>'s body, and it suspends until the flow completes.</li>
+    <li>Writing <code>_state.value</code> publishes a new state to every collector. After the flow completes, the final <code>Done</code> carries a read-only copy of the list.</li>
+  </ol>
+  <pre><code>fun render(state: ScanState): String = when (state) {
+    ScanState.Idle -&gt; "Idle"
+    is ScanState.Scanning -&gt; "Scanning… ${state.found} found"
+    is ScanState.Done -&gt; "Done: " + state.devices.joinToString { it.label() }
+}
+
+fun main(): Unit = runBlocking {
+    val scanner = Scanner(scope = this)
+    scanner.start()
+    scanner.state
+        .onEach { println(render(it)) }
+        .first { it is ScanState.Done }
+}</code></pre>
+  <ol class="walk">
+    <li><code>when</code> is exhaustive with no <code>else</code>. After <code>is ScanState.Scanning</code>, <code>state</code> is <em>smart-cast</em>, so <code>state.found</code> type-checks.</li>
+    <li><code>runBlocking</code> provides the scope (<code>this</code>) that the scanner launches into. <code>: Unit</code> tells Kotlin that <code>main</code> returns nothing, whatever the block's last expression is.</li>
+    <li>A <code>StateFlow</code> never completes, so collecting it forever would hang. <code>first { … }</code> collects until the predicate matches, then stops, and <code>onEach</code> prints every state on the way.</li>
+  </ol>
+  <p>Run it and you get:</p>
+  <pre><code>Idle
+Scanning… 1 found
+Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm</code></pre>
+
+  <div class="callout gotcha">
+    <span class="label">Gotcha · where did "Scanning… 2 found" go?</span>
+    Two devices passed the filter, so the state <em>was</em> set to <code>Scanning(2)</code>. But right after that, the flow ended and the same coroutine set <code>Done</code> before the collector got a chance to run. <code>StateFlow</code> is <strong>conflated</strong>: a collector sees only the <em>latest</em> value, never a backlog. That's exactly right for UI state, because a screen should draw what's true <em>now</em>. It's wrong for events you must not miss, such as "show this error once". The course handles those differently in Lesson 05.
+  </div>
+
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Stuck on any line? Ask your agent (your teacher) to explain it, or to change something and predict the output before you run it. For example: "What changes if <code>fakeScan()</code> adds <code>delay(300)</code> after the loop?"
+  </div>
+
+  <h3>Retrieval check: Part A</h3>
+  <div class="quiz mcq">
+    <p class="q">TypeScript <code>user?.name ?? "Guest"</code> in Kotlin is:</p>
+    <div class="opts">
+      <button class="opt">user?.name ?? "Guest"</button>
+      <button class="opt" data-correct>user?.name ?: "Guest"</button>
+      <button class="opt">user?.name || "Guest"</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Kotlin's fallback is the Elvis operator <code>?:</code>. Swift kept <code>??</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>render()</code>'s <code>when</code> compile without an <code>else</code>?</p>
+    <div class="opts">
+      <button class="opt">Kotlin silently adds a default else branch</button>
+      <button class="opt" data-correct>Sealed means the compiler knows every subtype</button>
+      <button class="opt">Expressions in Kotlin never require an else</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Add a fourth subtype and <code>render()</code> stops compiling until you handle it. That's the feature you want.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The output never shows <code>Scanning… 2 found</code>. Why?</p>
+    <div class="opts">
+      <button class="opt">The filter dropped the second device</button>
+      <button class="opt">The collector crashed on that update</button>
+      <button class="opt" data-correct>StateFlow keeps only the latest value</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Conflation: <code>Done</code> overwrote <code>Scanning(2)</code> before the collector resumed.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">You call a <code>suspend fun</code> from a plain (non-suspend) function. What happens?</p>
+    <div class="opts">
+      <button class="opt">It returns a Promise-like Deferred object</button>
+      <button class="opt">It quietly starts a new background thread</button>
+      <button class="opt" data-correct>It doesn't compile outside a coroutine</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Suspend functions need a coroutine to run in. You start one with <code>launch</code> in a scope, or <code>runBlocking</code> in <code>main</code>.</p>
+  </div>
+
+  <div class="callout exercise">
+    <span class="label">Unaided exercise · Part A (no agent)</span>
+    <ol>
+      <li>Add a fourth state, <code>data class Failed(val reason: String) : ScanState</code>. Build, read the compiler error in <code>render()</code>, and fix it.</li>
+      <li>Give <code>start()</code> a parameter, <code>minRssi: Int = -80</code>, and use it in the filter. Call <code>start(minRssi = -95)</code> and predict the output <em>before</em> running it. Does "Scanning… 3 found" appear? Why or why not?</li>
+    </ol>
+  </div>
+
+  <!-- ============================== PART B ============================== -->
+  <p class="part">Part B — Swift (~2 h)</p>
+
+  <h2>B1. Structs are values; classes are references</h2>
+  <p>This is the one idea with no TypeScript equivalent. In TS, every object is a reference. In Swift, a <code>struct</code> is a <strong>value type</strong>: assigning it or passing it <em>copies</em> it. A <code>class</code> is a reference type, like a TS object (<a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/classesandstructures/">Swift book: Structures and Classes</a>).</p>
+  <pre><code>struct Counter { var count = 0 }
+var a = Counter()
+var b = a          // b is a full copy
+b.count += 1
+print(a.count)     // 0: a was never touched</code></pre>
+  <p>The rule of thumb the course follows: <strong>data is a <code>struct</code></strong> (a scanned device, a reading) and <strong>long-lived things with identity are a <code>class</code></strong> (a scanner, a BLE adapter). Everyone holding a scanner must see the <em>same</em> scanner. <code>let</code> is Swift's <code>const</code>. On a struct, <code>let</code> also freezes every field.</p>
+
+  <h2>B2. Optionals</h2>
+  <p>Optionals work like Kotlin's nullable types (<code>String?</code>, <code>?.</code>), but Swift kept TypeScript's <code>??</code>. Swift also adds two unwrapping forms you'll see everywhere (<a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/thebasics/">Swift book: The Basics</a>):</p>
+  <pre><code>if let name = device.name { print(name) }       // name is non-optional inside
+guard let name = device.name else { return }    // ...or exit early; name is usable below</code></pre>
+
+  <h2>B3. Enums with associated values, protocols, extensions</h2>
+  <p>Swift's <code>enum</code> can carry data per case. It's the Swift spelling of Kotlin's <code>sealed interface</code>, and a <code>switch</code> over it must be exhaustive (<a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/enumerations/">Swift book: Enumerations</a>).</p>
+  <div class="compare">
+    <figure><figcaption>Kotlin</figcaption><pre><code>sealed interface ScanState {
+    data object Idle : ScanState
+    data class Scanning(val found: Int) : ScanState
+    data class Done(val devices: List&lt;Device&gt;) : ScanState
+}</code></pre></figure>
+    <figure><figcaption>Swift</figcaption><pre><code>enum ScanState {
+    case idle
+    case scanning(found: Int)
+    case done([Device])
+}</code></pre></figure>
+  </div>
+  <p>A <code>protocol</code> is an interface (<a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/protocols/">Swift book: Protocols</a>). In Lesson 06, the Kotlin <code>interface BleScanner</code> becomes a protocol that your Swift adapter conforms to. An <code>extension</code> adds members to an existing type, the same idea as Kotlin's extension functions.</p>
+
+  <h2>B4. Closures</h2>
+  <p>A closure is <code>{ params in body }</code>. Shorthand arguments are <code>$0</code>, <code>$1</code>, and trailing closures move outside the parentheses, exactly as in Kotlin (<a href="https://docs.swift.org/swift-book/documentation/the-swift-programming-language/closures/">Swift book: Closures</a>). A key path like <code>\.label</code> can stand in for <code>{ $0.label }</code>.</p>
+
+  <h2>B5. async/await, AsyncStream, and <code>@MainActor</code></h2>
+  <p>Swift's <code>async</code>/<code>await</code> reads like TypeScript's. An <code>AsyncSequence</code> is consumed with <code>for await</code>, the same keyword pair as JS async iterators. <code>AsyncStream</code> is the easy way to build one by pushing values into a <em>continuation</em> (<a href="https://developer.apple.com/documentation/swift/asyncstream">Apple: AsyncStream</a>). <code>@MainActor</code> marks code that must only run on the main actor, which is where all UI work lives (<a href="https://developer.apple.com/documentation/swift/mainactor">Apple: MainActor</a>).</p>
+  <p>The same program in Swift:</p>
+  <pre><code>struct Device {
+    let name: String?
+    let address: String
+    let rssi: Int
+}
+
+extension Device {
+    var label: String { "\(name ?? "Unknown") (\(address)) \(rssi) dBm" }
+}
+
+enum ScanState {
+    case idle
+    case scanning(found: Int)
+    case done([Device])
+}</code></pre>
+  <ol class="walk">
+    <li><code>Device</code> is a struct with <code>let</code> fields, the same immutable-snapshot decision as the Kotlin data class.</li>
+    <li>The extension adds a <em>computed property</em>. <code>\(…)</code> is string interpolation, Swift's <code>${…}</code>.</li>
+  </ol>
+  <pre><code>func fakeScan() -&gt; AsyncStream&lt;Device&gt; {
+    AsyncStream { continuation in
+        Task {
+            let nearby = [
+                Device(name: "OBD-II Dongle", address: "AA:01", rssi: -48),
+                Device(name: nil, address: "BB:02", rssi: -91),
+                Device(name: "Heart Rate", address: "CC:03", rssi: -67),
+            ]
+            for device in nearby {
+                try? await Task.sleep(for: .milliseconds(300))
+                continuation.yield(device)
+            }
+            continuation.finish()
+        }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li>The closure receives a <code>continuation</code>, a handle for pushing values in from outside.</li>
+    <li><code>Task { }</code> starts a piece of async work, much like <code>launch</code>. Unlike <code>launch</code>, it isn't tied to a scope, so nothing cancels it automatically. Keep that difference in mind.</li>
+    <li><code>Task.sleep</code> can throw if the task is cancelled, and <code>try?</code> ignores that here. <code>yield</code> is Kotlin's <code>emit</code>, and <code>finish()</code> ends the stream. In Lesson 08, CoreBluetooth's delegate callback calls <code>yield</code> instead.</li>
+  </ol>
+  <pre><code>@MainActor
+final class Scanner {
+    var onChange: ((ScanState) -&gt; Void)?
+
+    private(set) var state: ScanState = .idle {
+        didSet { onChange?(state) }
+    }
+
+    func start() async {
+        var found: [Device] = []
+        for await device in fakeScan() where device.rssi &gt; -80 {
+            found.append(device)
+            state = .scanning(found: found.count)
+        }
+        state = .done(found)
+    }
+}</code></pre>
+  <ol class="walk">
+    <li>A <code>class</code>, because a scanner has identity. <code>final</code> means it can't be subclassed. <code>@MainActor</code> means all of its state is read and written only on the main actor, so it's safe to drive UI from.</li>
+    <li><code>private(set)</code> is Swift's backing-property pattern in one line: anyone can read <code>state</code>, but only <code>Scanner</code> can write it.</li>
+    <li><code>didSet</code> runs after every assignment and calls the optional callback. Here it plays the role of the StateFlow collector. Lesson 05 replaces this hand-made callback with SwiftUI observation.</li>
+    <li><code>for await … where</code> loops over the async stream, with an inline filter.</li>
+  </ol>
+  <pre><code>func render(_ state: ScanState) -&gt; String {
+    switch state {
+    case .idle:
+        return "Idle"
+    case .scanning(let found):
+        return "Scanning… \(found) found"
+    case .done(let devices):
+        return "Done: " + devices.map(\.label).joined(separator: ", ")
+    }
+}
+
+let scanner = Scanner()
+scanner.onChange = { print(render($0)) }
+print(render(scanner.state))
+await scanner.start()</code></pre>
+  <ol class="walk">
+    <li><code>case .scanning(let found)</code> pulls the associated value out. The <code>switch</code> is exhaustive, with no <code>default</code>.</li>
+    <li>The <code>_</code> before the parameter name means callers write <code>render(x)</code>, not <code>render(state: x)</code>.</li>
+    <li>Top-level code in <code>main.swift</code> may use <code>await</code> directly, and it runs on the main actor, which is why it can touch the <code>@MainActor</code> scanner (<a href="https://github.com/swiftlang/swift-evolution/blob/main/proposals/0343-top-level-concurrency.md">SE-0343</a>).</li>
+  </ol>
+  <p>Run it and you get one more line than in Kotlin:</p>
+  <pre><code>Idle
+Scanning… 1 found
+Scanning… 2 found
+Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm</code></pre>
+  <div class="callout ts">
+    <span class="label">Kotlin vs Swift · what changed and why</span>
+    The <code>didSet</code> callback runs <em>synchronously on every assignment</em>, so it sees every state. Kotlin's <code>StateFlow</code> collector runs <em>later</em>, as a separate coroutine, and only reads the latest value. Neither is a bug. They're different tools: a callback is a stream of changes, and a StateFlow is "the current truth". When Lesson 05 connects SwiftUI to the shared Kotlin <code>StateFlow</code>, the iOS UI inherits the Kotlin behaviour.
+  </div>
+
+  <h3>Retrieval check: Part B</h3>
+  <div class="quiz mcq">
+    <p class="q"><code>var a = Counter(); var b = a; b.count += 1</code>. What is <code>a.count</code>? (<code>Counter</code> is a struct.)</p>
+    <div class="opts">
+      <button class="opt" data-correct>0</button>
+      <button class="opt">1</button>
+      <button class="opt">2</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Structs are values: <code>b</code> is a copy. If <code>Counter</code> were a class, the answer would be 1.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does Swift print <code>Scanning… 2 found</code> when Kotlin didn't?</p>
+    <div class="opts">
+      <button class="opt">AsyncStream buffers values until the end</button>
+      <button class="opt" data-correct>didSet runs synchronously on every assignment</button>
+      <button class="opt">Swift sleeps longer between each device</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A callback fires once per change. A StateFlow collector reads the latest value whenever it next runs.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">What does <code>@MainActor</code> on <code>Scanner</code> guarantee?</p>
+    <div class="opts">
+      <button class="opt">Its methods all run on background threads</button>
+      <button class="opt" data-correct>Its state is only touched on the main actor</button>
+      <button class="opt">It can never call any async function at all</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The compiler enforces it: code off the main actor must <code>await</code> to reach it.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">Kotlin <code>val</code> is Swift's:</p>
+    <div class="opts">
+      <button class="opt">var</button>
+      <button class="opt" data-correct>let</button>
+      <button class="opt">def</button>
+    </div>
+    <p class="feedback"></p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">TypeScript <code>for await (const d of scan())</code> in Swift is:</p>
+    <div class="opts">
+      <button class="opt">for d in await scan()</button>
+      <button class="opt">await for d in scan()</button>
+      <button class="opt" data-correct>for await d in scan()</button>
+    </div>
+    <p class="feedback"></p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Kotlin <code>sealed interface</code> is Swift's:</p>
+    <div class="opts">
+      <button class="opt">protocol with default methods</button>
+      <button class="opt" data-correct>enum with associated values</button>
+      <button class="opt">struct with optional fields</button>
+    </div>
+    <p class="feedback"></p>
+  </div>
+
+  <div class="callout exercise">
+    <span class="label">Unaided exercise · Part B (no agent)</span>
+    <ol>
+      <li>Add <code>case failed(reason: String)</code> to <code>ScanState</code>, and fix whatever the compiler tells you to.</li>
+      <li>Make <code>.done</code> list the strongest device first, using <code>sorted { $0.rssi &gt; $1.rssi }</code>.</li>
+      <li>Explain out loud, or to your agent, why <code>Device</code> is a struct but <code>Scanner</code> is a class. What would break if <code>Scanner</code> were a struct?</li>
+    </ol>
+  </div>
+
+  <!-- ============================== BRIEF ============================== -->
+  <h2>Agent brief</h2>
+  <p>Hand this to your coding agent to set up and run both programs. Then read its code against the walkthroughs above, and do the unaided exercises yourself.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 01 (Kotlin + Swift for TypeScript developers): set up two scratch programs.
+Starting point: nothing. Create a folder scratch/lesson-01/ in my workspace.
+
+1. Kotlin, in scratch/lesson-01/kotlin/: a Gradle Kotlin/JVM console project.
+   - settings.gradle.kts: rootProject.name = "lesson01-kotlin"
+   - build.gradle.kts: plugins kotlin("jvm") version "2.2.20" and application;
+     repositories mavenCentral(); dependency
+     org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2; kotlin { jvmToolchain(17) };
+     application { mainClass.set("MainKt") }
+   - src/main/kotlin/Main.kt: the full Part A program from the lesson (Device,
+     Device.label(), ScanState, fakeScan(), Scanner, render(), main), plus the imports
+     it needs from kotlinx.coroutines and kotlinx.coroutines.flow.
+   - Generate the Gradle wrapper with any local Gradle 8.x (`gradle wrapper`;
+     install via `brew install gradle` if none), then run `./gradlew run -q`.
+   Newer Kotlin/coroutines versions are fine if those are unavailable.
+
+2. Swift, in scratch/lesson-01/swift/: a SwiftPM executable package.
+   - `swift package init --type executable --name Lesson01`
+   - Replace Package.swift with swift-tools-version 6.0 and
+     platforms: [.macOS(.v13)] (needed for async APIs and Task.sleep(for:)),
+     with a single .executableTarget(name: "Lesson01").
+   - Delete the generated Sources/Lesson01/Lesson01.swift and create
+     Sources/Lesson01/main.swift with the full Part B program from the lesson.
+     (Top-level code must live in main.swift.)
+   - Run `swift run -q`.
+
+Acceptance checks:
+- Kotlin prints exactly 3 lines: "Idle", "Scanning… 1 found",
+  "Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm".
+- Swift prints exactly 4 lines: the same, plus "Scanning… 2 found" before "Done".
+- Both build with no warnings.
+Then walk me through the code line by line. Do NOT do the lesson's unaided exercises;
+I do those myself.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/kotlin-swift-typescript-cheatsheet.html">Cheatsheet: Kotlin ↔ Swift ↔ TypeScript</a>, the one-page version of this lesson.</li>
+    <li><a href="../reference/glossary.html">Course glossary</a>: coroutine, scope, cold/hot, conflation, value type, actor…</li>
+    <li><a href="https://play.kotlinlang.org/">Kotlin Playground</a>: run Kotlin in the browser for quick experiments, no setup needed.</li>
+    <li>Wisdom: <a href="https://reddit.com/r/Kotlin">r/Kotlin</a> and <a href="https://reddit.com/r/swift">r/swift</a> when you want a practitioner's take.</li>
+  </ul>
+
+  <nav class="progress-links">
+    <a href="../COURSE_PLAN.md">← Course plan</a>
+    <span class="muted">Next: 02 Platform fundamentals</span>
+  </nav>
+</main>
+</body>
+</html>
