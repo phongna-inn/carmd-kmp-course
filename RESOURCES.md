@@ -43,17 +43,17 @@
   Official reference for Bluetooth's authorization states (notDetermined/allowedAlways/restricted/denied). Use for: Week 2 Day 1 permission exercise (iOS Bluetooth side).
 
 - [Kotlin: Data classes](https://kotlinlang.org/docs/data-classes.html), [Sealed classes and interfaces](https://kotlinlang.org/docs/sealed-classes.html), [Lambdas](https://kotlinlang.org/docs/lambdas.html), [Extensions](https://kotlinlang.org/docs/extensions.html)
-  Official Kotlin reference pages. Use for: Lesson 01 Part A.
+  Official Kotlin reference pages. Use for: Lesson 01.
 - [Kotlin: Coroutines basics](https://kotlinlang.org/docs/coroutines-basics.html) and [Asynchronous Flow](https://kotlinlang.org/docs/flow.html)
-  Official guides to suspend functions, scopes, structured concurrency, and cold flows. Use for: Lesson 01 (primary source), and again in Lessons 05 and 08.
+  Official guides to suspend functions, scopes, structured concurrency, and cold flows. Use for: Lesson 01 (primary source), and again in Lessons 08 and 13.
 - [Android Developers: StateFlow and SharedFlow](https://developer.android.com/kotlin/flow/stateflow-and-sharedflow)
-  Official guide to hot flows and the backing-property pattern. Use for: Lesson 01, Lesson 05.
+  Official guide to hot flows and the backing-property pattern. Use for: Lesson 01, Lesson 08.
 - [Swift book: Structures and Classes](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/classesandstructures/), [Enumerations](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/enumerations/), [Protocols](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/protocols/), [Closures](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/closures/), [Concurrency](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/)
-  Official Swift book chapters. Use for: Lesson 01 Part B (Concurrency is the primary source).
+  Official Swift book chapters. Use for: Lesson 02 (Concurrency is the primary source).
 - [Apple: AsyncStream](https://developer.apple.com/documentation/swift/asyncstream) and [MainActor](https://developer.apple.com/documentation/swift/mainactor)
-  Official API reference. Use for: Lesson 01 Part B, and Lesson 08 (bridging CoreBluetooth callbacks into streams).
+  Official API reference. Use for: Lesson 02, and Lesson 13 (bridging CoreBluetooth callbacks into streams).
 - [SE-0343: Concurrency in top-level code](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0343-top-level-concurrency.md)
-  Swift Evolution proposal: why `main.swift` can `await` and runs on the main actor. Use for: Lesson 01.
+  Swift Evolution proposal: why `main.swift` can `await` and runs on the main actor. Use for: Lesson 02.
 - [Kotlin Playground](https://play.kotlinlang.org/)
   Run Kotlin in the browser. Use for: quick experiments without a project.
 
