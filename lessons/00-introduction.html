@@ -26,12 +26,12 @@
     <li>scans for Bluetooth Low Energy (BLE) devices and filters them by name;</li>
     <li>connects to a device, lists its services and characteristics, reads a value and subscribes to notifications;</li>
     <li>shows the phone's battery, network and Bluetooth status;</li>
-    <li>runs a background monitor that logs that status on an interval.</li>
+    <li>runs a background monitor that logs that status on an interval, as often as each OS allows; neither guarantees exact timing in the background.</li>
   </ul>
-  <p>The screens are native: Compose on Android and SwiftUI on iOS by default. Everything else that isn't tied to a platform is shared Kotlin. The shared code is organised around an <strong>app core</strong> with adapters on both sides, the shape in the diagram below. You'll build it up from Lesson 10; for now, only notice the pieces and their colours.</p>
+  <p>The screens are native: Compose on Android and SwiftUI on iOS by default. Everything else that isn't tied to a platform is shared Kotlin. The app is organised around an <strong>app core</strong> in the shared code, with adapters on both sides, the shape in the diagram below. You'll build it up from Lesson 10; for now, only notice the pieces and their colours.</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 700 260" role="img" aria-labelledby="l00-hex-title">
-      <title id="l00-hex-title">The finished app's shape. On the left, the Android screen and the iOS screen call the inbound adapters, which are the shared ViewModels and tests. The inbound adapters call the app core in the middle, a hexagon holding models, services, inbound ports and outbound ports. On the right, the outbound adapters, which hold the platform code, plug into the app core's outbound ports.</title>
+      <title id="l00-hex-title">The finished app's shape. On the left, the Android screen and the iOS screen call the shared ViewModels, which, with the tests, are the inbound adapters. The inbound adapters call the app core in the middle, a hexagon holding models, services, inbound ports and outbound ports. On the right, the outbound adapters, which hold the platform code, plug into the app core's outbound ports.</title>
       <defs><marker id="l00-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <g data-part="android">
         <rect class="box" x="10" y="60" width="110" height="55" rx="6"/>
@@ -80,7 +80,7 @@
       </ul>
     </figcaption>
   </figure>
-  <p>This colour code runs through the whole course. Every diagram and every code excerpt's file-path label uses it, so you can tell which part of the app you're looking at.</p>
+  <p>This colour code runs through the whole course. Diagrams and code excerpts' file-path labels use it whenever they show a part of the app, so you can tell which part you're looking at. Code that belongs to no part of the app, such as the scratch programs in Lessons 01–04, stays uncoloured.</p>
 
   <h2>2. How the course works</h2>
   <ul>
@@ -88,7 +88,7 @@
     <li><strong>One app, growing.</strong> From Lesson 05 on, every lesson adds a <strong>milestone</strong> (<code>m00</code> to <code>m15</code>) to the same project. Lessons 01–04 are scratch programs and apps that take no milestone.</li>
     <li><strong>Lesson anatomy.</strong> A lesson has a header with its estimate and milestone, a "why this matters" paragraph, concepts with diagrams, code <strong>excerpts</strong> (only the lines a section discusses), gotchas, retrieval checks, an unaided exercise, an agent brief, further reading, and the complete <strong>full files</strong>, collapsed at the end.</li>
     <li><strong>UI tracks.</strong> Lessons that touch UI have a switcher: Android <code>XML | Compose | Both</code> and iOS <code>UIKit | SwiftUI | Both</code>. Compose + SwiftUI is the default. XML and UIKit are there because the team's existing app still contains that code. An extra track adds time, shown in the estimate as <code>+0.5 h</code> for example.</li>
-    <li><strong>Agent briefs.</strong> Every lesson ends with a copy-paste brief: the milestone to start from, the behaviour to build, the files involved and the acceptance checks. Hand it to your AI agent, or follow it yourself.</li>
+    <li><strong>Agent briefs.</strong> Every lesson from 01 on has a copy-paste brief near its end, just before further reading and the full files: where to start (the previous milestone, once there is one), the behaviour to build, the files involved and the acceptance checks. Hand it to your AI agent, or follow it yourself.</li>
     <li><strong>The never-blind code rule.</strong> You may let an agent write the code, but never blind. Read the lesson's code walkthrough, or have your agent explain its code line by line. Answer the retrieval checks. Then do the unaided exercise yourself. That last step isn't optional.</li>
   </ul>
   <p>Before you start, check the <a href="../COURSE_PLAN.md#environment">environment requirements</a> in the course plan.</p>
