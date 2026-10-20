@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Java Reading Cheatsheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · from Lesson 02</p>
+  <h1>Reading Java (for Kotlin developers)</h1>
+  <p class="source">You only need to <em>read</em> Java, for older Android code. You never write it in this course. Terms follow the <a href="glossary.html">glossary</a>.</p>
+
+  <h2>Java ↔ Kotlin</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Java</th><th>Kotlin</th><th>Notes</th></tr>
+    <tr><td><code>public class Scanner { }</code></td><td><code>class Scanner</code></td><td>Kotlin classes are public and <code>final</code> by default</td></tr>
+    <tr><td><code>private final Adapter adapter;</code></td><td><code>private val adapter: Adapter</code></td><td><code>final</code> field ≈ <code>val</code>; type comes first in Java</td></tr>
+    <tr><td><code>public Scanner(Adapter a) { this.adapter = a; }</code></td><td><code>class Scanner(private val adapter: Adapter)</code></td><td>A constructor has no return type and uses the class name</td></tr>
+    <tr><td><code>public void start() { }</code></td><td><code>fun start() { }</code></td><td><code>void</code> = <code>Unit</code></td></tr>
+    <tr><td><code>public interface Callback { void onFound(String n); }</code></td><td><code>interface Callback { fun onFound(n: String) }</code></td><td>Callbacks are usually one-method interfaces</td></tr>
+    <tr><td><code>@Override public String toString()</code></td><td><code>override fun toString()</code></td><td>An annotation in Java, a keyword in Kotlin</td></tr>
+    <tr><td><code>List&lt;Device&gt; list = new ArrayList&lt;&gt;();</code></td><td><code>val list = mutableListOf&lt;Device&gt;()</code></td><td><code>new</code> creates objects; <code>&lt;&gt;</code> infers generics</td></tr>
+    <tr><td><code>static final String TAG = "X";</code></td><td><code>const val TAG = "X"</code> (top level or <code>companion object</code>)</td><td><code>static</code> = belongs to the class, not an instance</td></tr>
+    <tr><td><code>@Nullable String name</code></td><td><code>name: String?</code></td><td>Java types are nullable unless annotated otherwise</td></tr>
+    <tr><td><code>new Callback() { public void onFound(String n) { … } }</code></td><td><code>object : Callback { override fun onFound(n: String) { … } }</code></td><td>Anonymous class; often a lambda in Kotlin</td></tr>
+    <tr><td><code>v.setOnClickListener(view -&gt; doIt());</code></td><td><code>v.setOnClickListener { doIt() }</code></td><td>Java 8 lambda: <code>-&gt;</code></td></tr>
+  </table>
+  </div>
+
+  <h2>Self-check</h2>
+  <p>Label each part: the class, the field, the constructor, the interface, the callback method, the override.</p>
+  <pre><code>public class DeviceScanner {
+    private final BluetoothAdapter adapter;
+
+    public DeviceScanner(BluetoothAdapter adapter) {
+        this.adapter = adapter;
+    }
+
+    public interface ScanCallback {
+        void onDeviceFound(String name, int rssi);
+    }
+
+    public void startScan(ScanCallback callback) {
+        callback.onDeviceFound("Device 1", -60);
+    }
+
+    @Override
+    public String toString() {
+        return "DeviceScanner";
+    }
+}</code></pre>
+  <details class="callout">
+    <summary>Answer key</summary>
+    <p><code>public class DeviceScanner</code>: the class. <code>private final BluetoothAdapter adapter</code>: an immutable field. <code>public DeviceScanner(BluetoothAdapter adapter)</code>: the constructor (no return type, class name). <code>public interface ScanCallback</code>: a nested one-method interface. <code>onDeviceFound</code>: the callback, called <em>back</em> on whatever object the caller passed in. <code>@Override … toString()</code>: replaces <code>Object</code>'s inherited method.</p>
+  </details>
+</main>
+</body>
+</html>

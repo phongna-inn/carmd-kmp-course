@@ -57,12 +57,27 @@
 - [Kotlin Playground](https://play.kotlinlang.org/)
   Run Kotlin in the browser. Use for: quick experiments without a project.
 
+- [Android: Handle configuration changes](https://developer.android.com/guide/topics/resources/runtime-changes), [Intents and intent filters](https://developer.android.com/guide/components/intents-filters), [App manifest overview](https://developer.android.com/guide/topics/manifest/manifest-intro), [Gradle build overview](https://developer.android.com/build/gradle-build-overview), [Logcat](https://developer.android.com/studio/debug/logcat)
+  Official Android guides. Use for: Lesson 02 Part A.
+- [Android: Migrate to built-in Kotlin](https://developer.android.com/build/migrate-to-built-in-kotlin) and [AGP release notes](https://developer.android.com/build/releases/gradle-plugin)
+  AGP 9+: Kotlin built in, `org.jetbrains.kotlin.android` fails the build, KMP modules need `com.android.kotlin.multiplatform.library`; AGP 9.4 needs Gradle 9.6+. Use for: Lesson 02, Lesson 03.
+- [Android 12 behaviour changes: Back on root launcher activities](https://developer.android.com/about/versions/12/behavior-changes-all) and [Predictive back](https://developer.android.com/guide/navigation/custom-back/predictive-back-gesture)
+  Use for: the Lesson 02 "Back" gotcha (documented vs observed behaviour).
+- [SwiftUI: ScenePhase](https://developer.apple.com/documentation/swiftui/scenephase), [App](https://developer.apple.com/documentation/swiftui/app), [onAppear](https://developer.apple.com/documentation/swiftui/view/onappear(perform:)); [UIKit: UISceneDelegate](https://developer.apple.com/documentation/uikit/uiscenedelegate), [applicationWillTerminate](https://developer.apple.com/documentation/uikit/uiapplicationdelegate/applicationwillterminate(_:))
+  Official Apple references for both lifecycle levels, per track. Use for: Lesson 02 Part B.
+- [Apple: Information property list](https://developer.apple.com/documentation/bundleresources/information-property-list) and [Logger](https://developer.apple.com/documentation/os/logger)
+  Use for: Lesson 02 Part B.
+- [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+  Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 02 (before the KMP template from Lesson 03 supplies the project).
+
 ## Wisdom (Communities)
 
 - [r/androiddev](https://reddit.com/r/androiddev)
   Active, well-moderated Android development subreddit. Use for: troubleshooting Android-specific issues, lifecycle/BLE edge cases.
 - [r/Kotlin](https://reddit.com/r/Kotlin)
   Kotlin language subreddit. Use for: Kotlin idioms, coroutines/Flow questions.
+- [r/iOSProgramming](https://reddit.com/r/iOSProgramming)
+  Broad iOS development community. Use for: platform behaviour questions (lifecycle, permissions).
 - [r/swift](https://reddit.com/r/swift)
   Swift-focused subreddit. Use for: Swift/iOS troubleshooting and idiom questions.
 - [Stack Overflow — android-bluetooth / corebluetooth tags](https://stackoverflow.com/questions/tagged/android-bluetooth)

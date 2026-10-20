@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Platform Lifecycles Cheatsheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · from Lesson 02</p>
+  <h1>Platform Lifecycles</h1>
+  <p class="source">Compressed from <a href="../lessons/02-platform-fundamentals.html">Lesson 02</a>. Sequences were observed on an Android 16 emulator (targetSdk 36) and an iOS 26.2 simulator.</p>
+
+  <h2>Android: Activity (same on the XML and Compose tracks)</h2>
+  <pre><code>onCreate → onStart → onResume      … interactive …      onPause → onStop → onDestroy</code></pre>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Event</th><th>Callbacks</th><th>Instance</th></tr>
+    <tr><td>Launch</td><td>onCreate · onStart · onResume</td><td>new</td></tr>
+    <tr><td>Home / another app on top</td><td>onPause · onStop</td><td>kept</td></tr>
+    <tr><td>Return</td><td>(onRestart) · onStart · onResume</td><td>same</td></tr>
+    <tr><td>Rotation / config change</td><td>onPause · onStop · onDestroy · onCreate · onStart · onResume</td><td><strong>replaced</strong> (<code>isChangingConfigurations = true</code>, <code>savedInstanceState != null</code>)</td></tr>
+    <tr><td>Back on root screen</td><td>onPause · onStop · onDestroy (observed on 16 / targetSdk 36)</td><td>finished; behaviour varies by version</td></tr>
+  </table>
+  </div>
+  <p><strong>Rule:</strong> never keep long-lived state (connections, scans) in the Activity. It belongs in a ViewModel (Lesson 05).</p>
+
+  <h2>iOS: two lifecycles</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Level</th><th>SwiftUI</th><th>UIKit</th></tr>
+    <tr><td>App / scene</td><td><code>@Environment(\.scenePhase)</code> + <code>.onChange</code>: active · inactive · background</td><td>SceneDelegate: willEnterForeground · didBecomeActive · willResignActive · didEnterBackground</td></tr>
+    <tr><td>View</td><td><code>.onAppear</code> · <code>.onDisappear</code></td><td>viewDidLoad · viewWillAppear · viewDidAppear · viewWillDisappear · viewDidDisappear</td></tr>
+    <tr><td>Entry point</td><td><code>@main struct App</code></td><td><code>@main class AppDelegate</code></td></tr>
+  </table>
+  </div>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Event (SwiftUI, observed)</th><th>Log</th></tr>
+    <tr><td>Launch</td><td>App init · ContentView onAppear · active</td></tr>
+    <tr><td>Push</td><td>Detail onAppear · Content onDisappear (new appears first)</td></tr>
+    <tr><td>Pop</td><td>Content onAppear · Detail onDisappear</td></tr>
+    <tr><td>Home</td><td>inactive · background (<strong>no view callbacks</strong>)</td></tr>
+    <tr><td>Return</td><td>inactive · active</td></tr>
+  </table>
+  </div>
+  <p><strong>Rules:</strong> app-level work (background monitoring) hooks the <em>scene/app</em> level, never view callbacks. A suspended app gets <em>no</em> callback when it's killed, so save on entering the background.</p>
+
+  <h2>Map</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Android</th><th>iOS</th></tr>
+    <tr><td>AndroidManifest.xml</td><td>Info.plist</td></tr>
+    <tr><td>Gradle module (<code>app/build.gradle.kts</code>)</td><td>Xcode target (here generated from <code>project.yml</code>)</td></tr>
+    <tr><td><code>Log.d(TAG, msg)</code> → Logcat</td><td><code>Logger(subsystem:category:).notice(msg)</code> → Xcode console</td></tr>
+    <tr><td>Intent (explicit / implicit)</td><td>navigation in-app; <code>openURL</code> for other apps</td></tr>
+    <tr><td>Context (system access)</td><td>shared singletons/frameworks (<code>UIApplication.shared</code>, …)</td></tr>
+  </table>
+  </div>
+  <h2>Build numbers (Android)</h2>
+  <p><code>compileSdk</code> = APIs you can see · <code>minSdk</code> = oldest device that can install · <code>targetSdk</code> = runtime behaviour you opt into. AGP 9+: Kotlin is built in; never apply <code>org.jetbrains.kotlin.android</code>.</p>
+</main>
+</body>
+</html>

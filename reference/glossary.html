@@ -57,6 +57,27 @@
     <dt><strong>Main actor</strong> (<code>@MainActor</code>)</dt>
     <dd>The isolation domain for UI work; code marked with it runs only there, and the compiler enforces that. (01)</dd>
   </dl>
+  <h2>Platform</h2>
+  <dl>
+    <dt><strong>Activity</strong> (Android)</dt>
+    <dd>An app entry point with a window and a lifecycle (<code>onCreate</code> … <code>onDestroy</code>). The course app has one. (02)</dd>
+    <dt><strong>Context</strong> (Android)</dt>
+    <dd>Your handle to the system: resources, system services, starting components. An Activity is a Context. (02)</dd>
+    <dt><strong>Intent</strong> (Android)</dt>
+    <dd>A message asking the OS to start something; <em>explicit</em> (a named class) or <em>implicit</em> (any app that can handle an action). (02)</dd>
+    <dt><strong>Manifest</strong> / <strong>Info.plist</strong></dt>
+    <dd>The declaration file each OS reads before running your code: components, permissions, metadata, permission-prompt strings. (02)</dd>
+    <dt><strong>Configuration change</strong> (Android)</dt>
+    <dd>Rotation, dark mode, font size, etc.; by default destroys and recreates the Activity. (02)</dd>
+    <dt><strong>compileSdk / minSdk / targetSdk</strong></dt>
+    <dd>APIs you can see / oldest Android that can install / runtime behaviour you opt into. (02)</dd>
+    <dt><strong>Scene</strong> / <strong>scene phase</strong> (iOS)</dt>
+    <dd>One app window and its app-level state: active, inactive, background. The level to hook for "is the app in front?" (02)</dd>
+    <dt><strong>View lifecycle</strong> (iOS)</dt>
+    <dd>Appear/disappear events for one screen inside the app (<code>onAppear</code>, <code>viewWillAppear</code>, …); <em>not</em> fired by backgrounding. (02)</dd>
+    <dt><strong>Logger</strong> / <strong>Logcat</strong></dt>
+    <dd>Apple's structured logging API (subsystem + category) / Android's log viewer for <code>Log.d(tag, msg)</code>. (02)</dd>
+  </dl>
 </main>
 </body>
 </html>

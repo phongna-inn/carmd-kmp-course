@@ -447,15 +447,15 @@ Starting point: nothing. Create a folder scratch/lesson-01/ in my workspace.
 
 1. Kotlin, in scratch/lesson-01/kotlin/: a Gradle Kotlin/JVM console project.
    - settings.gradle.kts: rootProject.name = "lesson01-kotlin"
-   - build.gradle.kts: plugins kotlin("jvm") version "2.2.20" and application;
+   - build.gradle.kts: plugins kotlin("jvm") version "2.4.21" and application;
      repositories mavenCentral(); dependency
-     org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2; kotlin { jvmToolchain(17) };
+     org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0; kotlin { jvmToolchain(17) };
      application { mainClass.set("MainKt") }
    - src/main/kotlin/Main.kt: the full Part A program from the lesson (Device,
      Device.label(), ScanState, fakeScan(), Scanner, render(), main), plus the imports
      it needs from kotlinx.coroutines and kotlinx.coroutines.flow.
-   - Generate the Gradle wrapper with any local Gradle 8.x (`gradle wrapper`;
-     install via `brew install gradle` if none), then run `./gradlew run -q`.
+   - Generate a Gradle 9.8+ wrapper (`gradle wrapper --gradle-version 9.8.2`; install
+     Gradle via `brew install gradle` if none), then run `./gradlew run -q`.
    Newer Kotlin/coroutines versions are fine if those are unavailable.
 
 2. Swift, in scratch/lesson-01/swift/: a SwiftPM executable package.
@@ -487,7 +487,7 @@ I do those myself.</pre>
 
   <nav class="progress-links">
     <a href="../COURSE_PLAN.md">← Course plan</a>
-    <span class="muted">Next: 02 Platform fundamentals</span>
+    <a href="02-platform-fundamentals.html">Next: 02 Platform fundamentals →</a>
   </nav>
 </main>
 </body>

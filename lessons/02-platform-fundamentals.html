@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>02 — Platform Fundamentals</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 02 · Week 1 · Native Device Monitor course</p>
+  <h1>Platform Fundamentals</h1>
+  <div class="meta">
+    <span class="tag">~3.5 h · +0.5 h per extra UI track</span>
+    <span class="tag">Part A: Android · Part B: iOS</span>
+    <span class="tag">Milestone: scratch apps logging lifecycles</span>
+    <span class="tag">Prereq: <a href="01-kotlin-swift-for-typescript-devs.html">01</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> the OS, not your code, decides when your app's screens are created, hidden, and destroyed. Two real bugs follow from that. A BLE connection kept in the wrong object silently disappears when the phone rotates. And a background monitor hooked to the wrong lifecycle never notices that the app went to the background. Today you build two tiny apps that log every lifecycle event, then watch the logs while you poke them.
+  </div>
+
+  <p><span class="tag">Primary sources</span> Android's <a href="https://developer.android.com/guide/components/activities/activity-lifecycle">The activity lifecycle</a> and Apple's <a href="https://developer.apple.com/documentation/uikit/managing-your-app-s-life-cycle">Managing your app's life cycle</a>, plus SwiftUI's <a href="https://developer.apple.com/documentation/swiftui/scenephase"><code>ScenePhase</code></a>.</p>
+  <p><span class="tag">Tracks</span> Use the switchers above to pick your UI stack. Most of today's ideas are the same on both tracks. Only the code that puts something on screen differs.</p>
+
+  <!-- ============================== PART A ============================== -->
+  <p class="part">Part A — Android (~1.75 h)</p>
+
+  <h2>A1. What's in an Android project</h2>
+  <pre><code>Lesson02Android/
+├── settings.gradle.kts      // which modules exist (:app) and where plugins/libraries come from
+├── build.gradle.kts         // plugin versions for the whole project
+├── gradle/wrapper/          // pins the Gradle version; always build with ./gradlew
+└── app/
+    ├── build.gradle.kts     // this module: SDK levels, features, dependencies
+    └── src/main/
+        ├── AndroidManifest.xml   // the app's components and permissions, declared to the OS
+        ├── java/…/MainActivity.kt
+        └── res/                  // resources: layouts (XML track), strings, images</code></pre>
+  <p>The module build file is where you'll spend most of your Gradle time (<a href="https://developer.android.com/build/gradle-build-overview">Android: Gradle build overview</a>):</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <p class="track-name">Compose track · app/build.gradle.kts</p>
+  <pre><code>plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "com.example.lesson02"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.lesson02"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures { compose = true }
+}
+
+dependencies {
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.compose.material3:material3")
+}</code></pre>
+  </div>
+  <div data-track="xml">
+  <p class="track-name">XML track · app/build.gradle.kts</p>
+  <pre><code>plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.example.lesson02"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.lesson02"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+}
+
+dependencies {
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
+}</code></pre>
+  </div>
+  </div>
+  <ol class="walk">
+    <li><strong>No Kotlin plugin.</strong> Since Android Gradle Plugin 9, Kotlin support is built in. Applying the old <code>org.jetbrains.kotlin.android</code> plugin now <em>fails the build</em>, so delete it if older tutorials tell you to add it (<a href="https://developer.android.com/build/migrate-to-built-in-kotlin">Android: Migrate to built-in Kotlin</a>). The Compose track still applies the Compose <em>compiler</em> plugin.</li>
+    <li><strong>Three SDK numbers, three different jobs.</strong> <code>compileSdk</code> is which Android APIs your code can <em>see</em> (current Compose libraries require 37). <code>minSdk</code> is the oldest Android version that can <em>install</em> the app. <code>targetSdk</code> is which version's <em>runtime behaviour</em> you opt into.</li>
+    <li><span data-track="compose">The <strong>BOM</strong> (bill of materials) pins one tested set of Compose library versions, which is why <code>material3</code> has no version of its own.</span><span data-track="xml"><code>appcompat</code> provides <code>AppCompatActivity</code> and backward-compatible themes for the View system.</span> <code>core-ktx</code> provides Kotlin helpers such as <code>String.toUri()</code>. Declare it explicitly instead of relying on another library to pull it in for you.</li>
+  </ol>
+
+  <h2>A2. Activity, Context, Intent, Manifest</h2>
+  <p>An <strong>Activity</strong> is one entry point with a window and a lifecycle. Our app has exactly one, and so will the Native Device Monitor. A <strong>Context</strong> is your handle to the system: resources, system services (the Bluetooth service, later), and starting other components (<a href="https://developer.android.com/reference/android/content/Context">reference</a>). An Activity <em>is</em> a Context. An <strong>Intent</strong> is a message asking the OS to start something. It can be <em>explicit</em> (a class you own) or <em>implicit</em> ("anyone who can view a web page") (<a href="https://developer.android.com/guide/components/intents-filters">Android: Intents</a>):</p>
+  <pre><code>startActivity(Intent(Intent.ACTION_VIEW, "https://developer.android.com".toUri()))</code></pre>
+  <p>The <strong>Manifest</strong> declares components to the OS. The <code>MAIN</code> + <code>LAUNCHER</code> intent filter is what puts the app's icon in the launcher (<a href="https://developer.android.com/guide/topics/manifest/manifest-intro">Android: App manifest</a>). Permissions get declared here as well, from Lesson 07.</p>
+  <pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;application
+        android:label="Lesson 02"
+        <span data-track="compose">android:theme="@android:style/Theme.Material.Light.NoActionBar"</span><span data-track="xml">android:theme="@style/Theme.AppCompat.Light.NoActionBar"</span>&gt;
+        &lt;activity android:name=".MainActivity" android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+  <p class="source" data-track="xml">XML track: <code>AppCompatActivity</code> crashes at launch unless the theme is an AppCompat theme.</p>
+
+  <h2>A3. The activity lifecycle, logged</h2>
+  <p>The OS calls six callbacks as an Activity is created, shown, hidden and destroyed: <code>onCreate → onStart → onResume</code> on the way in, and <code>onPause → onStop → onDestroy</code> on the way out (<a href="https://developer.android.com/guide/components/activities/activity-lifecycle">Android: Activity lifecycle</a>). This app logs each one with tag <code>Lifecycle</code>. In Android Studio's Logcat, filter on <code>tag:Lifecycle</code> (<a href="https://developer.android.com/studio/debug/logcat">Logcat docs</a>).</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <p class="track-name">Compose track · app/src/main/java/com/example/lesson02/MainActivity.kt</p>
+  <pre><code>package com.example.lesson02
+
+import android.content.Intent
+import android.os.Bundle
+import android.util.Log
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
+
+private const val TAG = "Lifecycle"
+
+class MainActivity : ComponentActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate (restored=${savedInstanceState != null})")
+        setContent {
+            Column(
+                modifier = Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text("Lesson 02: watch Logcat, filter tag:Lifecycle")
+                Button(onClick = { openWebPage() }) {
+                    Text("Open a web page")
+                }
+            }
+        }
+    }
+
+    private fun openWebPage() {
+        val intent = Intent(Intent.ACTION_VIEW, "https://developer.android.com".toUri())
+        startActivity(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d(TAG, "onStart")
+    }
+
+    // onResume, onPause, onStop: identical shape, one Log.d each
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "onDestroy (changingConfigurations=$isChangingConfigurations)")
+    }
+}</code></pre>
+  </div>
+  <div data-track="xml">
+  <p class="track-name">XML track · app/src/main/res/layout/activity_main.xml</p>
+  <pre><code>&lt;LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp"&gt;
+
+    &lt;TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Lesson 02: watch Logcat, filter tag:Lifecycle" /&gt;
+
+    &lt;Button
+        android:id="@+id/openWebButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="Open a web page" /&gt;
+&lt;/LinearLayout&gt;</code></pre>
+  <p class="track-name">XML track · app/src/main/java/com/example/lesson02/MainActivity.kt</p>
+  <pre><code>package com.example.lesson02
+
+import android.content.Intent
+import android.os.Bundle
+import android.util.Log
+import android.widget.Button
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.net.toUri
+
+private const val TAG = "Lifecycle"
+
+class MainActivity : AppCompatActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        Log.d(TAG, "onCreate (restored=${savedInstanceState != null})")
+        setContentView(R.layout.activity_main)
+        findViewById&lt;Button&gt;(R.id.openWebButton).setOnClickListener { openWebPage() }
+    }
+
+    private fun openWebPage() {
+        val intent = Intent(Intent.ACTION_VIEW, "https://developer.android.com".toUri())
+        startActivity(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        Log.d(TAG, "onStart")
+    }
+
+    // onResume, onPause, onStop: identical shape, one Log.d each
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Log.d(TAG, "onDestroy (changingConfigurations=$isChangingConfigurations)")
+    }
+}</code></pre>
+  </div>
+  </div>
+  <ol class="walk">
+    <li>Every override calls <code>super</code> first. The framework does its own work in these methods, and skipping <code>super</code> throws at runtime.</li>
+    <li><code>savedInstanceState</code> is non-null when the OS is <em>recreating</em> this Activity after destroying an earlier instance. Logging <code>restored=</code> makes recreation visible.</li>
+    <li><span data-track="compose"><code>setContent { }</code> hands the window to Compose. The UI is a function call tree, not an XML file. Lesson 04 explains it properly.</span><span data-track="xml"><code>setContentView</code> inflates the XML layout into View objects, and <code>findViewById</code> fetches one by its <code>@+id</code>. Lesson 04 replaces this with ViewBinding.</span></li>
+    <li><code>isChangingConfigurations</code> in <code>onDestroy</code> tells you <em>why</em> the Activity is dying: <code>true</code> means a configuration change such as rotation (it's coming straight back), and <code>false</code> means it's really finishing.</li>
+  </ol>
+  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Only the lines that put UI on screen differ: <code>setContentView</code> + <code>findViewById</code> + a listener, versus <code>setContent { … }</code> with the click handler inline. The Activity, its lifecycle, the Manifest and Intents are identical, which is why the lifecycle you learn today holds on both tracks.</p>
+
+  <h2>A4. What actually happens</h2>
+  <p>We ran this app on an Android 16 emulator (targetSdk 36) and drove it step by step. The log, condensed:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>You do</th><th>Logcat shows</th><th>Meaning</th></tr>
+    <tr><td>Launch</td><td><code>onCreate (restored=false) · onStart · onResume</code></td><td>Fresh instance, now interactive</td></tr>
+    <tr><td>Press Home</td><td><code>onPause · onStop</code></td><td>Hidden but <strong>alive</strong>: no <code>onDestroy</code></td></tr>
+    <tr><td>Reopen</td><td><code>onStart · onResume</code></td><td>Same instance; <code>onCreate</code> doesn't run again</td></tr>
+    <tr><td>Open a web page</td><td><code>onPause · onStop</code></td><td>Another app covers yours, just like Home</td></tr>
+    <tr><td><strong>Rotate</strong></td><td><code>onPause · onStop · onDestroy (changingConfigurations=true) · onCreate (restored=true) · onStart · onResume</code></td><td><strong>Destroyed and rebuilt</strong>, in under a second</td></tr>
+    <tr><td>Back on the main screen</td><td><code>onPause · onStop · onDestroy (changingConfigurations=false)</code></td><td>Finished; the next launch starts with <code>onCreate</code></td></tr>
+  </table>
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · rotation destroys the Activity</span>
+    By default, a configuration change such as rotation, a dark-mode toggle, or a font-size change destroys the Activity and creates a new instance (<a href="https://developer.android.com/guide/topics/resources/runtime-changes">Android: Handle configuration changes</a>). Anything stored in the old instance's fields is gone. A BLE connection object held in the Activity gets dropped mid-connection while the radio link may still be open. That's why, from Lesson 05, state lives in a <strong>ViewModel</strong>, which survives configuration changes, never in the Activity.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · Back is not as stable as Home</span>
+    Android 12 documented that pressing Back on a launcher activity at the root of its task moves the task to the background instead of finishing it (<a href="https://developer.android.com/about/versions/12/behavior-changes-all">Android 12 behaviour changes</a>). On our Android 16 / targetSdk 36 test run it <em>was</em> finished (<code>onDestroy</code>, <code>changingConfigurations=false</code>), and the next launch was a cold <code>onCreate</code>. Back handling has kept changing (<a href="https://developer.android.com/guide/navigation/custom-back/predictive-back-gesture">predictive back</a>). Don't build anything that depends on Back keeping you alive, and check Logcat on your own device.
+  </div>
+  <p data-track="xml" class="callout gotcha"><span class="label">Gotcha · XML track: the right layout file</span>Android Studio's multi-screen templates put the Activity's layout (holding a nav host) and each screen's layout (<code>fragment_*.xml</code>) in separate files. Adding widgets to the Activity layout can push out the container that hosts your screens, and then the screen you expect never appears. Always edit the file the lesson names.</p>
+
+  <h2>A5. Reading Java</h2>
+  <p>Older parts of the team's Android code may still be Java. You only need to <em>read</em> it, not write it: class, constructor, field, interface, <code>@Override</code>, generics, callbacks. Work through the <a href="../reference/java-reading-cheatsheet.html">Java reading cheatsheet</a>, which has a labelled example and a self-check.</p>
+
+  <h3>Retrieval check: Part A</h3>
+  <div class="quiz mcq">
+    <p class="q">You press Home, then reopen the app. Which callback does <em>not</em> run again?</p>
+    <div class="opts">
+      <button class="opt">onStart</button>
+      <button class="opt" data-correct>onCreate</button>
+      <button class="opt">onResume</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Home only stops the Activity. The same instance resumes, so one-time setup in <code>onCreate</code> is skipped.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">After a rotation, what is <code>savedInstanceState</code> in <code>onCreate</code>?</p>
+    <div class="opts">
+      <button class="opt">always null</button>
+      <button class="opt" data-correct>not null</button>
+      <button class="opt">the old UI</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The OS is recreating a destroyed instance, so it passes the saved state bundle.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which SDK number decides the oldest Android version that can install your app?</p>
+    <div class="opts">
+      <button class="opt" data-correct>minSdk</button>
+      <button class="opt">maxSdk</button>
+      <button class="opt">tgtSdk</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>compileSdk</code> = which APIs you can see; <code>targetSdk</code> = which runtime behaviour you opt into.</p>
+  </div>
+
+  <div class="callout exercise">
+    <span class="label">Unaided exercise · Part A (no agent)</span>
+    <ol>
+      <li>Before touching the app, write down your <em>predicted</em> Logcat lines for: launch → Home → reopen → rotate → open a web page → come back → Back. Then do it and diff your prediction against reality.</li>
+      <li>Add an <code>onRestart()</code> override that logs <code>"onRestart"</code>. Predict which of your steps will print it, then check.</li>
+    </ol>
+  </div>
+
+  <!-- ============================== PART B ============================== -->
+  <p class="part">Part B — iOS (~1.75 h)</p>
+
+  <h2>B1. What's in an iOS project</h2>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <p class="track-name">SwiftUI track</p>
+  <pre><code>Lesson02iOS/
+├── project.yml              // XcodeGen spec → generates Lesson02iOS.xcodeproj
+└── Sources/
+    ├── Lesson02App.swift    // @main App: the entry point and scenes
+    ├── ContentView.swift    // the views
+    └── Info.plist           // app metadata + permission strings</code></pre>
+  </div>
+  <div data-track="uikit">
+  <p class="track-name">UIKit track</p>
+  <pre><code>Lesson02iOS/
+├── project.yml              // XcodeGen spec → generates Lesson02iOS.xcodeproj
+└── Sources/
+    ├── AppDelegate.swift    // @main: process-level events
+    ├── SceneDelegate.swift  // window/scene-level events; builds the first screen
+    ├── ViewController.swift // one screen each
+    └── Info.plist           // metadata, permission strings, scene configuration</code></pre>
+  </div>
+  </div>
+  <p>Rough Android mapping: <code>AndroidManifest.xml</code> ↔ <code>Info.plist</code> · Gradle module ↔ Xcode target · Activity ↔ <span data-track="swiftui">a <code>Scene</code> plus its root view</span><span data-track="uikit">a scene plus its root view controller</span>. Here the Xcode project is <em>generated</em> from a small <code>project.yml</code> by <a href="https://github.com/yonaskolb/XcodeGen">XcodeGen</a>, so it can be created and diffed as text. Creating the project through Xcode's "New Project" dialog gives the same structure.</p>
+
+  <h2>B2. Info.plist</h2>
+  <p>Info.plist is the app's metadata dictionary: display name, version, launch screen, and later the <strong>usage-description strings</strong> that iOS shows in permission prompts (<a href="https://developer.apple.com/documentation/bundleresources/information-property-list">Apple: Information property list</a>). Requesting Bluetooth without <code>NSBluetoothAlwaysUsageDescription</code> doesn't get you a polite denial; the app is terminated. You'll add it in Lesson 07.</p>
+
+  <h2>B3. Two lifecycles, not one</h2>
+  <p>Android tied "is this screen visible?" and "is the app in front?" to the same Activity callbacks. iOS separates them:</p>
+  <ul>
+    <li><strong>App/scene level:</strong> is the app's window active, inactive, or in the background? <span data-track="swiftui">SwiftUI exposes this as <a href="https://developer.apple.com/documentation/swiftui/scenephase"><code>scenePhase</code></a>.</span><span data-track="uikit">UIKit delivers it to the <a href="https://developer.apple.com/documentation/uikit/uiscenedelegate">scene delegate</a> (<code>sceneDidBecomeActive</code>, <code>sceneDidEnterBackground</code>, …).</span></li>
+    <li><strong>View level:</strong> did <em>this screen</em> appear or disappear inside the app? <span data-track="swiftui"><a href="https://developer.apple.com/documentation/swiftui/view/onappear(perform:)"><code>onAppear</code></a> / <code>onDisappear</code>.</span><span data-track="uikit"><a href="https://developer.apple.com/documentation/uikit/uiviewcontroller"><code>viewDidLoad</code>, <code>viewWillAppear</code>, <code>viewDidAppear</code>, <code>viewWillDisappear</code>, <code>viewDidDisappear</code></a>.</span></li>
+  </ul>
+  <p>Logging uses Apple's <a href="https://developer.apple.com/documentation/os/logger"><code>Logger</code></a>, the counterpart of Android's <code>Log.d(TAG, …)</code>: subsystem + category ↔ tag. Output shows in Xcode's console, where you can filter on <code>Lifecycle</code>. The subsystem is any string you choose (here <code>com.example.lesson02</code>, not the bundle ID), so filter on it or on the category.</p>
+
+  <div class="tracks">
+  <div data-track="swiftui">
+  <p class="track-name">SwiftUI track · Lesson02App.swift</p>
+  <pre><code>import SwiftUI
+import os
+
+let lifecycleLog = Logger(subsystem: "com.example.lesson02", category: "Lifecycle")
+
+@main
+struct Lesson02App: App {
+    @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        lifecycleLog.notice("App init")
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active: lifecycleLog.notice("scenePhase → active")
+            case .inactive: lifecycleLog.notice("scenePhase → inactive")
+            case .background: lifecycleLog.notice("scenePhase → background")
+            @unknown default: lifecycleLog.notice("scenePhase → unknown")
+            }
+        }
+    }
+}</code></pre>
+  <p class="track-name">SwiftUI track · ContentView.swift</p>
+  <pre><code>import SwiftUI
+
+struct ContentView: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text("Lesson 02: watch the Xcode console")
+                NavigationLink("Open detail screen") {
+                    DetailView()
+                }
+            }
+            .navigationTitle("Lifecycle")
+            .onAppear { lifecycleLog.notice("ContentView onAppear") }
+            .onDisappear { lifecycleLog.notice("ContentView onDisappear") }
+        }
+    }
+}
+
+struct DetailView: View {
+    var body: some View {
+        Text("Detail screen")
+            .onAppear { lifecycleLog.notice("DetailView onAppear") }
+            .onDisappear { lifecycleLog.notice("DetailView onDisappear") }
+    }
+}</code></pre>
+  <ol class="walk">
+    <li><code>@main struct … : App</code> is the entry point. There's no AppDelegate; SwiftUI owns the app object.</li>
+    <li><code>@Environment(\.scenePhase)</code> reads a value SwiftUI provides. Watching it with <code>.onChange(of:)</code> at the <code>Scene</code> level gives you the app-level lifecycle.</li>
+    <li>Each log message is a fixed string per case. Logger treats <em>interpolated</em> values as private by default and can show them as <code>&lt;private&gt;</code> in stored logs. Fixed strings never are.</li>
+    <li><code>@unknown default</code> handles phases Apple may add in future iOS versions. <code>ScenePhase</code> isn't a closed enum the way your own are.</li>
+    <li><code>onAppear</code>/<code>onDisappear</code> are attached to views. They report what happens <em>inside</em> the app (navigation), not whether the app is in front.</li>
+  </ol>
+  </div>
+  <div data-track="uikit">
+  <p class="track-name">UIKit track · AppDelegate.swift</p>
+  <pre><code>import UIKit
+import os
+
+let lifecycleLog = Logger(subsystem: "com.example.lesson02", category: "Lifecycle")
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        lifecycleLog.notice("didFinishLaunching")
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {
+        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}</code></pre>
+  <p class="track-name">UIKit track · SceneDelegate.swift</p>
+  <pre><code>import UIKit
+
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession,
+               options connectionOptions: UIScene.ConnectionOptions) {
+        guard let windowScene = scene as? UIWindowScene else { return }
+        let window = UIWindow(windowScene: windowScene)
+        window.rootViewController = UINavigationController(rootViewController: ViewController())
+        window.makeKeyAndVisible()
+        self.window = window
+        lifecycleLog.notice("scene willConnect")
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) { lifecycleLog.notice("sceneWillEnterForeground") }
+    func sceneDidBecomeActive(_ scene: UIScene) { lifecycleLog.notice("sceneDidBecomeActive") }
+    func sceneWillResignActive(_ scene: UIScene) { lifecycleLog.notice("sceneWillResignActive") }
+    func sceneDidEnterBackground(_ scene: UIScene) { lifecycleLog.notice("sceneDidEnterBackground") }
+}</code></pre>
+  <p class="track-name">UIKit track · ViewController.swift</p>
+  <pre><code>import UIKit
+
+final class ViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        lifecycleLog.notice("ViewController viewDidLoad")
+        title = "Lifecycle"
+        view.backgroundColor = .systemBackground
+
+        let button = UIButton(type: .system)
+        button.setTitle("Open detail screen", for: .normal)
+        button.addAction(UIAction { [weak self] _ in
+            self?.navigationController?.pushViewController(DetailViewController(), animated: true)
+        }, for: .touchUpInside)
+        button.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(button)
+        NSLayoutConstraint.activate([
+            button.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            button.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        lifecycleLog.notice("ViewController viewWillAppear")
+    }
+
+    // viewDidAppear, viewWillDisappear, viewDidDisappear: identical shape, one log each
+}
+
+final class DetailViewController: UIViewController {
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        lifecycleLog.notice("DetailViewController viewDidLoad")
+        view.backgroundColor = .systemBackground
+        let label = UILabel()
+        label.text = "Detail screen"
+        label.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        ])
+    }
+
+    // viewWillAppear, viewDidAppear, viewWillDisappear, viewDidDisappear: one log each,
+    // prefixed "DetailViewController"
+}</code></pre>
+  <ol class="walk">
+    <li><code>AppDelegate</code> owns process-level events. The scene configuration names the delegate class (via Info.plist) that runs each window.</li>
+    <li><code>SceneDelegate</code> creates the window and its root: a <code>UINavigationController</code>, which gives you push/pop navigation and a back button.</li>
+    <li>The four <code>scene…</code> methods are the app-level lifecycle you'd hook a background monitor into.</li>
+    <li>The UI is built in code (no storyboard): create a view, add it, constrain it. <code>[weak self]</code> avoids a retain cycle between the view controller and its own button's action.</li>
+    <li>Info.plist needs a <code>UIApplicationSceneManifest</code> entry pointing at <code>$(PRODUCT_MODULE_NAME).SceneDelegate</code>; see the agent brief.</li>
+  </ol>
+  </div>
+  </div>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>UIKit splits the lifecycle across three objects you write yourself (AppDelegate, SceneDelegate, view controllers). SwiftUI turns both levels into <em>state you observe</em>: <code>scenePhase</code> for the app, and <code>onAppear</code>/<code>onDisappear</code> modifiers for views. The two-lifecycle model underneath is the same.</p>
+
+  <h2>B4. What actually happens</h2>
+  <p>We drove this app on an iOS 26.2 simulator with a UI test (launch, push the detail screen, go back, press Home, return) and read the log:</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <div class="table-wrap">
+  <table>
+    <tr><th>You do</th><th>Log shows (SwiftUI)</th></tr>
+    <tr><td>Launch</td><td><code>App init · ContentView onAppear · scenePhase → active</code></td></tr>
+    <tr><td>Push detail</td><td><code>DetailView onAppear · ContentView onDisappear</code></td></tr>
+    <tr><td>Back</td><td><code>ContentView onAppear · DetailView onDisappear</code></td></tr>
+    <tr><td>Press Home</td><td><code>scenePhase → inactive · scenePhase → background</code></td></tr>
+    <tr><td>Return</td><td><code>scenePhase → inactive · scenePhase → active</code></td></tr>
+  </table>
+  </div>
+  </div>
+  <div data-track="uikit">
+  <div class="table-wrap">
+  <table>
+    <tr><th>You do</th><th>Log shows (UIKit)</th></tr>
+    <tr><td>Launch</td><td><code>didFinishLaunching · scene willConnect · sceneWillEnterForeground · ViewController viewDidLoad · viewWillAppear · viewDidAppear · sceneDidBecomeActive</code></td></tr>
+    <tr><td>Push detail</td><td><code>Detail viewDidLoad · ViewController viewWillDisappear · Detail viewWillAppear · ViewController viewDidDisappear · Detail viewDidAppear</code></td></tr>
+    <tr><td>Back</td><td><code>Detail viewWillDisappear · ViewController viewWillAppear · Detail viewDidDisappear · ViewController viewDidAppear</code></td></tr>
+    <tr><td>Press Home</td><td><code>sceneWillResignActive · sceneDidEnterBackground</code></td></tr>
+    <tr><td>Return</td><td><code>sceneWillEnterForeground · sceneDidBecomeActive</code></td></tr>
+  </table>
+  </div>
+  </div>
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · backgrounding fires no view callbacks</span>
+    Press Home and <em>no</em> view-level "disappear" callback fires. Only the scene/app level changes. View callbacks report navigation inside the app, not the app leaving the screen. So a background monitor (Lesson 12) built on view callbacks would silently never notice the app going away: hook the <strong>app/scene</strong> level.
+    <span data-track="swiftui">Also note the order during navigation: the new view's <code>onAppear</code> runs <em>before</em> the old view's <code>onDisappear</code>.</span><span data-track="uikit">Also note the order during navigation: the two screens' callbacks interleave (old <code>viewWillDisappear</code>, new <code>viewWillAppear</code>, old <code>viewDidDisappear</code>, new <code>viewDidAppear</code>).</span> Don't write code that depends on either screen's callbacks running first.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · no callback when a suspended app is killed</span>
+    Swiping the app away in the app switcher, or the OS reclaiming memory, ends a suspended app with no notice at all. <code>applicationWillTerminate</code> isn't called for suspended apps (<a href="https://developer.apple.com/documentation/uikit/uiapplicationdelegate/applicationwillterminate(_:)">Apple docs</a>). Save anything important when you enter the background, not "on exit".
+  </div>
+
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to explain anything that surprised you in the logs. Surprises are the point of this lesson. For example: "Why does Android rebuild the Activity on rotation but iOS doesn't rebuild the view?"
+  </div>
+
+  <h3>Retrieval check: Part B</h3>
+  <div class="quiz mcq">
+    <p class="q">You press Home on the detail screen. Which events fire?</p>
+    <div class="opts">
+      <button class="opt">view disappear events only</button>
+      <button class="opt" data-correct>scene/app-level events only</button>
+      <button class="opt">both view and scene events</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Backgrounding doesn't change what's on the navigation stack, so no view callback runs.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which file holds the text iOS shows in a Bluetooth permission prompt?</p>
+    <div class="opts">
+      <button class="opt">Package.swift</button>
+      <button class="opt" data-correct>Info.plist</button>
+      <button class="opt">project.yml</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Usage descriptions are Info.plist keys. A missing one terminates the app when the permission is requested.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">Android's closest equivalent to iOS's Info.plist is:</p>
+    <div class="opts">
+      <button class="opt">build.gradle.kts</button>
+      <button class="opt" data-correct>AndroidManifest.xml</button>
+      <button class="opt">settings.gradle.kts</button>
+    </div>
+    <p class="feedback"></p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which event destroys and recreates the screen object by default?</p>
+    <div class="opts">
+      <button class="opt" data-correct>Android rotation</button>
+      <button class="opt">iOS pressing Home</button>
+      <button class="opt">iOS rotating view</button>
+    </div>
+    <p class="feedback"></p>
+  </div>
+
+  <div class="callout exercise">
+    <span class="label">Unaided exercise · Part B (no agent)</span>
+    <ol>
+      <li>Predict the full log for: launch → push detail → press Home → return → back. Run it and diff.</li>
+      <li>Add a log for when the detail screen's view is first created (<span data-track="swiftui">tip: a custom <code>init()</code> on <code>DetailView</code></span><span data-track="uikit">it's already <code>viewDidLoad</code>; push, go back and push again, and count how often it fires</span>). How often does it run compared with the appear callbacks? Why?</li>
+    </ol>
+  </div>
+
+  <!-- ============================== BRIEF ============================== -->
+  <h2>Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run both apps yourself, and do the unaided exercises.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 02 (Platform fundamentals): build two scratch apps that log lifecycle events.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: nothing. Work in scratch/lesson-02/ in my workspace.
+Prereqs: JDK 17+, Android SDK (ANDROID_HOME, or sdk.dir in local.properties), any Gradle
+install to bootstrap the wrapper once (`brew install gradle`, or let Android Studio open the
+project), Xcode, XcodeGen (`brew install xcodegen`).
+
+1. Android, in scratch/lesson-02/android/:
+   - Gradle wrapper: run `gradle wrapper --gradle-version 9.8.2` in the folder. It writes
+     gradlew, gradlew.bat, gradle/wrapper/gradle-wrapper.jar and
+     gradle/wrapper/gradle-wrapper.properties. AGP 9.4 needs Gradle 9.6 or newer.
+   - settings.gradle.kts: pluginManagement repos google(), mavenCentral(),
+     gradlePluginPortal(); dependencyResolutionManagement repos google(), mavenCentral();
+     rootProject.name = "Lesson02Android"; include(":app").
+   - Root build.gradle.kts: id("com.android.application") version "9.4.1" apply false;
+     Compose track only: id("org.jetbrains.kotlin.plugin.compose") version "2.4.21" apply false.
+     Do NOT apply org.jetbrains.kotlin.android (AGP 9 has built-in Kotlin; it fails the build).
+   - gradle.properties: android.useAndroidX=true
+   - Exactly as shown in the lesson for my track:
+       app/build.gradle.kts
+       app/src/main/AndroidManifest.xml  (theme differs per track)
+       app/src/main/java/com/example/lesson02/MainActivity.kt  (with its imports)
+       XML track only: app/src/main/res/layout/activity_main.xml
+     Fill in onResume/onPause/onStop with one Log.d(TAG, "&lt;name&gt;") each.
+     compileSdk 37 is required by current Compose/AndroidX libs.
+   - Build: ./gradlew :app:assembleDebug
+
+2. iOS, in scratch/lesson-02/ios/:
+   - project.yml for XcodeGen: name Lesson02iOS; options.bundleIdPrefix com.example;
+     options.deploymentTarget.iOS "17.0"; one target Lesson02iOS, type application, platform iOS,
+     sources [Sources], settings.base SWIFT_VERSION "6.0", MARKETING_VERSION "1.0",
+     CURRENT_PROJECT_VERSION "1"; info.path Sources/Info.plist with properties
+     CFBundleDisplayName "Lesson 02" and UILaunchScreen {}.
+     UIKit track adds to info.properties:
+       UIApplicationSceneManifest: { UIApplicationSupportsMultipleScenes: false,
+         UISceneConfigurations: { UIWindowSceneSessionRoleApplication: [
+           { UISceneConfigurationName: "Default Configuration",
+             UISceneDelegateClassName: "$(PRODUCT_MODULE_NAME).SceneDelegate" } ] } }
+   - Sources/: the Swift files shown in the lesson for my track. Fill in the elided
+     callbacks with one lifecycleLog.notice("&lt;Type&gt; &lt;callback&gt;") each, calling super.
+   - `xcodegen generate`, then build for a simulator:
+     xcodebuild -project Lesson02iOS.xcodeproj -scheme Lesson02iOS
+       -destination 'platform=iOS Simulator,name=&lt;an installed iPhone&gt;' build
+
+Acceptance checks:
+- Both builds succeed with no compiler warnings from our own code (lint suggestions such
+  as hard-coded strings are fine for a scratch app).
+- Android launch logs (tag Lifecycle): "onCreate (restored=false)", "onStart", "onResume".
+- iOS launch logs (category Lifecycle) start with "App init" (SwiftUI) or
+  "didFinishLaunching" (UIKit) and include the first screen's appear callback.
+Then walk me through each file line by line. Do NOT run the lifecycle experiments or the
+unaided exercises for me; I do those myself.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/platform-lifecycles-cheatsheet.html">Cheatsheet: platform lifecycles</a>, both platforms and all tracks on one page.</li>
+    <li><a href="../reference/java-reading-cheatsheet.html">Java reading cheatsheet</a></li>
+    <li><a href="../reference/glossary.html">Course glossary</a></li>
+    <li>Wisdom: <a href="https://reddit.com/r/androiddev">r/androiddev</a> and <a href="https://reddit.com/r/iOSProgramming">r/iOSProgramming</a> for "is this lifecycle behaviour normal?" questions.</li>
+  </ul>
+
+  <nav class="progress-links">
+    <a href="01-kotlin-swift-for-typescript-devs.html">← 01 Kotlin + Swift for TS developers</a>
+    <span class="muted">Next: 03 Anatomy of a KMP project</span>
+  </nav>
+</main>
+</body>
+</html>
