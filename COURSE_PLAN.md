@@ -1,124 +1,178 @@
 # Native Mobile Course — Compose · SwiftUI · Kotlin Multiplatform
 
-The curriculum for building one app, the **Native Device Monitor**, on Android and iOS, on top of a shared Kotlin Multiplatform core. A 3-week core plus optional extensions. Work through the core in order. Each lesson teaches one step and adds one **milestone** to your app.
+The curriculum for building one app, the **Native Device Monitor**, on Android and iOS, on top of shared Kotlin Multiplatform code. Four 5-day weeks of core lessons, one lesson per day, plus optional extensions. Work through the core lessons in order. Each lesson teaches one step, and from Lesson 05 on each one adds a **milestone** to your app.
 
 ## How this course works
 
-- **Who it's for:** developers who already know a typed language, most likely TypeScript from Ionic/Angular work. Lesson 01 maps what you know onto Kotlin and Swift instead of teaching programming from scratch.
-- **A 3-week core plus optional extensions.** The core (Lessons 01–13) builds the full app: KMP, declarative UI, architecture, permissions, the complete BLE flow, and background monitoring. The extensions (E1–E3) add a network client, camera/media and a BLE library comparison. Pick the ones your work needs.
-- **One app, growing.** From Lesson 03 on, every lesson adds one milestone to the same project. Each lesson's agent brief starts from the previous milestone. Extensions all start from the finished core (m10).
+- **Who it's for:** developers who already know a typed language, most likely TypeScript from Ionic/Angular work. Lessons 01–02 map what you know onto Kotlin and Swift instead of teaching programming from scratch.
+- **Four weeks, one lesson a day.** The core lessons (01–20) fit four 5-day weeks: one lesson per working day, each at most about 2.5 h on the default UI track. Weekends stay free for catching up or an extension. The core lessons build the full app: KMP, declarative UI, architecture, permissions, the complete BLE flow, and background monitoring.
+- **Start with Lesson 00.** A short introduction (10–15 minutes) and the course's front page: what you'll build, how the course works, and the map of every lesson. It counts for no day.
+- **Optional extensions.** E1–E3 add a network client, camera/media and a BLE library comparison. Pick the ones your work needs.
+- **One app, growing.** From Lesson 05 on, every lesson adds one milestone (`m00`…`m15`) to the same project. Each lesson's agent brief starts from the previous milestone. Extensions all start from the finished app (`m15`).
 - **Choose your UI track.** Every UI-touching lesson has a switcher: Android `XML | Compose | Both`, iOS `UIKit | SwiftUI | Both`. **Compose + SwiftUI is the default** and the team's target. XML Views and UIKit are there because the team's app still contains that code. "Both" shows the tracks side by side, with a "what changed and why" note. The concept sections are shared by all tracks.
-- **The core is always KMP.** Shared Kotlin holds the domain, the data layer and the ViewModels. Platform adapters (BLE radio, permissions, camera, background scheduling) sit behind **ports** (Kotlin interfaces). Android adapters are Kotlin in `androidMain`. iOS adapters are **Swift** implementing the Kotlin port.
+- **The shared code is always KMP.** Shared Kotlin holds the **app core** (models, ports, services), the shared ViewModels and the shared outbound adapters. Platform capabilities (BLE radio, permissions, camera, background scheduling) sit behind **outbound ports** (Kotlin interfaces). Android outbound adapters are Kotlin in `androidMain`. iOS outbound adapters are **Swift** implementing the Kotlin port.
 - **Code authorship.** You may let an AI agent write the code, but never blind:
-  1. Read the lesson's line-by-line walkthrough, or have your agent give you one for its code.
+  1. Read the lesson's code walkthrough, or have your agent explain its code line by line.
   2. Answer the retrieval checks.
   3. Do the **unaided exercise** yourself. This step is not optional.
 - **Agent brief.** Every lesson ends with a copy-paste brief: the starting milestone, the behaviour to build for your track, the files involved, and acceptance checks. Hand it to your agent, or follow it yourself.
-- **Estimates, not dates.** Each lesson header reads like `~3 h · +1 h per extra UI track`. Week totals assume the default track at 2.5–3 h/day. A lesson longer than one sitting is split into **Part A / Part B**, each ending at a natural stop (a passing build or a finished exercise).
+- **Estimates, not dates.** Each lesson header reads like `~2 h · +0.5 h per extra UI track`. No lesson is longer than about 2.5 h on the default track, and every lesson ends at a natural stop: a passing build or a finished exercise.
 
 ## Environment
 
 - macOS with the latest stable Xcode and Android Studio (with the Kotlin Multiplatform plugin), and JDK 17+.
-- **A physical Android phone and a physical iPhone** for everything BLE (from Lesson 08). The iOS Simulator reports Bluetooth as `.unsupported`, and the Android emulator has no Bluetooth radio. UI-only lessons run fine on simulator/emulator.
-- **BLE test peripheral:** the LightBlue app on a Mac, set up as a virtual peripheral with one readable and one notifying characteristic. Set up in Lesson 08.
+- **A physical Android phone and a physical iPhone** for everything BLE (from Lesson 13). The iOS Simulator reports Bluetooth as `.unsupported`, and the Android emulator has no Bluetooth radio. UI-only lessons run fine on simulator/emulator.
+- **BLE test peripheral:** the LightBlue app on a Mac, set up as a virtual peripheral with one readable and one notifying characteristic. Set up in Lesson 13.
 - Minimum OS versions: Android minSdk 26; iOS 17 (needed for SwiftUI `@Observable`; the UIKit track uses the same target).
 - Library versions are pinned in the lesson that introduces each library, not here.
 
 ## Architecture you'll end up with
 
+The app is built as **hexagonal architecture** (ports and adapters). The **app core** sits in the middle and imports nothing from Android, iOS or any framework. Everything else is an **adapter** plugged into one of its **ports**.
+
 ```
- Compose UI │ XML Views UI          SwiftUI │ UIKit UI        ← thin: render state, forward events
-        └──────────┬───────────────────┬─────────┘
-                   ▼                   ▼
-      shared ViewModels  (commonMain, StateFlow<UiState>)    ← Swift sees Flows via SKIE
-                   │
-      domain  (commonMain): models · use cases · repository interfaces
-                   │
-      data    (commonMain): repositories · FileLogger · ports  (+ Ktor ApiClient in E1)
-                   │                                   │
-      androidMain adapters (Kotlin)        iOS adapters (Swift, implement Kotlin ports)
-      BluetoothGatt · ActivityResult ·     CoreBluetooth · AVFoundation ·
-      WorkManager                          BGTaskScheduler
-                   └──────────── wired with Koin ─────────────┘
+                Compose │ XML Views UI        SwiftUI │ UIKit UI        ← thin: render state, forward events
+                        └──────────┬────────────────┘
+                                   ▼
+   INBOUND ADAPTERS     shared ViewModels (StateFlow<UiState>; Swift sees Flows via SKIE) · tests
+                                   │  call only inbound ports
+                                   ▼
+          ┌──────────────────────── APP CORE (commonMain) ─────────────────────────┐
+          │  inbound ports   DeviceScanning · DeviceSession · PermissionAccess ·   │
+          │                  StatusReport · DeviceMonitoring                       │
+          │  services        implement the inbound ports: the app's rules          │
+          │  models          Device · ConnectionState · DeviceStatus · LogRecord … │
+          │  outbound ports  BleScanner · BleConnection · PermissionChecker ·      │
+          │                  BatteryProvider · NetworkProvider ·                   │
+          │                  BluetoothProvider · LogStore · MonitorScheduler       │
+          └───────────────────────────────────┬────────────────────────────────────┘
+                                              │  implemented by
+             ┌────────────────────────────────┼──────────────────────────────┐
+             ▼                                ▼                              ▼
+   OUTBOUND ADAPTERS, Android      OUTBOUND ADAPTERS, shared       OUTBOUND ADAPTERS, iOS
+   Kotlin in androidMain           Kotlin in commonMain            Swift in the iOS app
+   BluetoothGatt · ActivityResult  simulated scanner ·             CoreBluetooth · AVFoundation ·
+   · WorkManager                   Ktor HTTP client (E1)           BGTaskScheduler
+                                                                   (+ one Kotlin/Native adapter
+                                                                   in iosMain: the log store)
+
+             └──────── wired with Koin: inbound port → service, outbound port → adapter ────────┘
 ```
 
-Important rule: **UI ≠ device logic.** The UI receives input, calls the ViewModel, and renders state. Everything else sits below it.
+- **Shared code** (`shared/src/commonMain`) is organised as `core` (models, `inbound` ports, `outbound` ports, services), the inbound adapters (shared ViewModels), the shared outbound adapters, and the DI module. The packages are named `inbound` / `outbound` because `in` is a Kotlin keyword.
+- **Inbound ports** say what the app offers, one per capability. **Outbound ports** say what the app needs, named in the app's terms (never HTTP, GATT or files).
+- **One rule for where code goes:** UI code goes in the screen; logic that is a rule of the app goes in a service; anything that talks to a platform, a library or the network goes in an outbound adapter behind an outbound port. ViewModels talk only to inbound ports.
+- **Tests** are inbound adapters too: they drive a service through its inbound port, with **fakes** (outbound adapters written for tests, in `commonTest`) behind its outbound ports.
 
 ---
 
 ## Core lessons
 
-Milestone tags (`m00`…`m10`) mark each lesson's finished demo state.
+**Lesson 00 — Introduction** (~10–15 min, no day, no milestone): what you'll build, how the course works, and this map. Read it once before Lesson 01.
 
-### Week 1 — Languages, platforms, KMP, declarative UI (~14.5 h)
+Milestone tags (`m00`…`m15`) mark each lesson's finished app. Lessons 01–04 are scratch programs and apps and take no milestone.
 
-| # | Lesson | Covers | Milestone | Est. |
-|---|---|---|---|---|
-| 01 | **Kotlin + Swift for TypeScript developers** | *A — Kotlin:* val/var, functions, classes/interfaces/data classes, null safety, collections and lambdas, extension functions, coroutines and `Flow` (`suspend`, scopes, `StateFlow`). *B — Swift:* let/var, struct vs class, protocols, optionals, closures, async/await, `AsyncSequence`, `@MainActor`. Each idea mapped from its TypeScript equivalent, with time spent on what has no TS counterpart | scratch exercises | ~4 h |
-| 02 | **Platform fundamentals** | *A — Android:* project structure, Activity, Context, Intent, Manifest, lifecycle (Home vs rotation), Gradle; Java reading via a cheatsheet. *B — iOS:* Xcode project, Info.plist, frameworks, **two lifecycles** (app/scene vs view). *Track:* SwiftUI `App` + `scenePhase` · UIKit `AppDelegate`/`SceneDelegate` + view-controller callbacks | scratch apps logging lifecycles | ~3.5 h · +0.5 h |
-| 03 | **Anatomy of a KMP project** | `shared` module, source sets (`commonMain`/`androidMain`/`iosMain`), `expect`/`actual`, the iOS framework, calling Kotlin from Swift, Gradle multiplatform basics | **m00** skeleton: both apps show a greeting from shared code | ~2.5 h · +0.25 h |
-| 04 | **Declarative UI: components, lists, navigation** | *A:* imperative vs declarative (UI as a function of state, single source of truth, recomposition / SwiftUI re-render, where side effects go); text, text field, button, image, progress, status/error; layout; local state. *B:* lists with stable keys, async updates and the main-thread rule, a second screen. *Track:* Compose (`Column`, `remember`, `LazyColumn`, Navigation Compose) · XML (`ConstraintLayout`, ViewBinding, `RecyclerView`, Fragments/NavGraph) · SwiftUI (`VStack`, `@State`, `List`, `NavigationStack`) · UIKit (`UIStackView`, Auto Layout, `UITableView`, `UINavigationController`) | **m01** Device Monitor shell: list, async status, second screen | ~4.5 h · +2 h |
+### Week 1 — Languages, platforms, KMP (~10 h)
 
-### Week 2 — Architecture, permissions, BLE connect (~13.5 h)
+| Day | # | Lesson | Covers | Milestone | Est. |
+|---|---|---|---|---|---|
+| 1 | 01 | **Kotlin for TypeScript developers** | val/var, functions, classes/interfaces/data classes, null safety, collections and lambdas, extension functions, coroutines and `Flow` (`suspend`, scopes, `StateFlow`). Each idea mapped from its TypeScript equivalent, with time spent on what has no TS counterpart | scratch program | ~2 h |
+| 2 | 02 | **Swift for TypeScript developers** | let/var, struct vs class, protocols, optionals, closures, async/await, `AsyncSequence`, `@MainActor`, each mapped from TypeScript | scratch program | ~2 h |
+| 3 | 03 | **Android fundamentals** | project structure, Activity, Context, Intent, Manifest, lifecycle (Home vs rotation), Gradle; Java reading via a cheatsheet | scratch app logging lifecycles | ~1.75 h |
+| 4 | 04 | **iOS fundamentals** | Xcode project, Info.plist, frameworks, **two lifecycles** (app/scene vs view). *Track:* SwiftUI `App` + `scenePhase` · UIKit `AppDelegate`/`SceneDelegate` + view-controller callbacks | scratch app logging lifecycles | ~1.75 h · +0.5 h |
+| 5 | 05 | **Anatomy of a KMP project** | `shared` module, source sets (`commonMain`/`androidMain`/`iosMain`), `expect`/`actual`, the iOS framework, calling Kotlin from Swift, Gradle multiplatform basics | **m00** skeleton: both apps show a greeting from shared code | ~2.5 h · +0.25 h |
 
-| # | Lesson | Covers | Milestone | Est. |
-|---|---|---|---|---|
-| 05 | **Shared ViewModels and Kotlin↔Swift** | KMP `ViewModel` + `StateFlow<UiState>`, sealed UI state, one-off events modelled as state (`errorMessage` + `errorShown()`); collecting on Android (`collectAsStateWithLifecycle` / `repeatOnLifecycle`); on iOS a `ViewModelOwner` that clears the store, a **hand-written Flow wrapper** first, then **SKIE** (`AsyncSequence`, exhaustive sealed `switch`; pins Kotlin to 2.4.20); note on Swift export as where interop is heading | **m02** shell driven by a shared ViewModel over a fake device source | ~3.5 h · +1 h |
-| 06 | **Clean architecture, DI, and testing the core** | *A:* domain / data / presentation packages and the dependency rule (inverted vs Android's guide: ports owned by the domain); ports and adapters (`BleScanner` port, `SimulatedBleScanner` adapter), why interfaces over `expect`/`actual`; a use case (`ScanForDevicesUseCase`: name filter + each device once); DI by hand (constructor injection, `AppContainer` composition root); `commonTest` with `kotlin.test`, `runTest` + `setMain` (virtual time), Turbine, a controllable `FakeBleScanner`; `withHostTest`; mutation checks. *B:* **Koin** (`single`/`factoryOf`/`viewModelOf`, `internal` module, `initKoin` → Swift `doInitKoin`), start in `Application` / `App.init` / `AppDelegate`, `koinViewModel()` · `by viewModel()` · iOS Koin-backed factory behind `ViewModelOwner`; a graph test, because Koin fails at run time | **m03** layered core, Koin wiring, 6 green tests on JVM + iOS | ~3.5 h · +0.25 h |
-| 07 | **Permissions** | check → request → handle result; granted, denied, permanently denied/restricted; a `PermissionChecker` port. *Track:* `rememberLauncherForActivityResult` · Fragment Activity Result API · SwiftUI/UIKit triggers over `CBManager.authorization` (+ `AVCaptureDevice` if doing E2) | **m04** BLE permissions, every path shown in the UI | ~2 h · +0.5 h |
-| 08 | **BLE: concepts, scan, connect** | *A:* central/peripheral, GATT, service, characteristic, UUID, read/write/notify/indicate, connection state; LightBlue as a virtual peripheral; why BLE needs real devices; the `BleScanner` port. *B:* Android adapter (`BluetoothLeScanner`, `connectGatt`, `callbackFlow`); iOS adapter in Swift (`CBCentralManager`, delegate retention); scan timeout, connection-state stream, failure reporting; the "connection reference lost on rotation / view teardown" trap | **m05** scan, list, connect, live connection state | ~4.5 h · +0.5 h |
+### Week 2 — Declarative UI, shared ViewModels, app architecture (~10 h)
 
-### Week 3 — Complete BLE, background monitoring, finish (~14 h)
+| Day | # | Lesson | Covers | Milestone | Est. |
+|---|---|---|---|---|---|
+| 6 | 06 | **Declarative UI: components, state, layout** | imperative vs declarative (UI as a function of state, single source of truth, recomposition / SwiftUI re-render, where side effects go); text, text field, button, image, progress, status/error; layout; local state. *Track:* Compose (`Column`, `remember`) · XML (`ConstraintLayout`, ViewBinding) · SwiftUI (`VStack`, `@State`) · UIKit (`UIStackView`, Auto Layout) | **m01** Device Monitor screen: filter, scan button, status | ~2 h · +1 h |
+| 7 | 07 | **Declarative UI: lists, async, navigation** | lists with stable keys, async updates and the main-thread rule, a second screen. *Track:* `LazyColumn` + Navigation Compose · `RecyclerView` + Fragments/NavGraph · `List` + `NavigationStack` · `UITableView` + `UINavigationController` | **m02** Device Monitor shell: list, async status, second screen | ~2.5 h · +1 h |
+| 8 | 08 | **Shared ViewModels** | KMP `ViewModel` + `StateFlow<UiState>`, sealed UI state, one-off events modelled as state (`errorMessage` + `errorShown()`); collecting on Android (`collectAsStateWithLifecycle` / `repeatOnLifecycle`); on iOS a `ViewModelOwner` that clears the store and a **hand-written Flow wrapper** | **m03** shell driven by a shared ViewModel over a fake device source | ~2 h · +0.5 h |
+| 9 | 09 | **Kotlin↔Swift with SKIE** | **SKIE** replaces the hand-written wrapper (`AsyncSequence`, exhaustive sealed `switch`; pins Kotlin to 2.4.20); note on Swift export as where interop is heading | **m04** iOS observes the ViewModel through SKIE | ~1.5 h · +0.5 h |
+| 10 | 10 | **The hexagon: app core, ports, adapters, DI by hand** | the problem from Lessons 08–09 (the ViewModel builds its own data source); app core, inbound port, outbound port, service, adapter; `DeviceScanning` inbound port + scanning service (name filter, each device once), `BleScanner` outbound port + `SimulatedBleScanner` adapter; why interfaces over `expect`/`actual`; the ViewModel calls only the inbound port; DI by hand (constructor injection, `AppContainer` composition root); a Clean-to-hexagonal sidebar (use case ≈ service method, repository ≈ outbound port, boundary ≈ inbound port); a "how to add" recipe (screen, business rule, platform capability, API request) | **m05** shared code restructured as app core + adapters, wired by hand | ~2 h · +0.25 h |
 
-| # | Lesson | Covers | Milestone | Est. |
-|---|---|---|---|---|
-| 09 | **BLE discovery + read** | two nested async discoveries (services → characteristics), checking characteristic properties, read; **byte decoding in `commonMain`**, with tests; the iOS `CBPeripheralDelegate` trap | **m06** list services/characteristics, read and decode a value | ~2.5 h |
-| 10 | **BLE notify, disconnect, and errors** | subscribe/unsubscribe, notifications → `Flow` → ViewModel → UI; manual vs unexpected disconnect, cleanup, a consistent connection-state machine, tested with a fake port | **m07** full BLE flow, with recovery from an unexpected disconnect | ~3 h · +0.5 h |
-| 11 | **Device providers + FileLogger** | `BatteryProvider`, `NetworkProvider`, `BluetoothProvider` ports; a JSONL `FileLogger` (append / read / clear / file errors). The FileLogger's iOS side is the course's **`iosMain` Kotlin/Native example** (`NSFileManager` from Kotlin) | **m08** providers report live status; log lines written and read back | ~2.5 h |
-| 12 | **Background monitor** | `BackgroundMonitor` (start(interval) / stop / status / logs / clear); Android WorkManager / foreground service vs iOS `BGTaskScheduler`; hooking app-level (not view-level) lifecycle; behaviour table for foreground / background / return / OS kill / force-kill; no bypassing OS limits | **m09** monitor logs status on an interval; behaviour table written | ~3.5 h · +0.5 h |
-| 13 | **Integration, end-to-end test, cleanup** | one screen operates every feature; run the end-to-end and refactor checklists (Appendix B); fix the findings | **m10** finished core Native Device Monitor | ~2.5 h · +0.5 h |
+### Week 3 — Testing, Koin, permissions, BLE connect (~11.5 h)
 
-## Extensions (optional, each starts from m10)
+| Day | # | Lesson | Covers | Milestone | Est. |
+|---|---|---|---|---|---|
+| 11 | 11 | **Testing the app core + Koin** | `commonTest` with `kotlin.test`, `runTest` + `setMain` (virtual time), Turbine; testing the scanning service through its inbound port with a controllable `FakeBleScanner`; ViewModel tests with a test implementation of the inbound port; `withHostTest`; mutation checks. **Koin** binds each inbound port to its service and each outbound port to its adapter (`single`/`factoryOf`/`viewModelOf`, `internal` module, `initKoin` → Swift `doInitKoin`); start in `Application` / `App.init` / `AppDelegate`; `koinViewModel()` · `by viewModel()` · iOS Koin-backed factory behind `ViewModelOwner`; a graph test, because Koin fails at run time | **m06** Koin wiring, green tests on JVM + iOS | ~2.5 h · +0.25 h |
+| 12 | 12 | **Permissions** | check → request → handle result; granted, denied, permanently denied/restricted; `PermissionAccess` inbound port, `PermissionChecker` outbound port. *Track:* `rememberLauncherForActivityResult` · Fragment Activity Result API · SwiftUI/UIKit triggers over `CBManager.authorization` (+ `AVCaptureDevice` if doing E2) | **m07** BLE permissions, every path shown in the UI | ~2 h · +0.5 h |
+| 13 | 13 | **BLE: concepts and scan** | central/peripheral, GATT, service, characteristic, UUID, read/write/notify/indicate, connection state; LightBlue as a virtual peripheral; why BLE needs real devices; real `BleScanner` outbound adapters: Android `BluetoothLeScanner` + `callbackFlow`, iOS Swift `CBCentralManager` (delegate retention); scan timeout | **m08** scan a real peripheral into the list | ~2.5 h · +0.25 h |
+| 14 | 14 | **BLE: connect** | `DeviceSession` inbound port + session service, `BleConnection` outbound port; Android `connectGatt`, iOS `connect(_:)`; connection-state stream, failure reporting; the "connection reference lost on rotation / view teardown" trap | **m09** connect, live connection state | ~2 h · +0.25 h |
+| 15 | 15 | **BLE: discovery and read** | two nested async discoveries (services → characteristics), checking characteristic properties, read; **byte decoding in the app core**, with tests; the iOS `CBPeripheralDelegate` trap | **m10** list services/characteristics, read and decode a value | ~2.5 h |
+
+### Week 4 — Complete BLE, background monitoring, finish (~11 h)
+
+| Day | # | Lesson | Covers | Milestone | Est. |
+|---|---|---|---|---|---|
+| 16 | 16 | **BLE: notify, disconnect, errors** | subscribe/unsubscribe, notifications → `Flow` → session service → ViewModel → UI; manual vs unexpected disconnect, cleanup, a consistent connection-state machine in the session service, tested with a fake `BleConnection` | **m11** full BLE flow, with recovery from an unexpected disconnect | ~2.5 h · +0.5 h |
+| 17 | 17 | **Device status and the log store** | `StatusReport` inbound port; `BatteryProvider`, `NetworkProvider`, `BluetoothProvider` outbound ports; a `LogStore` outbound port with a JSONL file adapter (append / read / clear / file errors). The log store's iOS adapter is the course's **`iosMain` Kotlin/Native example** (`NSFileManager` from Kotlin) | **m12** live status reported; log lines written and read back | ~2.5 h |
+| 18 | 18 | **Background monitor: build it** | `DeviceMonitoring` inbound port (start(interval) / stop / status / logs / clear) + monitoring service; `MonitorScheduler` outbound port with Android WorkManager / foreground service and iOS `BGTaskScheduler` adapters; hooking app-level (not view-level) lifecycle; no bypassing OS limits | **m13** monitor logs status on an interval | ~2 h · +0.25 h |
+| 19 | 19 | **Background monitor: platform behaviour table** | run and record the monitor in foreground / background / return / OS kill / force-kill on both platforms; why iOS gives no fixed-interval guarantee; document what each platform allows | **m14** behaviour table written from observed runs | ~1.5 h · +0.25 h |
+| 20 | 20 | **Integration and end-to-end check** | one screen operates every feature; run the end-to-end and refactor checklists (Appendix B); fix the findings | **m15** finished core Native Device Monitor | ~2.5 h · +0.5 h |
+
+## Extensions (optional, each starts from m15)
 
 | # | Extension | Covers | Milestone | Est. |
 |---|---|---|---|---|
-| E1 | **API client with Ktor** | Ktor client in `commonMain`, per-platform engines, kotlinx.serialization JSON, GET/POST, headers, params, status handling, timeouts, network errors; tests with `MockEngine`; an API test screen | **e1** API screen: success / error / timeout | ~3 h · +0.5 h |
-| E2 | **Camera and media** | `MediaPicker` port; camera permission, capture, pick from the library, media info, display. *Track:* `ActivityResultContracts.TakePicture`/`PickVisualMedia` (Compose / Fragment) · SwiftUI `PhotosPicker` + camera via `UIViewControllerRepresentable` · UIKit `PHPickerViewController` + `UIImagePickerController` | **e2** capture + pick + display | ~3 h · +1 h |
-| E3 | **Kable: the library alternative** | a `KableBleScanner` behind the same `BleScanner` port, swapped in with one Koin line; compare lines of code, connection-state handling, errors and iOS behaviour against the hand-written adapters; when to choose which | **e3** BLE stack switchable between hand-written and Kable | ~2 h |
+| E1 | **API client with Ktor** | an outbound port named for what the app needs, with a shared Ktor adapter in `commonMain`: per-platform engines, kotlinx.serialization JSON, GET/POST, headers, params, status handling, timeouts, network errors; adapter tests with `MockEngine`, service tests with a fake port; an API test screen | **e1** API screen: success / error / timeout | ~3 h · +0.5 h |
+| E2 | **Camera and media** | `MediaCapture` inbound port, `MediaPicker` outbound port; camera permission, capture, pick from the library, media info, display. *Track:* `ActivityResultContracts.TakePicture`/`PickVisualMedia` (Compose / Fragment) · SwiftUI `PhotosPicker` + camera via `UIViewControllerRepresentable` · UIKit `PHPickerViewController` + `UIImagePickerController` | **e2** capture + pick + display | ~3 h · +1 h |
+| E3 | **Kable: the library alternative** | Kable adapters behind the same `BleScanner` / `BleConnection` outbound ports, swapped in with one Koin line; compare lines of code, connection-state handling, errors and iOS behaviour against the hand-written adapters; when to choose which | **e3** BLE stack switchable between hand-written and Kable | ~2 h |
+
+Extensions follow the same lesson rules as the core lessons; one that runs over about 2.5 h is split into two lessons when it's written.
 
 ## Totals
 
 | | Default track (Compose + SwiftUI) | + one extra UI track | + both extra tracks |
 |---|---|---|---|
-| Core (01–13) | **~42 h · ~3 weeks** | ~48 h | ~54 h |
+| Lesson 00 | ~10–15 min | — | — |
+| Core lessons (01–20) | **~42.5 h · 4 weeks of 5 days** | ~49 h | ~56 h |
 | All extensions | +8 h | +9.5 h | +11 h |
 
-At 2.5–3 h/day (~14 h/week): core alone ≈ 3 weeks; core + all extensions ≈ 3.5 weeks.
+At one lesson per working day (at most about 2.5 h): the core lessons take four 5-day weeks. Extensions fit on weekends or in a fifth week. Each extra UI track adds about 0–1 h per day; days 6–7 (declarative UI) carry the most.
 
 ### If time runs short
-Within the core, trim in this order: the testing sections inside lessons, then the FileLogger half of Lesson 11 (the background monitor then keeps its records in memory). Never trim Lessons 01–10, the providers, or Lesson 12. Extensions are optional by design.
+Within the core lessons, trim in this order:
+1. The testing sections inside Lessons 12–17 (keep Lesson 11, which teaches testing).
+2. The log store half of Lesson 17 (the monitor then keeps its records in memory).
+
+Apart from those two cuts, never skip a core lesson or part of one: the status report in Lesson 17 and both background-monitor lessons (18–19) stay. Extensions are optional by design.
 
 ---
 
 ## Lesson anatomy (every lesson page)
 
-1. **Header:** number, title, estimate (`~X h · +Y h per extra UI track`), the milestone it produces, prerequisites. Stack switcher if the lesson touches UI. Part A / Part B markers if longer than one sitting.
+1. **Header:** number, title, estimate (`~X h · +Y h per extra UI track`, at most about 2.5 h on the default track), the milestone it produces, prerequisites, track switcher if the lesson touches UI. A lesson that would run longer is split into two lessons, each with its own checks, exercise and brief.
 2. **Why this matters:** one paragraph tying it to the app and the team's code.
-3. **Concepts:** shared across tracks.
-4. **Code walkthroughs:** per track, full code with line-by-line explanation. "Both" adds a "what changed and why" note.
+3. **Concepts:** shared across tracks, each key concept with at least one diagram.
+4. **Code walkthroughs:** per track, made of **excerpts**: only the lines a section discusses, at most about 25 lines, under a file-path label coloured by the part of the app the file belongs to, with left-out lines marked and the discussed lines highlighted. "Both" adds a "what changed and why" note.
 5. **Gotchas:** real traps, e.g. a GATT reference dropped on rotation, view-disappear callbacks not firing on backgrounding, a widget placed in the wrong layout file displacing the nav host, the BLE delegate being released.
 6. **Retrieval checks:** short questions answered from memory (quiz widget).
 7. **Unaided exercise:** a small change made without an agent.
 8. **Agent brief:** copy-paste block, starting from the previous milestone, with the behaviour per track, files touched and acceptance checks.
 9. **Further reading:** links into `RESOURCES.md`.
+10. **Full files:** the complete source of every file the lesson touches, collapsed by default. Full files plus the agent brief are enough to build the milestone.
+
+**Diagrams and colour.** Diagrams are colour inline SVG that reads in light and dark mode, never ASCII art. No stretch longer than about one screen is only text. One **colour code** runs through the whole course, in diagrams and excerpt path labels alike: **app core**, **inbound** (ports and adapters), **outbound** (ports and adapters), **Android**, **iOS**. It's defined once, as tokens in the shared stylesheet. Screenshots appear only where they help; there are no decorative images.
+
+**Lesson 00** has its own short shape: what you'll build (with a teaser diagram of the hexagon), how the course works, and the lesson map. No checks, exercise, brief or full files.
 
 ---
 
 ## Appendix A — Native Device Monitor: feature requirements
 
-Carried over from the team's original learning plan, restated for the KMP architecture. Port and method names are the course's suggestion; the behaviour is the requirement.
+Carried over from the team's original learning plan, restated for the hexagonal architecture. Port and method names are the course's suggestion; the behaviour is the requirement. For each feature, the **inbound port** is what the shared ViewModels call, the **service** implementing it holds the rules, and the **outbound ports** are what the service needs from the platform.
 
-### A.1 UI (Lessons 04, 05, 13)
+| Inbound port (what the app offers) | Outbound ports (what the app needs) | Lessons |
+|---|---|---|
+| `DeviceScanning` | `BleScanner` | 10, 13 |
+| `DeviceSession` | `BleConnection` | 14–16 |
+| `PermissionAccess` | `PermissionChecker` | 12 |
+| `StatusReport` | `BatteryProvider`, `NetworkProvider`, `BluetoothProvider` | 17 |
+| `DeviceMonitoring` | `MonitorScheduler`, `LogStore` (+ the three status ports) | 17–19 |
+
+### A.1 UI (Lessons 06–08, 20)
 Keep the UI simple, and enough to operate and test every feature. It must use: a text label, a text field, a button, a list, an image, basic navigation between screens/sections, a loading indicator, and a status/error message. Out of scope: advanced design, animations, complex layouts, design systems.
 
 ```
@@ -131,37 +185,56 @@ Received data:  01 02 03 04
 [ Disconnect ]
 ```
 
-### A.2 Permissions (Lesson 07): `PermissionChecker` port
-Check status; request; handle granted, denied, and permanently denied/restricted. Cover the Bluetooth permissions (camera/media ones in E2). The UI asks the ViewModel, never the OS directly.
-`check(permission)`, `request(permissions)` → a per-permission result.
+### A.2 Permissions (Lesson 12)
+Check status; request; handle granted, denied, and permanently denied/restricted. Cover the Bluetooth permissions (camera/media ones in E2). The UI asks the ViewModel, the ViewModel asks the inbound port, and only the outbound adapter talks to the OS.
+- **Inbound port `PermissionAccess`:** `status(permission)`, `request(permissions)` → a per-permission result.
+- **Outbound port `PermissionChecker`:** `check(permission)`, `request(permissions)`; one adapter per platform.
 
-### A.3 BLE (Lessons 08–10, E3): `BleScanner` / connection ports + `DeviceRepository`
+### A.3 BLE (Lessons 13–16, E3)
 Flow: scan → select → connect → discover services → discover characteristics → subscribe → receive → read → disconnect.
-- **Scan:** check availability, enabled state and permissions; start; stream discovered devices into a list; stop (manually and on timeout); handle scan errors. `isAvailable()`, `isEnabled()`, `startScan(): Flow<Device>`, `stopScan()`.
-- **Connect:** connect to the selected device; report connection state; handle failure and unexpected disconnection. `connect(device)`, `disconnect()`, `connectionState: StateFlow<ConnectionState>`.
-- **Discovery:** discover services and characteristics; identify readable and notify-capable characteristics. Understand service, characteristic, UUID, read, write, notify/indicate.
-- **Notify:** `subscribe(characteristic): Flow<ByteArray>`, `unsubscribe(characteristic)`. Data flows device → adapter → repository → ViewModel → UI.
-- **Read:** `read(characteristic): ByteArray`. Handle bytes, decode them into a useful representation, deal with async results and read errors.
-- **Disconnect:** manual disconnect; detect unexpected disconnect; update UI state; clean up subscriptions and resources.
+- **Scan.** Check availability, enabled state and permissions; start; stream discovered devices into a list; stop (manually and on timeout); handle scan errors.
+  - Inbound port `DeviceScanning`: `scan(nameFilter): Flow<List<Device>>`, `stopScan()`. The scanning service owns the scan rule: filter by name, report each device once.
+  - Outbound port `BleScanner`: `isAvailable()`, `isEnabled()`, `startScan(): Flow<Device>`, `stopScan()`.
+- **Connect.** Connect to the selected device; report connection state; handle failure and unexpected disconnection.
+  - Inbound port `DeviceSession`: `connect(device)`, `disconnect()`, `connectionState: StateFlow<ConnectionState>`. The session service owns the connection-state machine.
+  - Outbound port `BleConnection`: `connect(device)`, `disconnect()`, `connectionState: Flow<ConnectionState>`.
+- **Discovery.** Discover services and characteristics; identify readable and notify-capable characteristics. Understand service, characteristic, UUID, read, write, notify/indicate. `DeviceSession.services()` over `BleConnection.discoverServices()`.
+- **Notify.** `subscribe(characteristic): Flow<ByteArray>`, `unsubscribe(characteristic)` on both `DeviceSession` and `BleConnection`. Data flows device → outbound adapter → session service → ViewModel → UI.
+- **Read.** `read(characteristic): ByteArray` on `BleConnection`; `DeviceSession.read(characteristic)` returns the decoded value. Handle bytes, decode them in the app core, deal with async results and read errors.
+- **Disconnect.** Manual disconnect; detect unexpected disconnect; update UI state; clean up subscriptions and resources.
 - Out of scope: complex protocols, production device protocols, OTA updates, complex GATT abstraction, advanced pairing/security, Bluetooth Classic.
 
-### A.4 Camera and media (Extension E2): `MediaPicker` port
-Request camera permission, open the native camera, capture an image, pick from the media library, return media info, display the image. `capturePhoto()`, `pickMedia()`, returning a `MediaInfo`. Out of scope: image processing, video editing, compression, advanced media management.
+### A.4 Camera and media (Extension E2)
+Request camera permission, open the native camera, capture an image, pick from the media library, return media info, display the image.
+- **Inbound port `MediaCapture`:** `capturePhoto()`, `pickMedia()`, returning a `MediaInfo`.
+- **Outbound port `MediaPicker`:** the same two calls, one adapter per platform.
 
-### A.5 API client (Extension E1): `ApiClient` (commonMain, Ktor)
-GET, POST, headers, parameters, JSON request/response, HTTP status handling, network errors, timeouts, async. `get(url, params, headers)`, `post(url, body, headers)`. API test screen: a URL field, GET/POST buttons, and the response or error shown. Out of scope: auth, token refresh, retry frameworks, caching, pagination.
+Out of scope: image processing, video editing, compression, advanced media management.
 
-### A.6 Device providers and logging (Lesson 11)
-`BatteryProvider`, `NetworkProvider` (Wi-Fi enabled/connected, cellular available), `BluetoothProvider` (enabled, connected). `FileLogger` writing **JSONL**: append, read, clear, and handle file errors.
+### A.5 API client (Extension E1)
+GET, POST, headers, parameters, JSON request/response, HTTP status handling, network errors, timeouts, async. API test screen: a URL field, GET/POST buttons, and the response or error shown. Out of scope: auth, token refresh, retry frameworks, caching, pagination.
+- **`ApiClient` is not a port.** The app core gets outbound ports named for what it needs: for the test screen, `EndpointProbe` (`get(url, params, headers)`, `post(url, body, headers)` → a `ProbeResult` of status, body or error); a real feature would name its own, for example `LogUploader`.
+- **Inbound port `ApiTesting`:** what the test screen's ViewModel calls; its service turns timeouts and network errors into results the UI can show.
+- **Outbound adapter:** the Ktor client lives inside one shared adapter in `commonMain`, with per-platform engines. Nothing outside that adapter imports Ktor.
 
-### A.7 Background monitor (Lesson 12): `BackgroundMonitor`
-`start(interval)`, `stop()`, `status`, `logs()`, `clearLogs()`. Each tick: collect status → build a record → save → repeat; stop cleanly. Example record:
+### A.6 Device status and logging (Lesson 17)
+- **Inbound port `StatusReport`:** `current(): DeviceStatus`, built from three outbound ports:
+  - `BatteryProvider`: battery level.
+  - `NetworkProvider`: Wi-Fi enabled/connected, cellular available.
+  - `BluetoothProvider`: Bluetooth enabled, connected.
+- **Outbound port `LogStore`:** `append(record)`, `read()`, `clear()`, with file errors reported. Its adapters write **JSONL**; the iOS one is the course's `iosMain` Kotlin/Native example.
+
+### A.7 Background monitor (Lessons 18–19)
+- **Inbound port `DeviceMonitoring`** (what the app offers): `start(interval)`, `stop()`, `status`, `logs()`, `clearLogs()`. Each tick, the monitoring service collects status → builds a record → saves it to the `LogStore` → repeats; it stops cleanly.
+- **Outbound port `MonitorScheduler`** (what the app needs): `schedule(interval, tick)`, `cancel()`. Adapters: WorkManager / foreground service on Android, `BGTaskScheduler` on iOS.
+
+Example record:
 ```json
 {"timestamp":"2026-09-11T10:30:00","battery":82,"wifiEnabled":true,"wifiConnected":true,"cellularAvailable":true,"bluetoothEnabled":true,"bluetoothConnected":false}
 ```
 Demonstrate and document the behaviour in foreground, in background, on return to foreground, after OS termination, and after force-kill. Use the platform-supported mechanism; never bypass OS limits. Where continuous execution after force-kill isn't supported, document that (iOS gives no fixed-interval guarantee).
 
-## Appendix B — Checklists (Lesson 13)
+## Appendix B — Checklists (Lesson 20)
 
 **End-to-end**
 - Permission: check · request · deny · retry.
@@ -171,10 +244,14 @@ Demonstrate and document the behaviour in foreground, in background, on return t
 - Background monitor: start · background · return · stop · restart · OS termination · force-kill.
 
 **Refactor**
-- The UI contains no device logic; ViewModels contain no platform APIs.
-- Every port has one clear responsibility; adapters are swappable through DI.
+- The UI contains no device logic; it renders state and forwards events to its ViewModel.
+- ViewModels call only inbound ports: no platform APIs, no outbound ports, no adapters.
+- The app core imports nothing from Android, iOS, Ktor, Koin or any other framework.
+- Each inbound port is one capability; each outbound port has one clear responsibility and is named in the app's terms.
+- Every rule of the app lives in a service, not in a ViewModel or an adapter; no feature logic is duplicated across platforms.
+- Koin binds each inbound port to its service and each outbound port to its adapter; swapping an adapter is one line, and the graph test is green.
 - Async work is scoped and cancelled correctly; errors reach the UI as state.
 - Resources are released (GATT closed, subscriptions cancelled, monitor stoppable).
-- BLE connection state is consistent across UI, ViewModel and adapter.
-- Shared-code tests are green.
-- No unused dependencies and no duplicated feature logic across platforms.
+- BLE connection state is consistent across the outbound adapter, the session service, the ViewModel and the UI.
+- Service tests drive each service through its inbound port with fakes behind its outbound ports, and are green on JVM and iOS.
+- No unused dependencies.
