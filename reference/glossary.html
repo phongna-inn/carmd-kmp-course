@@ -78,6 +78,29 @@
     <dt><strong>Logger</strong> / <strong>Logcat</strong></dt>
     <dd>Apple's structured logging API (subsystem + category) / Android's log viewer for <code>Log.d(tag, msg)</code>. (02)</dd>
   </dl>
+  <h2>Kotlin Multiplatform</h2>
+  <dl>
+    <dt><strong>KMP</strong> (Kotlin Multiplatform)</dt>
+    <dd>Compiling one Kotlin codebase to several platforms; here the shared core of the Android and iOS apps. (03)</dd>
+    <dt><strong>Shared module</strong> (<code>:shared</code>)</dt>
+    <dd>The Gradle module holding the shared Kotlin. Android depends on it as a library; iOS consumes it as a framework. (03)</dd>
+    <dt><strong>Target</strong></dt>
+    <dd>A platform the compiler builds for: <code>android</code>, <code>iosArm64</code> (devices), <code>iosSimulatorArm64</code> (simulator on Apple silicon). (03)</dd>
+    <dt><strong>Source set</strong></dt>
+    <dd>A folder of Kotlin code plus the targets it compiles to, which decides the APIs it may call: <code>commonMain</code>, <code>androidMain</code>, <code>iosMain</code>. (03)</dd>
+    <dt><strong>Intermediate source set</strong></dt>
+    <dd>A source set shared by some but not all targets, e.g. <code>iosMain</code> for both iOS targets. Created by Kotlin's default hierarchy. (03)</dd>
+    <dt><strong>expect / actual</strong></dt>
+    <dd>A declaration without a body in common code (<code>expect</code>) and its required per-platform implementation (<code>actual</code>). For small facts; behaviour goes behind a port. (03)</dd>
+    <dt><strong>Kotlin/Native</strong></dt>
+    <dd>The Kotlin compiler backend that produces native binaries, used for the iOS targets; exposes Apple frameworks to Kotlin as <code>platform.*</code>. (03)</dd>
+    <dt><strong>Framework</strong> (Apple)</dt>
+    <dd>A bundle of a compiled binary plus headers. The shared module becomes <code>Shared.framework</code>, imported in Swift as <code>import Shared</code>. (03)</dd>
+    <dt><strong>Objective-C header</strong> (<code>Shared.h</code>)</dt>
+    <dd>The generated description of the shared API that Swift actually reads; the place to look up Swift names such as <code>Platform_iosKt</code>. (03)</dd>
+    <dt><strong>Direct integration</strong></dt>
+    <dd>Wiring the framework into Xcode with a script build phase that runs <code>:shared:embedAndSignAppleFrameworkForXcode</code> on every build. (03)</dd>
+  </dl>
 </main>
 </body>
 </html>

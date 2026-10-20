@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMP Anatomy Cheatsheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · from Lesson 03</p>
+  <h1>KMP Project Anatomy</h1>
+  <p class="source">Compressed from <a href="../lessons/03-anatomy-of-a-kmp-project.html">Lesson 03</a>. Built and checked with Kotlin 2.4.21, AGP 9.4.1, Gradle 9.8.2, Xcode 26.2.</p>
+
+  <h2>Layout</h2>
+  <pre><code>DeviceMonitor/
+├── settings.gradle.kts     include(":shared"), include(":androidApp")
+├── build.gradle.kts        plugin versions, all `apply false`
+├── gradle.properties       org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+├── shared/                 KMP module
+│   └── src/commonMain · androidMain · iosMain   /kotlin/&lt;package path&gt;/
+├── androidApp/             Android app; implementation(project(":shared"))
+└── iosApp/                 Xcode project; a script build phase calls Gradle</code></pre>
+
+  <h2>Source sets</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Source set</th><th>Compiled into</th><th>May call</th></tr>
+    <tr><td><code>commonMain</code></td><td>all targets</td><td>stdlib + multiplatform libraries</td></tr>
+    <tr><td><code>androidMain</code></td><td>android</td><td>+ Android SDK, Java libraries</td></tr>
+    <tr><td><code>iosMain</code> (intermediate)</td><td>iosArm64 + iosSimulatorArm64</td><td>+ <code>platform.UIKit</code>, <code>platform.Foundation</code>, …</td></tr>
+    <tr><td><code>commonTest</code> etc.</td><td>as their <code>Main</code> twin</td><td>+ <code>kotlin.test</code> (Lesson 06)</td></tr>
+  </table>
+  </div>
+  <p>A target's binary is <em>all</em> source sets labelled with it, compiled together. Platform source sets see <code>commonMain</code>; <code>commonMain</code> never sees them.</p>
+
+  <h2>shared/build.gradle.kts</h2>
+  <pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")   // not com.android.library
+}
+kotlin {
+    android { namespace = "…shared"; compileSdk = 37; minSdk = 26 }   // not androidLibrary { }
+    listOf(iosArm64(), iosSimulatorArm64()).forEach {
+        it.binaries.framework { baseName = "Shared"; isStatic = true }  // Swift: import Shared
+    }
+}</code></pre>
+
+  <h2>expect / actual</h2>
+  <pre><code>// commonMain                         // androidMain                       // iosMain
+expect fun platformName(): String     actual fun platformName() = …Build…   actual fun platformName() = …UIDevice…</code></pre>
+  <p>Same package, same signature, an <code>actual</code> for <strong>every</strong> target, or the build fails. Use it for small leaf facts; for anything with behaviour, prefer an <strong>interface + injected implementation</strong> (a port, from Lesson 06). Expected <em>classes</em> are Beta.</p>
+
+  <h2>Kotlin → what Swift sees</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Kotlin</th><th>Swift</th></tr>
+    <tr><td><code>class Greeting { fun greet(): String }</code></td><td><code>Greeting().greet()</code></td></tr>
+    <tr><td>top-level <code>fun f()</code> in <code>Foo.kt</code></td><td><code>FooKt.f()</code> (<code>Platform.ios.kt</code> → <code>Platform_iosKt</code>)</td></tr>
+    <tr><td><code>object Foo</code></td><td><code>Foo.shared</code></td></tr>
+    <tr><td><code>interface</code> / <code>List</code> / <code>Map</code> / <code>Unit</code></td><td><code>protocol</code> / <code>Array</code> / <code>Dictionary</code> / <code>Void</code></td></tr>
+    <tr><td><code>Int</code> inside generics or lambdas</td><td><code>KotlinInt</code> (boxed)</td></tr>
+    <tr><td><code>suspend</code>, <code>Flow</code>, <code>sealed</code></td><td>awkward without help → SKIE (Lesson 05)</td></tr>
+  </table>
+  </div>
+  <p>When in doubt, read the header: <code>shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h</code>.</p>
+
+  <h2>Commands</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Goal</th><th>Command</th></tr>
+    <tr><td>Check commonMain really is common (fast)</td><td><code>./gradlew :shared:compileCommonMainKotlinMetadata</code></td></tr>
+    <tr><td>Android APK</td><td><code>./gradlew :androidApp:assembleDebug</code></td></tr>
+    <tr><td>iOS framework + header, no Xcode</td><td><code>./gradlew :shared:linkDebugFrameworkIosSimulatorArm64</code></td></tr>
+    <tr><td>What Xcode's script phase runs</td><td><code>./gradlew :shared:embedAndSignAppleFrameworkForXcode</code> (needs Xcode's env)</td></tr>
+    <tr><td>Regenerate the Xcode project</td><td><code>cd iosApp &amp;&amp; xcodegen generate</code></td></tr>
+    <tr><td>Daemon in a bad state</td><td><code>./gradlew --stop</code></td></tr>
+  </table>
+  </div>
+
+  <h2>Failure → fix</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Symptom</th><th>Fix</th></tr>
+    <tr><td>Daemon dies: "out of JVM Metaspace"</td><td><code>org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g</code></td></tr>
+    <tr><td><code>⛔ User Script Sandboxing Enabled in Xcode Project</code></td><td><code>ENABLE_USER_SCRIPT_SANDBOXING = NO</code>, <code>./gradlew --stop</code></td></tr>
+    <tr><td>Swift: "No such module 'Shared'"</td><td>script phase missing, or after Compile Sources</td></tr>
+    <tr><td><code>'expect' declaration … has no 'actual' … for Native</code></td><td>add the <code>iosMain</code> actual</td></tr>
+    <tr><td>Android builds, iOS fails: <code>Unresolved reference 'android'</code></td><td>platform API in commonMain → move it behind expect/actual or a port</td></tr>
+    <tr><td>First iOS build very slow</td><td>one-time Kotlin/Native download into <code>~/.konan</code></td></tr>
+  </table>
+  </div>
+</main>
+</body>
+</html>
