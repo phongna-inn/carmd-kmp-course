@@ -17,9 +17,9 @@
 - [Apple Developer: UIViewController](https://developer.apple.com/documentation/uikit/uiviewcontroller)
   Official view controller reference, incl. view lifecycle methods (viewDidLoad, viewWillAppear, viewDidAppear). Use for: Day 4 iOS fundamentals, Native UI work.
 - [Android Developers: Bluetooth Low Energy overview](https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview)
-  Official BLE concepts guide (central/peripheral, GATT, services/characteristics). Use for: Week 2 BLE Step 1.
+  Official BLE concepts guide: central vs peripheral, GATT client vs server, services, characteristics, descriptors, UUIDs. Use for: Lesson 13 (primary source for the concepts).
 - [Android Developers: Find BLE devices](https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices)
-  Official guide to BluetoothLeScanner.startScan()/stopScan() and ScanCallback. Use for: Week 2 Day 2 scan implementation (Android side).
+  Official guide to BluetoothLeScanner.startScan()/stopScan() and ScanCallback; `getBluetoothLeScanner()` is null while Bluetooth is off; "always set a time limit on your scan" (its sample stops after 10 s). Use for: Lesson 13 (primary source, Android side).
 - [Android Developers: Connect to a GATT server](https://developer.android.com/develop/connectivity/bluetooth/ble/connect-gatt-server)
   Official guide to connectGatt(), service/characteristic discovery, read/write/notify. Use for: Week 2 BLE Steps 2–8.
 - [Android Developers: Transfer BLE data](https://developer.android.com/develop/connectivity/bluetooth/ble/transfer-ble-data)
@@ -27,7 +27,17 @@
 - [Apple Developer: Core Bluetooth Programming Guide](https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/AboutCoreBluetooth/Introduction.html)
   Official conceptual guide to CoreBluetooth (central/peripheral roles). Use for: Week 2 BLE Step 1 (iOS side).
 - [Apple Developer: CBCentralManager](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager)
-  Official API reference for scanning/connecting to peripherals on iOS. Use for: Week 2 BLE Steps 2–3 (iOS side).
+  Official API reference for scanning/connecting to peripherals on iOS: a new manager's state is `unknown` until the delegate hears otherwise; the `delegate` is weak. Use for: Lesson 13 (primary source, iOS side).
+- [Android Developers: Set up Bluetooth](https://developer.android.com/develop/connectivity/bluetooth/setup) and [Broadcasts overview](https://developer.android.com/develop/background-work/background-tasks/broadcasts)
+  `getAdapter()` null means no Bluetooth; `isEnabled()`; the `ACTION_STATE_CHANGED` broadcast with `EXTRA_STATE`. Bluetooth's broadcasts come from a "highly privileged app", so the receiver needs `RECEIVER_EXPORTED`; always unregister. Use for: Lesson 13 (Bluetooth turned off during a scan, which the scan callback never reports).
+- [Apple Developer: CBCentralManagerDelegate](https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerdelegate), [scanForPeripherals(withServices:options:)](https://developer.apple.com/documentation/corebluetooth/cbcentralmanager/scanforperipherals(withservices:options:)), [CBUUID](https://developer.apple.com/documentation/corebluetooth/cbuuid), [CBCharacteristicProperties](https://developer.apple.com/documentation/corebluetooth/cbcharacteristicproperties), [CBPeer.identifier](https://developer.apple.com/documentation/corebluetooth/cbpeer/identifier)
+  A state below `poweredOn` means scanning has stopped; a `nil` service list returns every peripheral, but Apple recommends listing service UUIDs; 16-bit UUIDs expand on the Bluetooth base UUID; notify vs indicate (without / with a response from the central); the identifier is a UUID the system assigns, not the address. Use for: Lesson 13.
+- [Kotlin: callbackFlow](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/callback-flow.html), [trySend](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/try-send.html), [close](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/close.html)
+  Turning a callback API into a cold `Flow`; `awaitClose` is mandatory and runs on cancellation; `trySend` never suspends; `close(cause)` fails the collector with that cause. Use for: Lesson 13 (both BLE adapters).
+- [Android emulator: advanced networking (network simulator)](https://developer.android.com/studio/run/emulator-networking-advanced)
+  The emulator's radios are simulated ("without using physical radios"), so it can't hear a peripheral on your Mac. Use for: Lesson 13 (why BLE needs real phones).
+- [LightBlue (App Store)](https://apps.apple.com/us/app/lightblue/id557428110)
+  Punch Through's BLE app for iPhone, iPad and Mac (macOS 13.3+): advertise a virtual peripheral built from scratch or cloned. Use for: Lesson 13 (the test peripheral on your Mac), Lessons 14–16.
 - [Apple Developer: discoverCharacteristics(_:for:)](https://developer.apple.com/documentation/corebluetooth/cbperipheral/1518797-discovercharacteristics), [readValue(for:)](https://developer.apple.com/documentation/corebluetooth/cbperipheral/readvalue(for:)-6u2kr), [peripheral(_:didDiscoverCharacteristicsFor:error:)](https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate/peripheral(_:diddiscovercharacteristicsfor:error:))
   Official CBPeripheral/CBPeripheralDelegate reference for service/characteristic discovery and reading values. Use for: Week 2 Day 3 (iOS side).
 - [Android Developers: Fragment lifecycle](https://developer.android.com/guide/fragments/lifecycle)
@@ -42,7 +52,7 @@
 - [Apple Developer: CBManagerAuthorization](https://developer.apple.com/documentation/corebluetooth/cbmanagerauthorization) and [CBManager.authorization](https://developer.apple.com/documentation/corebluetooth/cbmanager/authorization-swift.type.property)
   Official reference for Bluetooth's authorization states (notDetermined/allowedAlways/restricted/denied); the class property can be read before creating a manager and never prompts. The iOS Simulator always reports allowedAlways. Use for: Lesson 12 (primary source, iOS side), Lesson 13.
 - [Android Developers: Bluetooth permissions](https://developer.android.com/develop/connectivity/bluetooth/bt-permissions) and [Android 11 permission updates](https://developer.android.com/about/versions/11/privacy/permissions)
-  BLUETOOTH_SCAN/CONNECT as "Nearby devices" runtime permissions on Android 12+, `maxSdkVersion="30"` for the legacy ones, ACCESS_FINE_LOCATION on Android 11 and lower, `neverForLocation` (filters some beacons); two refusals mean "don't ask again", flagged USER_SET/USER_FIXED. Use for: Lesson 12, Lesson 13 (the manifest the real scanner needs).
+  BLUETOOTH_SCAN/CONNECT as "Nearby devices" runtime permissions on Android 12+, `maxSdkVersion="30"` for the legacy ones, ACCESS_FINE_LOCATION on Android 11 and lower, `neverForLocation` (filters some beacons); two refusals mean "don't ask again", flagged USER_SET/USER_FIXED. Also `<uses-feature android:name="android.hardware.bluetooth_le" android:required="false"/>` with a `hasSystemFeature(FEATURE_BLUETOOTH_LE)` check at run time. Use for: Lesson 12, Lesson 13 (the manifest the real scanner needs).
 - [Android Developers: Get a result from an activity](https://developer.android.com/training/basics/intents/result) and [Compose: requesting runtime permissions](https://developer.android.com/develop/ui/compose/libraries)
   `registerForActivityResult` before the Fragment/Activity is created, unconditionally, every time; `rememberLauncherForActivityResult` in Compose. Use for: Lesson 12 (why the screen lends the adapter its launcher).
 - [Apple Developer: Requesting access to protected resources](https://developer.apple.com/documentation/uikit/requesting-access-to-protected-resources) and [Core Bluetooth](https://developer.apple.com/documentation/corebluetooth)
@@ -59,7 +69,7 @@
 - [Swift book: Structures and Classes](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/classesandstructures/), [Enumerations](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/enumerations/), [Protocols](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/protocols/), [Closures](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/closures/), [Concurrency](https://docs.swift.org/swift-book/documentation/the-swift-programming-language/concurrency/)
   Official Swift book chapters. Use for: Lesson 02 (Concurrency is the primary source).
 - [Apple: AsyncStream](https://developer.apple.com/documentation/swift/asyncstream) and [MainActor](https://developer.apple.com/documentation/swift/mainactor)
-  Official API reference. Use for: Lesson 02, and Lesson 13 (bridging CoreBluetooth callbacks into streams).
+  Official API reference. Use for: Lesson 02. (Lesson 13 bridges CoreBluetooth callbacks into a Kotlin `Flow` instead, because the consumer is Kotlin: see callbackFlow.)
 - [SE-0343: Concurrency in top-level code](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0343-top-level-concurrency.md)
   Swift Evolution proposal: why `main.swift` can `await` and runs on the main actor. Use for: Lesson 02.
 - [Kotlin Playground](https://play.kotlinlang.org/)
@@ -104,7 +114,7 @@
 - [Android: ViewModel overview](https://developer.android.com/topic/libraries/architecture/viewmodel), [KMP ViewModel](https://developer.android.com/kotlin/multiplatform/viewmodel), [Coroutines with lifecycle-aware components](https://developer.android.com/topic/libraries/architecture/coroutines) and [for Views](https://developer.android.com/topic/libraries/architecture/views/coroutines-views)
   ViewModel lifetime and scopes, `viewModelScope`, `SavedStateHandle`; the multiplatform `ViewModel` (2.8+) and the iOS `ViewModelStoreOwner` + `resolveViewModel` pattern; `collectAsStateWithLifecycle`, `repeatOnLifecycle(STARTED)`. Use for: Lesson 08, Lesson 11.
 - [SKIE](https://skie.touchlab.co/): [Flows](https://skie.touchlab.co/features/flows), [Sealed classes](https://skie.touchlab.co/features/sealed); [releases](https://github.com/touchlab/SKIE/releases)
-  Touchlab's compiler plugin: flows as typed `AsyncSequence`, `onEnum(of:)`, suspend as async. Before bumping Kotlin, check the [changelog](https://skie.touchlab.co/changelog/0.10.15): each release names the Kotlin version it adds support for (0.10.15 supports up to 2.4.20). The GitHub release notes don't list Kotlin versions. Use for: Lesson 09.
+  Touchlab's compiler plugin: flows as typed `AsyncSequence`, `onEnum(of:)`, suspend as async. Flows convert Kotlin → Swift only ("from `AsyncSequence` to `Flow`" isn't supported), so a Swift class implementing a Kotlin method that returns a `Flow` returns a `SkieSwiftFlow` it got from Kotlin (Lesson 13). Before bumping Kotlin, check the [changelog](https://skie.touchlab.co/changelog/0.10.15): each release names the Kotlin version it adds support for (0.10.15 supports up to 2.4.20). The GitHub release notes don't list Kotlin versions. Use for: Lesson 09.
 - [Kotlin: Swift export](https://kotlinlang.org/docs/native-swift-export.html)
   JetBrains' Kotlin→Swift export, Alpha: flows as `AsyncSequence`, sealed types as enums. Use for: Lesson 09, section 4 (where interop is heading).
 - [KMP-NativeCoroutines](https://github.com/rickclephas/KMP-NativeCoroutines) and [KMP-ObservableViewModel](https://github.com/rickclephas/KMP-ObservableViewModel); [Compose Multiplatform: common ViewModel](https://kotlinlang.org/docs/multiplatform/compose-viewmodel.html)
@@ -137,11 +147,10 @@
   Swift-focused subreddit. Use for: Swift/iOS troubleshooting and idiom questions.
 - [Kotlin Slack, #multiplatform channel](https://surveys.jetbrains.com/s3/kotlin-slack-sign-up)
   Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 05 on). Channel #koin: Koin's maintainers (Lesson 11 on).
-- [Stack Overflow — android-bluetooth / corebluetooth tags](https://stackoverflow.com/questions/tagged/android-bluetooth)
+- [Stack Overflow — android-bluetooth](https://stackoverflow.com/questions/tagged/android-bluetooth) / [core-bluetooth](https://stackoverflow.com/questions/tagged/core-bluetooth) tags
   High-signal Q&A for concrete BLE bugs on both platforms. Use for: debugging real device/peripheral issues.
 
 ## Gaps
 
 - No vetted resource yet for camera/media capture APIs (Android CameraX/Intent-based capture, iOS UIImagePickerController/PHPicker) — search when Week 2 Day 5 arrives.
 - No vetted resource yet for background execution mechanisms (Android WorkManager/foreground service, iOS BGTaskScheduler) — search when Week 3 arrives.
-- No vetted resource yet for a concrete BLE test peripheral (nRF Connect app usage, or ESP32 BLE firmware) — needed before Week 2 Day 2.

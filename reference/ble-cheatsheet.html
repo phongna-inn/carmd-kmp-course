@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLE Cheatsheet</title>
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<main>
+  <p class="kicker">Reference · from Lesson 13</p>
+  <h1>BLE</h1>
+  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a>. Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators. Lessons 14–16 add connect, discovery, read and notify.</p>
+
+  <h2>Words</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Word</th><th>Meaning</th><th>Lesson</th></tr>
+    <tr><td>central / peripheral</td><td>the central scans for advertisements; the peripheral advertises. The phone is the central, LightBlue on the Mac the peripheral</td><td>13</td></tr>
+    <tr><td>advertisement</td><td>a short broadcast from a peripheral; may carry a local name</td><td>13</td></tr>
+    <tr><td>GATT client / server</td><td>after connecting: the client (phone) sends requests, the server (peripheral) fulfils them</td><td>14</td></tr>
+    <tr><td>service</td><td>a collection of characteristics, identified by a UUID</td><td>15</td></tr>
+    <tr><td>characteristic</td><td>one value, its properties, 0–n descriptors; identified by a UUID</td><td>15</td></tr>
+    <tr><td>UUID</td><td>128-bit; standard ones have a 16-bit short form on the base UUID <code>00000000-0000-1000-8000-00805F9B34FB</code></td><td>13, 15</td></tr>
+    <tr><td>read · write</td><td>the central reads or writes the value; write-without-response gets no response</td><td>15 (read)</td></tr>
+    <tr><td>notify · indicate</td><td>the peripheral pushes new values; an indication is confirmed by the central, a notification isn't</td><td>16 (notify)</td></tr>
+    <tr><td>connection state</td><td>disconnected · connecting · connected · disconnecting, on both platforms</td><td>14</td></tr>
+  </table>
+  </div>
+
+  <h2>Scanning, side by side</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>Android (<code>AndroidBleScanner</code>, Kotlin, <code>androidMain</code>)</th><th>iOS (<code>IosBleScanner</code>, Swift, iOS app)</th></tr>
+    <tr><td>the radio object</td><td><code>BluetoothManager.adapter</code>, then <code>adapter.bluetoothLeScanner</code> (null while Bluetooth is off)</td><td><code>CBCentralManager(delegate:queue:options:)</code>; keep it in a property</td></tr>
+    <tr><td>is there a BLE radio?</td><td><code>adapter != null</code> and <code>hasSystemFeature(FEATURE_BLUETOOTH_LE)</code>; manifest <code>&lt;uses-feature … bluetooth_le … required="false"&gt;</code></td><td><code>state != .unsupported</code>, once the state is known</td></tr>
+    <tr><td>is it on?</td><td><code>adapter.isEnabled</code></td><td><code>state == .poweredOn</code></td></tr>
+    <tr><td>state known when?</td><td>at once</td><td>a new manager is <code>.unknown</code> until <code>centralManagerDidUpdateState</code></td></tr>
+    <tr><td>start</td><td><code>startScan(null, settings, callback)</code>, <code>SCAN_MODE_LOW_LATENCY</code> in the foreground</td><td><code>scanForPeripherals(withServices: nil)</code> (Apple recommends listing service UUIDs when you know them)</td></tr>
+    <tr><td>each result</td><td><code>onScanResult(callbackType, result)</code>, main thread</td><td><code>centralManager(_:didDiscover:advertisementData:rssi:)</code>, main queue with <code>queue: nil</code></td></tr>
+    <tr><td>name</td><td><code>result.scanRecord?.deviceName</code> (no CONNECT permission needed)</td><td><code>advertisementData[CBAdvertisementDataLocalNameKey]</code></td></tr>
+    <tr><td>id</td><td><code>result.device.address</code>, "00:11:22:AA:BB:CC"</td><td><code>peripheral.identifier</code>, a UUID the system assigns</td></tr>
+    <tr><td>same device again?</td><td>yes (callback type <code>ALL_MATCHES</code>, the default)</td><td>once per scan by default</td></tr>
+    <tr><td>stop</td><td><code>stopScan(callback)</code>; throws while Bluetooth is off</td><td><code>stopScan()</code></td></tr>
+    <tr><td>errors</td><td><code>onScanFailed(SCAN_FAILED_*)</code></td><td>no scan-error callback</td></tr>
+    <tr><td>Bluetooth turned off mid-scan</td><td>nothing reaches the callback: listen for <code>ACTION_STATE_CHANGED</code> (receiver <code>RECEIVER_EXPORTED</code>)</td><td><code>centralManagerDidUpdateState</code> with a state below <code>.poweredOn</code>: "scanning has stopped"</td></tr>
+  </table>
+  </div>
+
+  <h2>Callbacks into a Kotlin Flow</h2>
+  <pre><code>// Android: the adapter is the callbackFlow
+override fun scan(): Flow&lt;Device&gt; = callbackFlow {
+    val callback = object : ScanCallback() {
+        override fun onScanResult(type: Int, r: ScanResult) { trySend(r.toDevice()) }
+        override fun onScanFailed(code: Int) { close(ScanException("…$code")) }
+    }
+    scanner.startScan(null, settings, callback)
+    awaitClose { scanner.stopScan(callback) }      // mandatory: runs on cancel
+}
+
+// iOS: Swift can't build a Flow (SKIE converts Flow → AsyncSequence only),
+// so Kotlin in iosMain builds it and Swift feeds it
+fun scanFlow(radio: IosRadio): Flow&lt;Device&gt; = callbackFlow {
+    radio.startScan(ScanFeed(this))                // Swift calls feed.heard / feed.failed
+    awaitClose { radio.stopScan() }
+}
+// Swift: func scan() -&gt; SkieSwiftFlow&lt;Device&gt; { scanFlow(radio: self) }</code></pre>
+
+  <h2>Where things go</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Code</th><th>Part</th></tr>
+    <tr><td>permission → radio available → radio on → scan; skip nameless; filter; each id once</td><td><code>ScanningService</code> (app core)</td></tr>
+    <tr><td>scan timeout (10 s), Stop</td><td><code>DeviceListViewModel</code> (inbound adapter): this screen's behaviour</td></tr>
+    <tr><td>radio APIs, mapping results to <code>Device</code></td><td>outbound adapters</td></tr>
+    <tr><td>which radio the app uses</td><td><code>platformModule</code>, filled by <code>initKoin(permissionChecker, bleScanner)</code></td></tr>
+  </table>
+  </div>
+
+  <h2>Traps</h2>
+  <ul>
+    <li><strong>Simulator and emulator.</strong> The iOS Simulator has no BLE radio (<code>.unsupported</code>). The Android emulator's Bluetooth is simulated: it never hears your Mac. Real peripherals need real phones.</li>
+    <li><strong>The iOS delegate is <code>weak</code>.</strong> Keep the delegate alive (here: Koin holds the adapter, which is its own delegate), or callbacks go nowhere.</li>
+    <li><strong>Android scan throttling.</strong> Too many scan starts in a short time and the next one silently returns nothing; logcat says "scanning too frequently". We hit it with six starts in about ten seconds.</li>
+    <li><strong>Check the permission before the radio.</strong> On iOS, creating the manager is a first use of Bluetooth and can show the prompt.</li>
+    <li><strong>Always time-limit a scan.</strong> "Never scan on a loop, and always set a time limit on your scan."</li>
+  </ul>
+</main>
+</body>
+</html>

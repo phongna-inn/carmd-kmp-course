@@ -1,0 +1,2629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13 — BLE: concepts and scan</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 13 · Week 3 · Day 13 · Native Device Monitor course</p>
+  <h1>BLE: concepts and scan</h1>
+  <div class="meta">
+    <span class="tag">~2.5 h · +0.25 h per extra UI track</span>
+    <span class="tag">Milestone: m08 scan a real peripheral into the list</span>
+    <span class="tag">Prereq: <a href="12-permissions.html">12</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> until today the list showed five pretend devices from <code>SimulatedBleScanner</code>. Today the app listens to a real Bluetooth Low Energy (BLE) radio. First you learn the words the next four lessons use: central and peripheral, GATT, service, characteristic, UUID, and read, write, notify and indicate. Then you set up LightBlue on your Mac as a peripheral to find, and write the two real <code>BleScanner</code> outbound adapters: Kotlin over <code>BluetoothLeScanner</code> and <code>callbackFlow</code> on Android, and a Swift class over <code>CBCentralManager</code> on iOS. The scanning service gets the rules a real radio needs: the permission, a radio, and Bluetooth switched on. The screen gets a Stop button next to a 10-second timeout. The ViewModel still calls only <code>DeviceScanning</code>, and it never learns that the radio became real. That's milestone <strong>m08</strong>.
+  </div>
+
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">Bluetooth Low Energy overview</a>, the "Key terms and concepts" part, before section 1, and its <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a> before section 5. For iOS, Apple's <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager">CBCentralManager</a> before section 6.</p>
+  <p><span class="tag">Tracks</span> Most of this lesson is the same on every track: the concepts, the port, the service, both radios and the tests (sections 1–6 and 9). The tracks differ in two small places. Each platform's app start passes its radio to Koin (section 7). Each screen turns its Scan button into Stop while a scan runs, and the UIKit list stops reading its rows from the sample devices (section 8). Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m07</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m07</th><th>m08</th></tr>
+    <tr><td>the radio</td><td><code>SimulatedBleScanner</code>, five sample devices</td><td><code>AndroidBleScanner</code> (Kotlin, <code>androidMain</code>) and <code>IosBleScanner</code> (Swift, the iOS app), plus <code>ScanFlow.kt</code> in <code>iosMain</code>. The simulated radio stays in the code, unused</td></tr>
+    <tr><td><code>BleScanner</code> port</td><td><code>scan()</code></td><td>plus <code>isAvailable()</code> and <code>isEnabled()</code></td></tr>
+    <tr><td><code>ScanningService</code></td><td>filter by name, each device once</td><td>first checks the permission, the radio and Bluetooth; skips devices that advertise no name</td></tr>
+    <tr><td>the screen</td><td>Scan; a scan ends after 3 s</td><td>Scan becomes Stop while scanning; a scan ends after 10 s</td></tr>
+    <tr><td>Koin start</td><td><code>initKoin(permissionChecker)</code></td><td><code>initKoin(permissionChecker, bleScanner)</code></td></tr>
+    <tr><td>Android manifest</td><td>the Bluetooth permissions</td><td>plus <code>&lt;uses-feature … bluetooth_le … required="false"&gt;</code></td></tr>
+    <tr><td>tests</td><td>16 per platform</td><td>20 per platform: 3 new for the scanning service, 1 new for the ViewModel</td></tr>
+  </table>
+  </div>
+
+  <h2>1. BLE in a few words</h2>
+  <p>Two roles first. Android's overview: "the device in the central role scans, looking for advertisement, and the device in the peripheral role advertises." The Device Monitor is a <strong>central</strong>. The thing it looks for (a sensor, a car adapter, or today LightBlue on your Mac) is a <strong>peripheral</strong>. A peripheral sends out short <strong>advertisements</strong> to anyone listening. An advertisement can carry a name, which is how our list shows one.</p>
+  <p>Once a central connects (Lesson 14), a second pair of roles takes over: "The device in the client role sends requests for data, and the device in the server role fulfills them". The phone is the <strong>GATT client</strong>, the peripheral the <strong>GATT server</strong>. GATT is "a general specification for sending and receiving short pieces of data known as 'attributes' over a BLE link" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">BLE overview</a>). Its data is a small tree:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 340" role="img" aria-labelledby="l13-gatt-title">
+      <title id="l13-gatt-title">Central and peripheral, and what a peripheral holds. On the left, the phone running Device Monitor is the central: in Lesson 13 it scans and hears advertisements; from Lesson 14 it connects and becomes the GATT client. On the right, the Mac running LightBlue is the peripheral: it advertises, and once connected it is the GATT server. An arrow from the peripheral to the central carries advertisements, which can include a name. A second, dashed arrow between them is the connection of Lesson 14, with requests going from client to server. Below the peripheral, its GATT data is a tree: a service, identified by a UUID, holds characteristics. Each characteristic has its own UUID, one value and a set of properties; the example shows one with Read, used in Lesson 15, and one with Notify, used in Lesson 16. A characteristic can also hold descriptors.</title>
+      <defs><marker id="l13-gatt-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <rect class="box" x="20" y="30" width="230" height="86" rx="8"/>
+      <text class="title" x="34" y="54">Phone: Device Monitor</text>
+      <text class="small" x="34" y="76">central: scans (Lesson 13)</text>
+      <text class="small" x="34" y="96">GATT client once connected (14)</text>
+      <rect class="box" x="510" y="30" width="230" height="86" rx="8"/>
+      <text class="title" x="524" y="54">Mac: LightBlue</text>
+      <text class="small" x="524" y="76">peripheral: advertises</text>
+      <text class="small" x="524" y="96">GATT server once connected</text>
+      <path class="edge" d="M508,58 L252,58" marker-end="url(#l13-gatt-arrow)"/>
+      <text class="small" x="300" y="50">advertisements: a name, maybe more</text>
+      <path class="edge dashed" d="M252,92 L508,92" marker-end="url(#l13-gatt-arrow)"/>
+      <text class="small" x="300" y="110">connection, requests (Lessons 14–16)</text>
+      <rect class="box" x="430" y="150" width="310" height="44" rx="6"/>
+      <text class="mono small" x="442" y="170">Service</text>
+      <text class="small muted" x="442" y="186">a UUID; groups characteristics</text>
+      <rect class="box" x="470" y="208" width="270" height="56" rx="6"/>
+      <text class="mono small" x="482" y="228">Characteristic · UUID</text>
+      <text class="small muted" x="482" y="246">one value · properties: Read (Lesson 15)</text>
+      <rect class="box" x="470" y="274" width="270" height="56" rx="6"/>
+      <text class="mono small" x="482" y="294">Characteristic · UUID</text>
+      <text class="small muted" x="482" y="312">one value · properties: Notify (Lesson 16)</text>
+      <path class="edge" d="M625,116 L625,148" marker-end="url(#l13-gatt-arrow)"/>
+      <path class="edge" d="M450,194 L450,236 L468,236" marker-end="url(#l13-gatt-arrow)"/>
+      <path class="edge" d="M450,236 L450,302 L468,302" marker-end="url(#l13-gatt-arrow)"/>
+      <text class="small muted" x="20" y="170">What this lesson touches:</text>
+      <text class="small muted" x="20" y="190">only the top arrow. A scan</text>
+      <text class="small muted" x="20" y="210">hears advertisements and never</text>
+      <text class="small muted" x="20" y="230">connects, so services and</text>
+      <text class="small muted" x="20" y="250">characteristics stay unseen</text>
+      <text class="small muted" x="20" y="270">until Lesson 15.</text>
+    </svg>
+    <figcaption>The words of this lesson, and which later lesson uses each.</figcaption>
+  </figure>
+  <ol class="walk">
+    <li><strong>Service</strong>: "a collection of characteristics", for example a heart-rate service.</li>
+    <li><strong>Characteristic</strong>: it "contains a single value and 0-n descriptors that describe the characteristic's value." <strong>Descriptors</strong> describe that value, for example "a human-readable description, an acceptable range for a characteristic's value, or a unit of measure".</li>
+    <li><strong>UUID</strong>: every attribute "is uniquely identified by a Universally Unique Identifier (UUID), which is a standardized 128-bit format" (all three: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">BLE overview</a>). The Bluetooth SIG publishes commonly used UUIDs, "many of which are 16- or 32-bits for convenience". A short one stands for a full UUID built on the Bluetooth base UUID, <code>00000000-0000-1000-8000-00805F9B34FB</code>: "Core Bluetooth pre-fills the rest of the 128-bit UUID with the Bluetooth base UUID" (<a href="https://developer.apple.com/documentation/corebluetooth/cbuuid">CBUUID</a>; Android's <code>BluetoothUuid.BASE_UUID</code> is the same value).</li>
+  </ol>
+  <p>A characteristic's <strong>properties</strong> say what a central may do with its value. Apple's descriptions, from CoreBluetooth's <code>CBCharacteristic.h</code> header and the <a href="https://developer.apple.com/documentation/corebluetooth/cbcharacteristicproperties">CBCharacteristicProperties</a> docs:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Property</th><th>What it permits</th><th>In this course</th></tr>
+    <tr><td>read</td><td>"Permits reads of the characteristic value."</td><td>Lesson 15</td></tr>
+    <tr><td>write</td><td>"Permits writes of the characteristic value." Write without response: the same, "without a response".</td><td>not used (Appendix A.3 asks only to understand it)</td></tr>
+    <tr><td>notify</td><td>the peripheral sends new values on its own, "without a response from the central to indicate receipt of the notification"</td><td>Lesson 16</td></tr>
+    <tr><td>indicate</td><td>the same, but "with a response from the central to indicate receipt"</td><td>not used; it works like notify</td></tr>
+  </table>
+  </div>
+  <p>Last, <strong>connection state</strong>. Both platforms name the same four states: Android's <code>BluetoothProfile</code> has <code>STATE_DISCONNECTED</code>, <code>STATE_CONNECTING</code>, <code>STATE_CONNECTED</code> and <code>STATE_DISCONNECTING</code>, and iOS's <code>CBPeripheralState</code> has <code>disconnected</code>, <code>connecting</code>, <code>connected</code> and <code>disconnecting</code>. Lesson 14 turns them into the app core's own <code>ConnectionState</code>. A scan has none of that: it only listens.</p>
+
+  <h2>2. Why BLE needs real devices, and LightBlue</h2>
+  <p>We ran this lesson's finished app on the tools you have on your Mac. None of them could find the peripheral the lesson is about:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Where</th><th>What the radio reported</th><th>What the app showed after Scan</th></tr>
+    <tr><td>iOS 26.2 Simulator</td><td>no BLE radio (the manager's state was <code>unsupported</code>)</td><td>"Scan failed: This phone has no Bluetooth LE radio."</td></tr>
+    <tr><td>Android emulator, API 36 image</td><td>Bluetooth on; the scan ran for 10 s (<code>adb shell dumpsys bluetooth_manager</code>: one <code>LOW_LATENCY</code> scan, 0 results)</td><td>"No devices found. Try another filter."</td></tr>
+    <tr><td>Android emulator, API 30 image</td><td>two simulated beacons, <code>gDevice-beacon</code> at <code>BE:AC:10:00:00:01</code> and <code>…:02</code></td><td>"Devices found: 2"</td></tr>
+  </table>
+  </div>
+  <p>The emulator's Bluetooth is simulated: Android's emulator "includes a network simulator that lets you develop and test Android apps without using physical radios" (<a href="https://developer.android.com/studio/run/emulator-networking-advanced">Advanced emulator networking</a>). It can't hear your Mac. So everything in this lesson that involves a real peripheral runs on <strong>a physical Android phone and a physical iPhone</strong>. The emulator and the Simulator still check the rest: the tests, the error messages, Stop and the timeout.</p>
+  <p>The peripheral is <strong>LightBlue</strong>, a free app from Punch Through. On the Mac it can "Advertise as a custom peripheral to simulate your device", from a profile you "Clone … or build … from scratch" (<a href="https://apps.apple.com/us/app/lightblue/id557428110">LightBlue on the App Store</a>; it needs macOS 13.3 or later). Set it up once:</p>
+  <ol>
+    <li>Install LightBlue on the Mac from the App Store and open it. Allow Bluetooth when macOS asks.</li>
+    <li>In its Virtual Devices list, add a virtual device with <strong>+</strong> and pick a profile. Choose one that has a characteristic with the Read property and one with Notify (LightBlue lists each characteristic's properties): Lessons 15 and 16 use them.</li>
+    <li>Make sure the virtual device is checked: "when the blue checkmark is checked for a device, your Mac is advertising as that particular BLE peripheral" (the App Store listing).</li>
+  </ol>
+  <p>Which name your phone sees depends on what LightBlue puts in the advertisement. To find your Mac's row: scan with an empty filter, note the rows, switch the virtual device off in LightBlue, wait a few seconds and scan again. The row that's gone is your Mac. Then type part of its name as the filter.</p>
+
+  <h2>3. The port grows</h2>
+  <p>A real radio can be missing (the Simulator) or switched off (the user). The app needs to know before it scans, so <code>BleScanner</code> gets two questions. As Appendix A.3 of the course plan puts it, <code>isAvailable()</code> and <code>isEnabled()</code> "come with the real radios":</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleScanner.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: core.Device, Flow</span>
+// Outbound port: what the app needs from a Bluetooth radio, in the app's own terms.
+// One adapter per platform: Kotlin in androidMain, Swift in the iOS app.
+<mark>interface BleScanner {</mark>
+    // Whether this phone has a Bluetooth LE radio the app can use.
+<mark>    suspend fun isAvailable(): Boolean</mark>
+
+    // Whether that radio is switched on.
+<mark>    suspend fun isEnabled(): Boolean</mark>
+
+    // Every device the radio hears, as it hears it; the same device may come again. A device
+<mark>    // that advertises no name comes with name "". Collecting starts the radio scan, and</mark>
+    // cancelling the collector stops it. Throws ScanException.
+<mark>    fun scan(): Flow&lt;Device&gt;</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Why <code>suspend</code>?</strong> Android answers at once, but iOS can't. A new <code>CBCentralManager</code>'s state is "initially set to <code>CBManagerStateUnknown</code>", which means "State unknown, update imminent", and the update arrives later, in a delegate callback (CoreBluetooth's <code>CBManager.h</code>). A suspend function lets the iOS adapter wait for it without blocking the main thread. The port is shaped for the slower platform, and the faster one doesn't mind.</li>
+    <li><strong>"The same device may come again."</strong> In m07 the comment promised a device "again with each advertisement it hears". That's true on Android, but iOS by default reports each peripheral once per scan: unless the app asks otherwise, "the central coalesces multiple discoveries of the same peripheral into a single discovery event" (<a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerscanoptionallowduplicateskey">CBCentralManagerScanOptionAllowDuplicatesKey</a>). The port now promises only what both radios do. The service's "each device once" rule doesn't care either way.</li>
+    <li><strong><code>name = ""</code></strong> keeps <code>Device</code> as it is. Many peripherals advertise no name at all, and the port says how that looks instead of leaving each adapter to invent its own placeholder.</li>
+  </ol>
+
+  <h2>4. The service owns the scan rules</h2>
+  <p>Should the app scan right now? That's a rule of the app, the same on both platforms, so it goes in <code>ScanningService</code>, next to the filter:</p>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanningService.kt</figcaption>
+<pre><code><mark>class ScanningService(</mark>
+    private val scanner: BleScanner,
+<mark>    private val permissions: PermissionChecker,</mark>
+) : DeviceScanning {
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+<mark>        checkReady()</mark>
+        val wanted = nameFilter.trim()
+        val seen = mutableSetOf&lt;String&gt;()
+        scanner.scan().collect { device -&gt;
+<mark>            val named = device.name.isNotBlank()</mark>
+            if (named &amp;&amp; device.name.contains(wanted, ignoreCase = true) &amp;&amp; seen.add(device.id)) {
+                emit(device)
+            }
+        }
+    }
+
+    // In this order: on iOS, the radio's first use is what shows the permission prompt.
+    private suspend fun checkReady() {
+<mark>        if (permissions.check(Permission.Bluetooth) != PermissionStatus.Granted) {</mark>
+            throw ScanException("Scanning needs the Bluetooth permission.")
+        }
+<mark>        if (!scanner.isAvailable()) throw ScanException("This phone has no Bluetooth LE radio.")</mark>
+<mark>        if (!scanner.isEnabled()) throw ScanException("Bluetooth is off. Turn it on, then scan again.")</mark>
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>A service can use more than one outbound port.</strong> <code>ScanningService</code> now needs <code>PermissionChecker</code> (Lesson 12's outbound port) as well as <code>BleScanner</code>. It asks the outbound port, not <code>PermissionAccess</code>: a service calls outbound ports, and only inbound adapters call inbound ports.</li>
+    <li><strong>Why check the permission here, when the screen already disables Scan?</strong> Disabling a button is presentation, and the next screen might forget. Android's <code>startScan</code> is declared <code>@RequiresPermission(BLUETOOTH_SCAN)</code>, and on iOS the radio's first use is what prompts (Lesson 12). The rule "never touch the radio without the permission" belongs where every caller goes through it.</li>
+    <li><strong>The order matters on iOS.</strong> <code>isAvailable()</code> creates the iOS adapter's <code>CBCentralManager</code>. If the permission weren't granted yet, that would show the system prompt with no button tapped.</li>
+    <li><strong>The errors are <code>ScanException</code>s</strong>, and they're thrown inside <code>flow { }</code>, so they reach the collector exactly like a radio failure: the ViewModel's existing <code>catch</code> turns each into the "Scan failed" alert. No UI code changes for the three new messages.</li>
+    <li><strong>Skipping nameless devices</strong> is this app's rule: the user finds a device by its name, so a row without one is noise. It isn't the radio's business, so it isn't in the adapters.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="l13-hex-title">
+      <title id="l13-hex-title">Who talks to whom when the user taps Scan. The screen calls DeviceListViewModel, an inbound adapter, which calls the inbound port DeviceScanning. ScanningService in the app core implements it. Before scanning it asks two outbound ports: PermissionChecker for the permission, and BleScanner whether a radio is available and enabled; then it collects BleScanner.scan(). Two outbound adapters implement BleScanner: AndroidBleScanner, Kotlin in androidMain over BluetoothLeScanner; and IosBleScanner, Swift in the iOS app over CBCentralManager, which gets its Flow from ScanFlow.kt, Kotlin in iosMain. In the tests, FakeBleScanner and FakePermissionChecker stand in for the adapters.</title>
+      <defs><marker id="l13-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="android">
+        <rect class="box" x="10" y="30" width="130" height="50" rx="6"/>
+        <text class="title small" x="20" y="50">Android screen</text>
+        <text class="small muted" x="20" y="68">Compose · XML</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="10" y="100" width="130" height="50" rx="6"/>
+        <text class="title small" x="20" y="120">iOS screen</text>
+        <text class="small muted" x="20" y="138">SwiftUI · UIKit</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="170" y="62" width="130" height="56" rx="6"/>
+        <text class="mono small" x="180" y="84">DeviceList</text>
+        <text class="mono small" x="180" y="100">ViewModel</text>
+      </g>
+      <g data-part="core">
+        <polygon class="box" points="320,90 350,20 560,20 590,90 560,160 350,160"/>
+        <text class="title" x="455" y="40" text-anchor="middle">App core</text>
+        <rect class="box" x="400" y="62" width="110" height="44" rx="6"/>
+        <text class="mono small" x="408" y="80">Scanning</text>
+        <text class="mono small" x="408" y="96">Service</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="300" y="128" width="110" height="26" rx="6"/>
+        <text class="mono small" x="306" y="146">DeviceScanning</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="574" y="40" width="130" height="26" rx="6"/>
+        <text class="mono small" x="580" y="58">PermissionChecker</text>
+        <rect class="box" x="490" y="128" width="96" height="26" rx="6"/>
+        <text class="mono small" x="498" y="146">BleScanner</text>
+        <rect class="box" x="520" y="196" width="230" height="50" rx="6"/>
+        <text class="mono small" x="530" y="216">AndroidBleScanner</text>
+        <text class="small muted" x="530" y="234">Kotlin, androidMain · BluetoothLeScanner</text>
+        <rect class="box" x="520" y="262" width="230" height="56" rx="6"/>
+        <text class="mono small" x="530" y="282">IosBleScanner</text>
+        <text class="small muted" x="530" y="300">Swift, iOS app · CBCentralManager</text>
+        <text class="small muted" x="530" y="314">+ ScanFlow.kt, Kotlin in iosMain</text>
+        <rect class="box" x="300" y="262" width="190" height="56" rx="6"/>
+        <text class="mono small" x="310" y="282">FakeBleScanner</text>
+        <text class="mono small" x="310" y="298">FakePermissionChecker</text>
+        <text class="small muted" x="310" y="312">commonTest</text>
+      </g>
+      <path class="edge" d="M140,55 L168,80" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge" d="M140,125 L168,102" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge" d="M235,118 L300,140" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge dashed" d="M420,106 L390,126" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge" d="M510,72 L572,56" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge" d="M500,106 L530,126" marker-end="url(#l13-hex-arrow)"/>
+      <text class="small" x="596" y="96">1. permission?</text>
+      <text class="small" x="596" y="112">2. available? enabled?</text>
+      <text class="small" x="596" y="128">3. scan()</text>
+      <path class="edge dashed" d="M600,196 L560,156" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge dashed" d="M560,262 L548,156" marker-end="url(#l13-hex-arrow)"/>
+      <path class="edge dashed" d="M400,262 L520,156" marker-end="url(#l13-hex-arrow)"/>
+    </svg>
+    <figcaption>Solid arrows are calls; dashed arrows into a port mean "implements". The numbers are the service's order.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound (port and adapter)</li>
+    <li data-part="outbound">Outbound (port and adapter)</li>
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+
+  <h2>5. The Android radio: <code>callbackFlow</code></h2>
+  <p>Android's guide: "To find BLE devices, you use the <code>startScan()</code> method. This method takes a <code>ScanCallback</code> as a parameter. You must implement this callback, because that is how scan results are returned" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a>). The port wants a <code>Flow</code>. First, the two questions:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleScanner.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: android.bluetooth.*, android.bluetooth.le.*, android.content.*, ContextCompat, callbackFlow</span>
+// Outbound adapter: the phone's Bluetooth LE radio, behind the BleScanner port.
+// BluetoothLeScanner reports to a callback object; callbackFlow turns those calls into a Flow.
+<mark>class AndroidBleScanner(private val context: Context) : BleScanner {</mark>
+    private val adapter: BluetoothAdapter? =
+<mark>        context.getSystemService(BluetoothManager::class.java)?.adapter</mark>
+
+    override suspend fun isAvailable(): Boolean =
+<mark>        adapter != null &amp;&amp; context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)</mark>
+
+<mark>    override suspend fun isEnabled(): Boolean = adapter?.isEnabled == true</mark>
+<span class="elide">⋯  scan(): below</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>No adapter, no Bluetooth</strong>: "If <code>getAdapter()</code> returns null, then the device doesn't support Bluetooth." And "Call <code>isEnabled()</code> to check whether Bluetooth is currently enabled" (<a href="https://developer.android.com/develop/connectivity/bluetooth/setup">Set up Bluetooth</a>).</li>
+    <li><strong><code>FEATURE_BLUETOOTH_LE</code></strong>: Bluetooth Classic and BLE are separate features. Android's permissions page shows this runtime check, for apps that declare the feature with <code>required="false"</code> (<a href="https://developer.android.com/develop/connectivity/bluetooth/bt-permissions">Bluetooth permissions</a>). The manifest now does, so a phone without BLE can still install the app and gets the "no Bluetooth LE radio" message:</li>
+  </ol>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/AndroidManifest.xml (both Android tracks)</figcaption>
+<pre><code><span class="elide">⋯  the Bluetooth permissions: as in m07</span>
+    &lt;uses-permission android:name="android.permission.BLUETOOTH_CONNECT" /&gt;
+    &lt;!-- The app uses Bluetooth LE but still installs without it, and checks at run time. --&gt;
+<mark>    &lt;uses-feature android:name="android.hardware.bluetooth_le" android:required="false" /&gt;</mark>
+<span class="elide">⋯  &lt;application&gt;: as in m07</span></code></pre>
+  </figure>
+  <p>The guide warns what <code>required="true"</code> would do: "the Google Play store will hide your app from users on devices lacking those features". Now the scan itself:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleScanner.kt</figcaption>
+<pre><code>    // ScanningService checks the permission before every scan, so lint's check is suppressed.
+    @SuppressLint("MissingPermission")
+<mark>    override fun scan(): Flow&lt;Device&gt; = callbackFlow {</mark>
+<mark>        val scanner = adapter?.bluetoothLeScanner ?: throw ScanException("Bluetooth is off.")</mark>
+<mark>        val callback = object : ScanCallback() {</mark>
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+<mark>                val name = result.scanRecord?.deviceName.orEmpty()</mark>
+<mark>                trySend(Device(id = result.device.address, name = name, rssi = result.rssi))</mark>
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+<mark>                close(ScanException("The scan failed (Android error $errorCode)."))</mark>
+            }
+        }
+<span class="elide">⋯  the Bluetooth-off receiver: below</span>
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+<mark>        scanner.startScan(null, settings, callback)</mark>
+
+<mark>        awaitClose {</mark>
+            context.unregisterReceiver(bluetoothOff)
+            // stopScan throws once Bluetooth is off; by then the scan has ended anyway.
+<mark>            if (adapter.isEnabled) scanner.stopScan(callback)</mark>
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>callbackFlow</code></strong> is Kotlin's bridge from callbacks to a <code>Flow</code>. Its block runs each time someone collects, and the <code>ProducerScope</code> it gets "can be used from any context, e.g. from a callback-based API" (<a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/callback-flow.html">callbackFlow</a>). In Lesson 01, <code>emit(device)</code> pushed each device. Here the radio's callback pushes it, with <code>trySend</code>.</li>
+    <li><strong><code>trySend</code>, not <code>send</code></strong>: a callback isn't a coroutine, so it can't suspend. <code>trySend</code> "never suspends and never throws exceptions". If the channel's buffer is full, the element is dropped. Losing one advertisement is fine: the radio will hear that device again.</li>
+    <li><strong><code>awaitClose</code></strong> keeps the flow open until the collector cancels, then runs the cleanup. The docs make it compulsory: "Using awaitClose is mandatory in order to prevent memory leaks when the flow collection is cancelled, otherwise the callback may keep running even when the flow collector is already completed." So cancelling the ViewModel's scan job ends up here, and here the radio stops.</li>
+    <li><strong><code>close(ScanException(…))</code></strong> ends the flow with an error: "If the cause is non-null, it will be thrown … from all the attempts to receive from the channel after no elements remain" (<a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/close.html">close</a>). It travels up through the service to the ViewModel's <code>catch</code>. <code>onScanFailed</code> gets an error code, one of <code>ScanCallback</code>'s <code>SCAN_FAILED_*</code> constants, such as 1, "BLE scan with the same settings is already started by the app".</li>
+    <li><strong><code>bluetoothLeScanner</code> can be null</strong>: "If Bluetooth is not enabled, then <code>getBluetoothLeScanner()</code> returns null" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a>). The service checked a moment ago, but the user can switch it off in between.</li>
+    <li><strong><code>scanRecord?.deviceName</code></strong> is the name in the advertisement, "the local name of the BLE device". <code>BluetoothDevice.getName()</code> would also work, but it's declared <code>@RequiresPermission(BLUETOOTH_CONNECT)</code>, and scanning shouldn't need the connect permission. The <code>id</code> is the device's address, for example "00:11:22:AA:BB:CC" (<code>BluetoothDevice.getAddress()</code>'s docs).</li>
+    <li><strong><code>SCAN_MODE_LOW_LATENCY</code></strong>: "Scan using highest duty cycle. It's recommended to only use this mode when the application is running in the foreground." Our scan runs from a screen, for 10 seconds at most.</li>
+    <li><strong><code>@SuppressLint("MissingPermission")</code></strong> silences Android lint's check that the permission was granted, because the service checks it. The comment says why, so nobody removes the service's check thinking lint has it covered.</li>
+  </ol>
+  <p>One more piece. We switched Bluetooth off in the middle of a scan (<code>adb shell cmd bluetooth_manager disable</code>, API 36 emulator), with a version of the adapter that only logged. The callback got nothing: no <code>onScanFailed</code>. The screen said "Scanning…" until the timeout, then "No devices found", which is wrong. Android does broadcast the change: "your app can also listen for the <code>ACTION_STATE_CHANGED</code> broadcast intent, which the system broadcasts whenever the Bluetooth state changes" (<a href="https://developer.android.com/develop/connectivity/bluetooth/setup">Set up Bluetooth</a>). So the adapter listens while it scans:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleScanner.kt</figcaption>
+<pre><code>        // Turning Bluetooth off ends the scan without a call to the callback, so listen for it.
+        // The broadcast comes from the Bluetooth app, so the receiver must be exported.
+<mark>        val bluetoothOff = object : BroadcastReceiver() {</mark>
+            override fun onReceive(context: Context, intent: Intent) {
+<mark>                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)</mark>
+<mark>                if (state != BluetoothAdapter.STATE_ON) close(ScanException("Bluetooth was turned off."))</mark>
+            }
+        }
+<mark>        ContextCompat.registerReceiver(</mark>
+            context, bluetoothOff, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+<mark>            ContextCompat.RECEIVER_EXPORTED,</mark>
+        )</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Registered in the flow, unregistered in <code>awaitClose</code></strong>: the receiver lives exactly as long as the scan. Android: "always unregister your broadcast receiver" (<a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts">Broadcasts overview</a>).</li>
+    <li><strong><code>RECEIVER_EXPORTED</code></strong>: "Some system broadcasts come from highly privileged apps, such as Bluetooth and telephony … To receive all system broadcasts, including broadcasts from highly privileged apps, flag your receiver with <code>RECEIVER_EXPORTED</code>" (same page).</li>
+    <li><strong>Why the <code>isEnabled</code> check before <code>stopScan</code>?</strong> In Android's source, <code>stopScan</code> starts with <code>BluetoothLeUtils.checkAdapterStateOn</code>, which throws <code>IllegalStateException("BT Adapter is not turned ON")</code>. Once Bluetooth is off, there's no scan left to stop.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · Android ignores a scan started too often, silently</span>
+    We tapped Scan and Stop five times within about ten seconds on the API 36 emulator, then Scan once more. That sixth scan never started. Logcat said <code>App 'com.example.devicemonitor' is scanning too frequently</code>, the callback got nothing, and the screen showed "Scanning…" for 10 seconds, then "No devices found". After waiting 31 seconds, scans worked again. Android's source explains the silence: <code>ScanCallback</code> has a <code>SCAN_FAILED_SCANNING_TOO_FREQUENTLY</code> code, but <code>BluetoothLeScanner</code> skips it with the comment "If scanning too frequently, don't report anything to the app." If a real device "can't be found" while you're testing, check logcat for that line before you suspect your code. It's also one more reason to keep scans few and long rather than many and short.
+  </div>
+
+  <h2>6. The iOS radio, in Swift</h2>
+  <p>On iOS, <code>CBCentralManager</code> "scans for, discovers, connects to, and manages peripherals", and it reports everything to a delegate. Lesson 02 pictured the delegate's callback calling an <code>AsyncStream</code>'s <code>yield</code>. That works when Swift code consumes the stream, but here the consumer is Kotlin's <code>ScanningService</code>, and it wants a Kotlin <code>Flow</code>. SKIE shows Kotlin flows to Swift, but "Conversions in the other direction (from <code>AsyncSequence</code> to <code>Flow</code>) are not supported" (<a href="https://skie.touchlab.co/features/flows">SKIE: Flows</a>). So Kotlin builds the <code>Flow</code>, and Swift feeds it. The Kotlin half is a few lines of plain Kotlin in <code>iosMain</code>, no Apple API:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/ScanFlow.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: Device, ScanException, ProducerScope, awaitClose, Flow, callbackFlow</span>
+// Swift can't build a Kotlin Flow, so the Swift scanner asks for one here. Collecting the Flow
+// calls the radio's startScan; cancelling the collector calls its stopScan. Not a port: the
+// app core never sees it. It's the Kotlin half of the iOS adapter.
+<mark>fun scanFlow(radio: IosRadio): Flow&lt;Device&gt; = callbackFlow {</mark>
+<mark>    radio.startScan(ScanFeed(this))</mark>
+<mark>    awaitClose { radio.stopScan() }</mark>
+}
+
+// What the Swift scanner implements for scanFlow: start and stop the real radio.
+<mark>interface IosRadio {</mark>
+    fun startScan(feed: ScanFeed)
+    fun stopScan()
+}
+
+// Where the Swift scanner reports: each device it hears, or the failure that ends the scan.
+<mark>class ScanFeed internal constructor(private val scope: ProducerScope&lt;Device&gt;) {</mark>
+    fun heard(device: Device) {
+<mark>        scope.trySend(device)</mark>
+    }
+
+    fun failed(message: String) {
+<mark>        scope.close(ScanException(message))</mark>
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>It's Android's <code>callbackFlow</code> again</strong>, with the callbacks turned around: Swift calls <code>heard</code> and <code>failed</code>, which are <code>trySend</code> and <code>close</code> underneath, and <code>awaitClose</code> calls Swift's <code>stopScan</code>.</li>
+    <li><strong><code>IosRadio</code> is not a port.</strong> The app core never sees it, and it says nothing in the app's terms. It's the seam between the two halves of one adapter, in <code>iosMain</code> because only iOS uses it. Methods instead of Kotlin lambdas keep the Swift side plain: in our build, a Kotlin <code>(Device) -&gt; Unit</code> parameter reached Swift as a block returning <code>KotlinUnit</code>.</li>
+    <li><strong><code>internal constructor</code></strong>: only <code>scanFlow</code> makes a <code>ScanFeed</code>, so a feed always belongs to a live scan.</li>
+  </ol>
+  <p>The Swift half implements both protocols, <code>BleScanner</code> for the app core and <code>IosRadio</code> for <code>scanFlow</code>:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">iosApp/iosApp/IosBleScanner.swift</figcaption>
+<pre><code><span class="elide">⋯  imports: CoreBluetooth, Shared</span>
+// Outbound adapter: the iPhone's Bluetooth LE radio, behind the Kotlin BleScanner port.
+// CBCentralManager reports everything to its delegate, this object, and holds it only weakly:
+// Koin keeps this adapter alive for the life of the app, and the adapter keeps the manager.
+@MainActor
+<mark>final class IosBleScanner: NSObject, @preconcurrency BleScanner, @preconcurrency IosRadio,</mark>
+    @preconcurrency CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private var waitingForState: [CheckedContinuation&lt;Void, Never&gt;] = []
+    private var feed: ScanFeed?
+
+    // The Kotlin suspend funs. As with __request in Lesson 12, Swift implements the
+    // originals; a Kotlin Boolean crosses as KotlinBoolean.
+<mark>    func __isAvailable() async throws -&gt; KotlinBoolean {</mark>
+        let state = await knownState()
+<mark>        return KotlinBoolean(bool: state != .unsupported)</mark>
+    }
+<span class="elide">⋯  __isEnabled: the same, with state == .poweredOn</span>
+    // Swift can't build a Kotlin Flow, so it asks Kotlin for one (ScanFlow.kt, in iosMain).
+    // SKIE shows a Kotlin Flow to Swift as SkieSwiftFlow, in both directions.
+<mark>    func scan() -&gt; SkieSwiftFlow&lt;Device&gt; {</mark>
+<mark>        scanFlow(radio: self)</mark>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>__isAvailable</code></strong>: Lesson 12's rule for a Kotlin <code>suspend fun</code>: Swift implements the <code>__</code>-prefixed original as <code>async throws</code>. A suspend function's <code>Boolean</code> result crosses as <code>KotlinBoolean</code>: the exported header's completion handler passes a <code>SharedBoolean</code> object, not a plain <code>BOOL</code>. <code>KotlinBoolean(bool:)</code> wraps a Swift <code>Bool</code>.</li>
+    <li><strong><code>scan() -&gt; SkieSwiftFlow&lt;Device&gt;</code></strong>: SKIE rewrites the protocol requirement too. Our first try returned the plain Objective-C <code>Kotlinx_coroutines_coreFlow</code>, and the compiler answered "protocol requires function 'scan()' with type '() -&gt; SkieSwiftFlow&lt;Device&gt;'". SKIE also gives <code>scanFlow(radio:)</code> that return type, so the Kotlin <code>Flow</code> passes through Swift and back to Kotlin without Swift ever iterating it.</li>
+    <li><strong><code>@MainActor</code> and <code>@preconcurrency</code></strong>, as in Lesson 12's <code>IosPermissionChecker</code>: the manager calls its delegate on the main queue, and the Kotlin side calls the adapter from the ViewModel's coroutines on the main thread.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">iosApp/iosApp/IosBleScanner.swift</figcaption>
+<pre><code>    // IosRadio: scanFlow calls these when the Flow is collected and when it is cancelled.
+    func startScan(feed: ScanFeed) {
+<mark>        guard let manager, manager.state == .poweredOn else {</mark>
+            feed.failed(message: "Bluetooth is off.")
+            return
+        }
+        self.feed = feed
+<mark>        manager.scanForPeripherals(withServices: nil)</mark>
+    }
+
+    func stopScan() {
+        feed = nil
+<mark>        if manager?.state == .poweredOn { manager?.stopScan() }</mark>
+    }
+
+    // Called on the main queue (queue: nil) for each advertisement the radio hears.
+<mark>    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,</mark>
+                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+<mark>        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? ""</mark>
+<mark>        feed?.heard(device: Device(id: peripheral.identifier.uuidString, name: name, rssi: RSSI.int32Value))</mark>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>withServices: nil</code></strong> means every advertising peripheral. Apple: "The recommended practice is to populate the <code>serviceUUIDs</code> parameter rather than leaving it <code>nil</code>" (<a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager/scanforperipherals(withservices:options:)">scanForPeripherals</a>). A product app that knows its peripheral's service UUID should scan for it. The Device Monitor finds devices by name, and a name can only be read once the advertisement has arrived, so it scans for everything and the service filters. Android's <code>startScan(null, …)</code> is the same choice.</li>
+    <li><strong><code>CBAdvertisementDataLocalNameKey</code></strong>: "The local name of a peripheral", the same advertised name Android's <code>scanRecord.deviceName</code> reads.</li>
+    <li><strong><code>peripheral.identifier</code></strong> is not the device's address. "The first time a local manager encounters a peer, the system assigns the peer a UUID" (<a href="https://developer.apple.com/documentation/corebluetooth/cbpeer/identifier">CBPeer.identifier</a>). So the same LightBlue device has a MAC-style id on Android and a UUID on iOS, as Lesson 06 warned. The app core treats both as an opaque <code>String</code>.</li>
+    <li><strong>RSSI</strong> is the signal strength "in dBm. A value of 127 is reserved and indicates the RSSI was not available" (CoreBluetooth's <code>CBCentralManager.h</code>). The app shows it as it comes.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">iosApp/iosApp/IosBleScanner.swift</figcaption>
+<pre><code>    // Called on the main queue whenever the radio's state changes: first when the manager
+    // learns it, then each time Bluetooth is turned off or on.
+<mark>    func centralManagerDidUpdateState(_ central: CBCentralManager) {</mark>
+        guard central.state != .unknown, central.state != .resetting else { return }
+        let waiting = waitingForState
+        waitingForState = []
+<mark>        waiting.forEach { $0.resume() }</mark>
+        // Below poweredOn, scanning has stopped: end the scan the app is waiting on.
+<mark>        if central.state != .poweredOn, let feed {</mark>
+            self.feed = nil
+<mark>            feed.failed(message: "Bluetooth was turned off.")</mark>
+        }
+    }
+
+    // A new manager starts in .unknown and learns the radio's state a moment later, in
+    // centralManagerDidUpdateState. Wait for that before answering.
+<mark>    private func knownState() async -&gt; CBManagerState {</mark>
+        let manager = self.manager ?? makeManager()
+        if manager.state == .unknown || manager.state == .resetting {
+<mark>            await withCheckedContinuation { waitingForState.append($0) }</mark>
+        }
+        return manager.state
+    }
+<span class="elide">⋯  makeManager(): CBCentralManager(delegate: self, queue: nil, options: [CBCentralManagerOptionShowPowerAlertKey: false])</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Lesson 12's waiting pattern</strong>, for a different answer: <code>knownState</code> parks a continuation, and the delegate resumes it once the state is known. <code>resetting</code> means "The connection with the system service was momentarily lost, update imminent", so it waits for that update too.</li>
+    <li><strong>Bluetooth turned off mid-scan.</strong> Apple: "A state with a value lower than <code>poweredOn</code> implies that scanning has stopped" (<a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerdelegate/centralmanagerdidupdatestate(_:)">centralManagerDidUpdateState</a>). Unlike Android, iOS tells the delegate, so the adapter ends the app's scan with a message instead of letting it wait for the timeout.</li>
+    <li><strong><code>CBCentralManagerOptionShowPowerAlertKey: false</code></strong>: the key decides "whether the system warns the user if the app instantiates the central manager when Bluetooth service isn't available", and "If the key isn't specified, the default value is <code>true</code>" (<a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanageroptionshowpoweralertkey">docs</a>). The service already shows "Bluetooth is off", so the system's alert would be a second one.</li>
+    <li><strong>The manager is created on the first <code>isAvailable()</code></strong>, after the service has checked the permission (section 4). This is the scanner's own manager. Lesson 12's permission adapter drops its manager once the user has answered.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · the delegate is weak: keep the adapter alive</span>
+    <code>CBCentralManager</code> declares <code>@property(nonatomic, weak, nullable) id&lt;CBCentralManagerDelegate&gt; delegate</code> (<code>CBCentralManager.h</code>). A weak reference doesn't keep its object alive: when nothing else holds the delegate, Swift sets the reference to <code>nil</code>, and every callback after that goes nowhere. A common way to get there is a scanner object created inside a function, or a separate small delegate object that only the manager points to. The scan starts, and no device is ever reported. Here, the adapter is its own delegate, and Koin holds the adapter as a <code>single</code> for the life of the process (as with Lesson 12's adapter). The adapter holds the manager in a property. Lesson 14 meets the same rule for peripherals: "A discovered peripheral must be retained in order to use it; otherwise, it is assumed to not be of interest and will be cleaned up by the central manager."
+  </div>
+
+  <h2>7. Wiring: each platform passes its radio</h2>
+  <p>Lesson 11 left <code>single&lt;BleScanner&gt; { SimulatedBleScanner() }</code> in <code>appModule</code>. The real radios can't be built there: the Android one needs a <code>Context</code>, and the iOS one is a Swift object. So the binding moves to <code>platformModule</code>, where Lesson 12 put the permission adapter for the same reasons:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</figcaption>
+<pre><code>internal val appModule = module {
+<mark>    single&lt;DeviceScanning&gt; { ScanningService(get(), get()) }</mark>
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    viewModelOf(::DeviceListViewModel)
+}
+
+// The outbound adapters that each platform builds itself and passes to initKoin.
+<mark>internal fun platformModule(permissionChecker: PermissionChecker, bleScanner: BleScanner) = module {</mark>
+    single { permissionChecker }
+<mark>    single { bleScanner }</mark>
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+<mark>fun initKoin(permissionChecker: PermissionChecker, bleScanner: BleScanner) {</mark>
+    startKoin {
+        modules(appModule, platformModule(permissionChecker, bleScanner))
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>ScanningService(get(), get())</code></strong>: Koin fills each parameter by its type, <code>BleScanner</code> and <code>PermissionChecker</code>.</li>
+    <li><strong>Lesson 11 promised the swap would be "one line".</strong> It turned into a moved binding plus a parameter, because the adapters must be built outside shared code. What the promise was about still holds: no service, port, ViewModel or screen changed to swap the radio.</li>
+    <li><strong>Swift's header</strong> now declares <code>doInitKoin(permissionChecker:bleScanner:)</code>, still with no Koin type in it.</li>
+  </ol>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</figcaption>
+<pre><code>    override fun onCreate() {
+        super.onCreate()
+        permissionChecker = AndroidPermissionChecker(this)
+<mark>        initKoin(permissionChecker, AndroidBleScanner(this))</mark>
+    }</code></pre>
+  </figure>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/iOSApp.swift</figcaption>
+<pre><code>    init() {
+<mark>        AppModuleKt.doInitKoin(permissionChecker: IosPermissionChecker(), bleScanner: IosBleScanner())</mark>
+    }</code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/AppDelegate.swift</figcaption>
+<pre><code>    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+<mark>        AppModuleKt.doInitKoin(permissionChecker: IosPermissionChecker(), bleScanner: IosBleScanner())</mark>
+        return true
+    }</code></pre>
+  </figure>
+  </div>
+  </div>
+  <p>Unlike the permission adapter, the screen never needs the Android scanner, so <code>DeviceMonitorApplication</code> doesn't keep it in a property. Creating <code>IosBleScanner()</code> at launch creates no <code>CBCentralManager</code> yet, so it shows no prompt.</p>
+  <p><code>SimulatedBleScanner</code> is still in <code>commonMain</code>, now with <code>isAvailable</code> and <code>isEnabled</code> both <code>true</code>. Nothing binds it. Passing it to <code>initKoin</code> instead of the real radio is how you run the list on the Simulator (the unaided exercise).</p>
+
+  <h2>8. Stop, and the timeout</h2>
+  <p>A scan uses the radio, and the radio uses the battery. Android's guide: "As soon as you find the desired device, stop scanning", and "Never scan on a loop, and always set a time limit on your scan. A device that was previously available may have moved out of range, and continuing to scan drains the battery." Its sample stops after 10 seconds (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a>). The ViewModel has had a time limit since Lesson 08. It grows from 3 to 10 seconds, the scan period of Android's sample, and the screen gets a Stop:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModel.kt</figcaption>
+<pre><code><span class="elide">⋯  startScan: as in m07, with withTimeoutOrNull(SCAN_TIMEOUT) around the collection</span>
+    // The Stop button. Cancelling the scan's coroutine cancels its collection, which stops the
+    // service's scan and the radio. The devices found so far stay on screen.
+<mark>    fun stopScan() {</mark>
+        val job = scanJob ?: return
+        if (!job.isActive) return
+<mark>        job.cancel()</mark>
+        _uiState.update { state -&gt;
+            val scan = state.scan
+<mark>            if (scan is ScanState.Scanning) state.copy(scan = ScanState.Finished(scan.found)) else state</mark>
+        }
+    }
+<span class="elide">⋯  errorShown, refreshPermission, requestPermission, openSettings: as in m07</span>
+    companion object {
+        // A real radio drains the battery while it scans, so every scan has a time limit.
+<mark>        val SCAN_TIMEOUT = 10.seconds</mark>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Why in the ViewModel, not the service?</strong> Lesson 10's answer still holds: how long this screen scans, and whether the user can stop it, is this screen's behaviour. The service's rules are true for every screen.</li>
+    <li><strong>Stop and the timeout end a scan the same way</strong>: by cancelling the collection. The timeout cancels the block inside <code>withTimeoutOrNull</code>; Stop cancels the whole job. Either way the cancellation reaches <code>awaitClose</code> in the adapter, which stops the radio (diagram below).</li>
+    <li><strong>Stop writes <code>Finished</code> itself.</strong> A cancelled coroutine doesn't run the line after <code>withTimeoutOrNull</code>, so <code>stopScan</code> sets the final state.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 210" role="img" aria-labelledby="l13-stop-title">
+      <title id="l13-stop-title">How a scan stops. Two triggers, the user's Stop and the ViewModel's 10-second timeout, both cancel the ViewModel's collection. The cancellation travels right: it cancels the scanning service's flow, which cancels its collection of BleScanner.scan(). In the adapter, that runs the awaitClose block of callbackFlow, which stops the radio: stopScan on Android's BluetoothLeScanner, or, on iOS, the Kotlin scanFlow calls the Swift adapter's stopScan, which calls CBCentralManager's stopScan. A failure travels the other way: the adapter closes the flow with a ScanException, which reaches the ViewModel's catch and becomes the Scan failed alert.</title>
+      <defs><marker id="l13-stop-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="inbound">
+        <rect class="box" x="20" y="40" width="170" height="70" rx="6"/>
+        <text class="title small" x="32" y="60">ViewModel</text>
+        <text class="small" x="32" y="80">Stop: job.cancel()</text>
+        <text class="small" x="32" y="98">or the 10 s timeout</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="230" y="40" width="160" height="70" rx="6"/>
+        <text class="title small" x="242" y="60">ScanningService</text>
+        <text class="small" x="242" y="80">its flow { } is</text>
+        <text class="small" x="242" y="98">cancelled</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="430" y="40" width="310" height="70" rx="6"/>
+        <text class="title small" x="442" y="60">adapter: callbackFlow</text>
+        <text class="small" x="442" y="80">awaitClose { … } runs and stops the radio:</text>
+        <text class="small" x="442" y="98">Android stopScan · iOS IosRadio.stopScan</text>
+      </g>
+      <path class="edge" d="M190,62 L228,62" marker-end="url(#l13-stop-arrow)"/>
+      <path class="edge" d="M390,62 L428,62" marker-end="url(#l13-stop-arrow)"/>
+      <text class="small muted" x="200" y="30">cancellation travels right</text>
+      <path class="edge dashed" d="M585,112 L585,160 L105,160 L105,112" marker-end="url(#l13-stop-arrow)"/>
+      <text class="small" x="160" y="180">a failure travels left: close(ScanException) → the ViewModel's catch → "Scan failed"</text>
+    </svg>
+    <figcaption>One mechanism for Stop, the timeout and the end of the screen: cancel the collection.</figcaption>
+  </figure>
+  <p>Each screen turns its Scan button into Stop while a scan runs. The button stays enabled while scanning, so the user can always stop.</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</figcaption>
+<pre><code><span class="elide">⋯  DeviceListScreen passes onStop = viewModel::stopScan to DeviceListContent, which takes onStop: () -&gt; Unit</span>
+        // One button: Scan while idle, Stop while scanning.
+        Button(
+<mark>            onClick = if (isScanning) onStop else onScan,</mark>
+<mark>            enabled = isScanning || bluetooth == PermissionStatus.Granted,</mark>
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+<mark>            Text(if (isScanning) "Stop" else "Scan")</mark>
+        }</code></pre>
+  </figure>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</figcaption>
+<pre><code><span class="elide">⋯  in onCreateView:</span>
+        // One button: Scan while idle, Stop while scanning.
+        b.scanButton.setOnClickListener {
+<mark>            if (viewModel.uiState.value.scan is ScanState.Scanning) {</mark>
+<mark>                viewModel.stopScan()</mark>
+            } else {
+                viewModel.startScan(b.filterInput.text.toString())
+            }
+        }
+<span class="elide">⋯  in render():</span>
+<mark>        b.scanButton.text = if (isScanning) "Stop" else "Scan"</mark>
+<mark>        b.scanButton.isEnabled = isScanning || state.bluetooth == PermissionStatus.Granted</mark></code></pre>
+  </figure>
+  <p>The click listener reads the current state when tapped, as the permission button already did. The layout doesn't change.</p>
+  </div>
+  </div>
+  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Compose picks the click handler and the label from <code>isScanning</code> each time it recomposes. The XML Fragment sets the label in <code>render()</code> and, since its listener is set once in <code>onCreateView</code>, asks the ViewModel's current state at the moment of the tap.</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListView.swift</figcaption>
+<pre><code><span class="elide">⋯  DeviceListView passes onStop: { viewModel.stopScan() } to DeviceListContent, which has let onStop: () -&gt; Void</span>
+            // One button: Scan while idle, Stop while scanning.
+<mark>            Button(action: isScanning ? onStop : onScan) {</mark>
+<mark>                Text(isScanning ? "Stop" : "Scan")</mark>
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+<mark>            .disabled(!isScanning &amp;&amp; bluetooth != .granted)</mark></code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListViewController.swift</figcaption>
+<pre><code>    // The rows' devices by id, from the last state rendered: the snapshot holds only the ids.
+<mark>    private var devicesById: [String: Device] = [:]</mark>
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        [unowned self] tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+<mark>        if let device = devicesById[deviceId] {</mark>
+<span class="elide">⋯  the rest of the cell, and the Scan button's action (Stop while scanning): as in the XML track</span>
+<span class="elide">⋯  in render():</span>
+<mark>        scanButton.configuration?.title = isScanning ? "Stop" : "Scan"</mark>
+<mark>        scanButton.isEnabled = isScanning || state.bluetooth == .granted</mark>
+<span class="elide">⋯</span>
+<mark>        devicesById = Dictionary(uniqueKeysWithValues: (devices ?? []).map { ($0.id, $0) })</mark></code></pre>
+  </figure>
+  <p>The UIKit list had a second dependency on the fake radio: its cells looked each id up in <code>SampleDevices</code>, so a real device would have drawn an empty row. Now <code>render()</code> keeps the devices it was given, by id, and the cell reads them. <code>uniqueKeysWithValues</code> is safe because the service reports each id once. <code>[unowned self]</code> avoids a retain cycle: the view controller owns the data source, which owns this closure.</p>
+  </div>
+  </div>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>The same button rule in both. SwiftUI's <code>List</code> draws each row from the <code>Device</code> it's given, so it needed no change for real devices. UIKit's diffable data source holds only ids, so the controller keeps the devices for its cells to read.</p>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · the detail screen still knows only the sample devices</span>
+    Every track's detail screen still looks its device up in <code>SampleDevices</code> by id. On the API 30 emulator we tapped a <code>gDevice-beacon</code> row and the detail screen said "Unknown device". The same happens for LightBlue on a phone. That's expected at m08: this lesson only scans. Lesson 14 is the one that needs the selected device, to connect to it.
+  </div>
+
+  <h2>9. Tests</h2>
+  <p>The fake radio learns the two new questions and counts the scans it starts:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeBleScanner.kt</figcaption>
+<pre><code><mark>class FakeBleScanner : BleScanner {</mark>
+    private val heard = Channel&lt;Device&gt;(Channel.UNLIMITED)
+<mark>    var available = true</mark>
+<mark>    var enabled = true</mark>
+    var failure: ScanException? = null
+<mark>    var scansStarted = 0</mark>
+        private set
+<span class="elide">⋯  isScanning, isAvailable() and isEnabled() return the two flags</span>
+    override fun scan(): Flow&lt;Device&gt; = flow {
+<mark>        scansStarted++</mark>
+        failure?.let { throw it }
+<span class="elide">⋯  as in m07: emit what hear() sends, with isScanning true until the collector cancels</span></code></pre>
+  </figure>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/core/ScanningServiceTest.kt</figcaption>
+<pre><code>    private val radio = FakeBleScanner()
+<mark>    private val os = FakePermissionChecker().apply {</mark>
+<mark>        statuses[Permission.Bluetooth] = PermissionStatus.Granted</mark>
+    }
+
+    // The test drives the app core the way the ViewModel does: through the inbound port.
+<mark>    private val scanning: DeviceScanning = ScanningService(radio, os)</mark>
+<span class="elide">⋯  the five m07 tests, and skipsDevicesThatAdvertiseNoName</span>
+    @Test
+<mark>    fun neverStartsTheRadioWithoutThePermission() = runTest {</mark>
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Denied
+
+        scanning.scan(nameFilter = "").test {
+            assertEquals("Scanning needs the Bluetooth permission.", awaitError().message)
+        }
+<mark>        assertEquals(0, radio.scansStarted)</mark>
+    }
+<span class="elide">⋯  neverStartsTheRadioWhenItIsMissingOrOff: available = false, then enabled = false</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The permission fake comes from Lesson 12</strong>, used here as the OS for a different service. The class's setup grants the permission, so the m07 tests keep their meaning.</li>
+    <li><strong><code>scansStarted</code></strong> proves the radio was never started, the point of the rule. Checking only the error message would pass even if the service scanned first and threw later.</li>
+    <li><strong>The ViewModel gets <code>stopEndsTheScanAndKeepsWhatWasFound</code></strong>: one device found, then Stop, and the state is <code>Finished</code> with that device at virtual time 0, so the timeout played no part. <code>TestDeviceScanning</code> gains an <code>isScanning</code> flag like the fake radio's, so the test can also check that the collection was cancelled.</li>
+    <li><strong>The graph test</strong> passes <code>platformModule(FakePermissionChecker(), FakeBleScanner())</code>.</li>
+  </ol>
+  <p>The adapters have no automated tests: they're the thin layer over the radio, checked by running the app (section 10) and, for a real peripheral, on phones.</p>
+
+  <h2>10. What actually happens</h2>
+  <p>We built m08 on all four tracks (Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2). <code>allTests</code> passed 20 of 20 on the JVM and 20 of 20 on the iOS simulator, and no build printed a compiler warning from our code. Then we ran it, with the permission granted:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Run</th><th>What we saw</th></tr>
+    <tr><td>Android API 36 emulator, Compose and XML: Scan, wait</td><td>Stop and "Scanning…" for 10 s, then "No devices found. Try another filter." <code>dumpsys</code>: the scan started and stopped</td></tr>
+    <tr><td>the same, Scan, then Stop a few seconds later</td><td>Scan again at once; <code>dumpsys</code> counted the scan as stopped</td></tr>
+    <tr><td>Bluetooth off (<code>adb shell cmd bluetooth_manager disable</code>), then Scan</td><td>"Scan failed: Bluetooth is off. Turn it on, then scan again."</td></tr>
+    <tr><td>Scan, then Bluetooth off a second later</td><td>"Scan failed: Bluetooth was turned off."</td></tr>
+    <tr><td>Android API 30 emulator, Compose and XML</td><td>two <code>gDevice-beacon</code> rows (−100 and −105 dBm), "Devices found: 2"; filter "beacon" finds them, "xyz" finds none</td></tr>
+    <tr><td>iOS 26.2 Simulator, SwiftUI and UIKit: Scan</td><td>"Scan failed: This phone has no Bluetooth LE radio." After OK: "Tap Scan to look for devices.", Scan enabled</td></tr>
+    <tr><td>Simulator with <code>SimulatedBleScanner</code> passed to <code>initKoin</code>, both iOS tracks</td><td>rows with names on both tracks; Stop ends the scan and the rows stay</td></tr>
+    <tr><td>Simulator, SwiftUI, with a throwaway copy of <code>IosBleScanner</code> whose <code>startScan</code> fed <code>ScanFeed</code> from a timer instead of the radio (two named devices and a nameless one, over and over)</td><td>two rows, each once; Stop logged the Swift <code>stopScan</code>; a later <code>feed.failed("Bluetooth was turned off.")</code> showed that alert and also logged <code>stopScan</code>. So the Swift → Kotlin path works end to end; only the radio itself needs the iPhone</td></tr>
+  </table>
+  </div>
+  <p>The real goal, LightBlue in the list, needs your phones: an Android phone shows it with an address like <code>XX:XX:…</code>, and an iPhone with a UUID. The agent brief lists those runs as device checks. <strong>m08 is a natural stop</strong> when <code>allTests</code> is green on both platforms, the emulator and the Simulator show the messages above, and LightBlue appears in the list on at least one of your phones. Commit it. Lesson 14 connects to the device you tap.</p>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to trace one advertisement on iOS, from <code>centralManager(_:didDiscover:…)</code> to a row on screen: which Swift method calls which Kotlin function, where <code>trySend</code> happens, and which line drops a second advertisement from the same device. Then ask it to trace a tap on Stop on Android, down to <code>stopScan(callback)</code>.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">During a scan, which role does the phone play?</p>
+    <div class="opts">
+      <button class="opt" data-correct>central: it scans and hears the peripheral's advertisements</button>
+      <button class="opt">GATT server: it answers the peripheral's requests</button>
+      <button class="opt">peripheral: it advertises the Device Monitor</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">"The device in the central role scans, looking for advertisement, and the device in the peripheral role advertises." Client and server only matter once connected (Lesson 14), and then the phone is the client.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">A characteristic has the <em>indicate</em> property. How is that different from <em>notify</em>?</p>
+    <div class="opts">
+      <button class="opt">indicate sends the value only when the central reads it</button>
+      <button class="opt" data-correct>the central responds to each indication to confirm receipt; notifications get no response</button>
+      <button class="opt">indicate works without a connection</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Both push new values from the peripheral. Apple: notify is "without a response from the central to indicate receipt", indicate is "with a response".</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Where does the rule "never start the radio without the Bluetooth permission" live, and why there?</p>
+    <div class="opts">
+      <button class="opt">in each screen, which disables Scan</button>
+      <button class="opt">in each adapter, which checks before <code>startScan</code></button>
+      <button class="opt" data-correct>in <code>ScanningService</code>: it's the same rule on both platforms, and every caller goes through it</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The screens disable the button too, but that's presentation. Written once in the service, the rule covers every screen, and <code>neverStartsTheRadioWithoutThePermission</code> tests it on the JVM.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does the iOS adapter need <code>ScanFlow.kt</code>, a Kotlin file in <code>iosMain</code>?</p>
+    <div class="opts">
+      <button class="opt">CoreBluetooth can only be called from Kotlin</button>
+      <button class="opt" data-correct>the port returns a Kotlin <code>Flow</code>, and Swift can't build one: SKIE doesn't convert an <code>AsyncSequence</code> into a <code>Flow</code></button>
+      <button class="opt">Koin can only bind Kotlin classes</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SKIE converts flows from Kotlin to Swift only. So Kotlin's <code>callbackFlow</code> builds the <code>Flow</code>, and the Swift class feeds it through <code>ScanFeed</code>. Koin binds the Swift object itself without trouble.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">What goes wrong if <code>CBCentralManager</code>'s delegate is an object that nothing else keeps?</p>
+    <div class="opts">
+      <button class="opt">the app crashes when the first device is found</button>
+      <button class="opt" data-correct>the manager's weak reference becomes <code>nil</code>, and its callbacks go nowhere: the scan reports nothing</button>
+      <button class="opt">iOS shows the Bluetooth permission prompt again</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The <code>delegate</code> property is declared <code>weak</code>, so it doesn't keep the object alive. In the app, Koin keeps the adapter, and the adapter is its own delegate.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">Stop cancels the ViewModel's scan job. How does that stop the Android radio? (Lesson 01)</p>
+    <div class="opts">
+      <button class="opt">the ViewModel calls <code>AndroidBleScanner.stopScan()</code></button>
+      <button class="opt" data-correct>cancellation travels down the collections to <code>callbackFlow</code>, whose <code>awaitClose</code> block calls <code>stopScan</code></button>
+      <button class="opt">Koin closes the adapter when the job ends</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Structured concurrency: cancelling a collector cancels the flows it collects. The ViewModel knows only the inbound port, so it couldn't call the adapter even if it wanted to.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The same LightBlue device has id <code>4A:…</code> on Android and a UUID on iOS. Why doesn't the app core care? (Lessons 06 and 10)</p>
+    <div class="opts">
+      <button class="opt">the service converts both to the same format</button>
+      <button class="opt" data-correct>the id is an opaque <code>String</code> in the app's terms: the app core only compares ids for equality, within one scan on one phone</button>
+      <button class="opt">iOS ids are MAC addresses in disguise</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The port speaks the app's language, and "each device once" only needs ids to be stable during a scan. What an id looks like is each adapter's business.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m08 build)</span>
+    <ol>
+      <li><strong>Predict, then watch.</strong> On the Android emulator, write down what the screen will say, then do each step: Scan and let it run out; Scan and Stop; turn Bluetooth off with <code>adb shell cmd bluetooth_manager disable</code> and Scan; turn it on, Scan, and turn it off during the scan. Then tap Scan and Stop quickly six times, and find the "scanning too frequently" line with <code>adb logcat | grep -i frequently</code>. Turn Bluetooth back on with <code>enable</code>.</li>
+      <li><strong>Write a test.</strong> Add <code>asksTheRadioNothingWithoutThePermission</code> to <code>ScanningServiceTest</code>: with the permission denied, the radio must not even be asked <code>isAvailable()</code>, the call that creates the iOS manager. You'll need <code>FakeBleScanner</code> to count those calls. Then break the rule on purpose: move the permission check below the radio checks and watch the test fail on both platforms.</li>
+      <li><strong>Swap the radio on iOS.</strong> Pass <code>SimulatedBleScanner()</code> to <code>doInitKoin</code> instead of <code>IosBleScanner()</code> and run on the Simulator. Predict first: does the "no Bluetooth LE radio" alert appear? Do rows appear, and can you Stop? How many files did you touch? Then revert.</li>
+      <li><strong>On your phones</strong>, with LightBlue advertising: find your Mac's row with the off-and-on trick from section 2, then filter on part of its name.</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run the tests and both apps yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/13-ble-concepts-and-scan.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/13-ble-concepts-and-scan.html" -o .course/lesson-13.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/ble-cheatsheet.html" -o .course/ref-ble-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/architecture-di-testing-cheatsheet.html" -o .course/ref-architecture-di-testing-cheatsheet.html
+Lessons 11 and 12, which this brief's warning list points to; skipped if they're already there:
+  [ -f .course/lesson-11.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/11-testing-and-koin.html" -o .course/lesson-11.html
+  [ -f .course/lesson-12.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/12-permissions.html" -o .course/lesson-12.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" for my tracks exactly,
+except where the brief below says otherwise.
+
+Lesson 13 (BLE: concepts and scan): build milestone m08, real BleScanner outbound adapters
+(Android BluetoothLeScanner + callbackFlow, iOS Swift CBCentralManager) behind the same
+DeviceScanning inbound port, with the scan rules in ScanningService, a Stop button and a
+10-second timeout, on top of m07.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m07 project in demo/ (Lesson 12). Use exactly the file contents shown in the
+lesson's "Full files" section for my tracks, including package lines, imports and comments. All
+paths are relative to demo/. Touch no file that isn't listed here.
+
+1. Shared code, all tracks. Under shared/src/commonMain/kotlin/com/example/devicemonitor/:
+     replaced: core/ScanException.kt, core/ScanningService.kt, core/inbound/DeviceScanning.kt,
+       core/outbound/BleScanner.kt, adapter/inbound/DeviceListViewModel.kt,
+       adapter/outbound/SimulatedBleScanner.kt, adapter/outbound/SampleDevices.kt,
+       di/AppModule.kt
+     add shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleScanner.kt
+     add shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/ScanFlow.kt
+     replaced, under shared/src/commonTest/kotlin/com/example/devicemonitor/:
+       doubles/FakeBleScanner.kt, doubles/TestDeviceScanning.kt, core/ScanningServiceTest.kt,
+       adapter/inbound/DeviceListViewModelTest.kt, di/AppModuleTest.kt
+   shared/build.gradle.kts and every other file in shared/ stay as in m07.
+
+2. Android, both tracks: androidApp/src/main/AndroidManifest.xml (my track's) and
+   androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt:
+   replaced. androidApp/build.gradle.kts stays as in m07.
+     Compose: DeviceListScreen.kt: replaced.
+     XML: DeviceListFragment.kt: replaced (the layout stays as in m07).
+   iOS, both tracks: add iosApp/iosApp/IosBleScanner.swift, then run `xcodegen generate` in
+   iosApp/ so the Xcode project includes it. project.yml stays as in m07. Do NOT edit
+   Info.plist or the .xcodeproj by hand.
+     SwiftUI: iOSApp.swift and DeviceListView.swift: replaced.
+     UIKit: AppDelegate.swift and DeviceListViewController.swift: replaced.
+   Every other Android and iOS file stays as in m07, including the detail screens.
+
+3. Test, then build both apps. From demo/:
+     ./gradlew :shared:allTests
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Android: run on an emulator with Android 12 or newer (API 31+), and grant the permission
+   so the scan can start:
+     adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+     adb shell pm grant com.example.devicemonitor android.permission.BLUETOOTH_SCAN
+     adb shell pm grant com.example.devicemonitor android.permission.BLUETOOTH_CONNECT
+     adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`, then
+     `xcrun simctl launch booted com.example.devicemonitor`.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- ./gradlew :shared:allTests runs BOTH testAndroidHostTest and iosSimulatorArm64Test (show me
+  the task lines), and all 20 tests pass on each: 8 in ScanningServiceTest, 7 in
+  DeviceListViewModelTest, 4 in PermissionServiceTest, 1 in AppModuleTest. Show the counts from
+  the XML files in shared/build/test-results/.
+- All builds succeed with no compiler warnings (w: / warning:) from our own Kotlin or Swift
+  code, test code included (never use -q: it hides w: lines; read the output). Not from our
+  code, and expected: the same lines as in Lesson 12's brief (SKIE's "Configuration '…' was
+  resolved during configuration time", SLF4J "Failed to load class", Gradle's "Deprecated
+  Gradle features … Gradle 10", "Unable to strip the following libraries", Xcode's
+  "appintentsmetadataprocessor … warning: Metadata extraction skipped", xcodebuild's
+  "WARNING: Using the first of multiple matching destinations", and Gradle's "The Daemon will
+  expire …"). Xcode "note:" lines are not warnings.
+- The app core stays platform-free:
+    grep -rn 'import android\|import platform\.\|import org.koin' shared/src/commonMain/kotlin/com/example/devicemonitor/core
+  finds nothing. The exported header declares the new entry point and still no Koin types:
+    grep -c 'doInitKoinPermissionChecker:(id&lt;SharedPermissionChecker&gt;)permissionChecker bleScanner' shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h
+  prints 1, and grep -c 'Koin_core' on the same file prints 0 (build that framework first
+  with ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64 if it isn't there).
+- Android emulator (API 31+), my track (the XML button shows its text in capitals, so match
+  case-insensitively; find nodes with `adb shell uiautomator dump`):
+  1. Launch: "Bluetooth permission: allowed", and a "Scan" button.
+  2. Tap Scan: the button says "Stop" and the status "Scanning…". Wait 12 s: the button says
+     "Scan" again, and the status is either "Devices found: N" or "No devices found. Try another
+     filter." (what the emulator's simulated Bluetooth hears depends on its image).
+     `adb shell dumpsys bluetooth_manager | grep -A1 'LE scans (started/stopped)'` shows equal
+     started and stopped counts in the app's section.
+  3. Tap Scan, then Stop within 3 s: the button says "Scan" at once.
+  4. adb shell cmd bluetooth_manager disable; tap Scan: an alert "Scan failed" with "Bluetooth
+     is off. Turn it on, then scan again." Tap OK. adb shell cmd bluetooth_manager enable.
+  5. Wait 30 s (Android ignores a scan started too often; lesson section 5). Tap Scan, and within
+     2 s run adb shell cmd bluetooth_manager disable: "Scan failed" with "Bluetooth was turned
+     off." Tap OK, then enable Bluetooth again.
+  Don't tap Scan more than five times within 30 s anywhere in these checks.
+- Optional, if you have an emulator with Android 11 (API 30): grant
+  android.permission.ACCESS_FINE_LOCATION instead in step 3 above, and scan. On our API 30 image
+  (google_apis_playstore, arm64) two "gDevice-beacon" rows appeared; report what yours shows.
+- iOS Simulator, my track: launch shows "Bluetooth permission: allowed". If you can drive the
+  simulator (idb, or a throwaway XCUITest that launches the installed app by bundle ID; don't
+  script the Simulator window with System Events), tap Scan: an alert "Scan failed" with
+  "This phone has no Bluetooth LE radio." Tap OK: "Tap Scan to look for devices." and Scan
+  enabled. Don't try to scan anything real on the Simulator.
+- Device checks (list them for me, don't try to run them): with LightBlue advertising a
+  virtual device on my Mac (lesson section 2), on a physical Android phone and an iPhone on my
+  track: the virtual device appears in the list, once, with an address (Android) or a UUID
+  (iOS); the filter finds it by part of its name; Stop and the 10-second timeout end the scan;
+  Bluetooth off before Scan, and turned off during a scan, show the two messages above, with no
+  system alert on iOS.
+Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
+numbers, and show me where each box of the lesson's "who talks to whom" diagram is in the code.
+Do NOT do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li>Android: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">Bluetooth Low Energy overview</a> (primary source for the concepts), <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a> (primary source for scanning), <a href="https://developer.android.com/develop/connectivity/bluetooth/setup">Set up Bluetooth</a> (the adapter, <code>isEnabled</code>, <code>ACTION_STATE_CHANGED</code>), <a href="https://developer.android.com/develop/connectivity/bluetooth/bt-permissions">Bluetooth permissions</a> (<code>uses-feature</code>), and the <a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts">Broadcasts overview</a> (exported receivers).</li>
+    <li>iOS: <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager">CBCentralManager</a> (primary source), <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerdelegate">CBCentralManagerDelegate</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager/scanforperipherals(withservices:options:)">scanForPeripherals(withServices:options:)</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbuuid">CBUUID</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbcharacteristicproperties">CBCharacteristicProperties</a> and <a href="https://developer.apple.com/documentation/corebluetooth/cbpeer/identifier">CBPeer.identifier</a>.</li>
+    <li>Kotlin and Swift: <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/callback-flow.html">callbackFlow</a>, <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/try-send.html">trySend</a> and <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/close.html">close</a>; <a href="https://skie.touchlab.co/features/flows">SKIE: Flows</a> (which directions it converts).</li>
+    <li><a href="https://apps.apple.com/us/app/lightblue/id557428110">LightBlue</a> on the App Store: the virtual peripheral for this lesson and Lessons 14–16.</li>
+    <li><a href="../reference/ble-cheatsheet.html">Cheatsheet: BLE</a>: the words, the two scan APIs side by side, and the traps.</li>
+    <li>Wisdom: Stack Overflow's <a href="https://stackoverflow.com/questions/tagged/android-bluetooth">android-bluetooth</a> and <a href="https://stackoverflow.com/questions/tagged/core-bluetooth">core-bluetooth</a> tags; search "scanning too frequently" and "CBCentralManager delegate not called".</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson adds or changes, complete. Open one to check your work. Nothing is deleted, and everything else stays as in m07. <code>iosApp/iosApp.xcodeproj</code> is generated by <code>xcodegen generate</code>. Each file is in the colour of its part of the app; the build files and the composition root carry none. Where two tracks change a file with the same path, its title names the track.</p>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanException.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+// A scan that couldn't start or that failed: no permission, no radio, Bluetooth off, or an
+// error from the radio. The message is for the user. The service and outbound adapters
+// throw it, and it reaches inbound adapters through DeviceScanning.
+class ScanException(message: String) : Exception(message)</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.Flow
+
+// Outbound port: what the app needs from a Bluetooth radio, in the app's own terms.
+// One adapter per platform: Kotlin in androidMain, Swift in the iOS app.
+interface BleScanner {
+    // Whether this phone has a Bluetooth LE radio the app can use.
+    suspend fun isAvailable(): Boolean
+
+    // Whether that radio is switched on.
+    suspend fun isEnabled(): Boolean
+
+    // Every device the radio hears, as it hears it; the same device may come again. A device
+    // that advertises no name comes with name "". Collecting starts the radio scan, and
+    // cancelling the collector stops it. Throws ScanException.
+    fun scan(): Flow&lt;Device&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceScanning.kt</summary>
+<pre><code>package com.example.devicemonitor.core.inbound
+
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.Flow
+
+// Inbound port: what the app offers for finding devices. Inbound adapters (the shared
+// ViewModels) call it, and ScanningService implements it.
+interface DeviceScanning {
+    // Named devices whose name contains nameFilter, each reported once, as they are found.
+    // Collecting starts a scan, and cancelling the collector stops it. Throws ScanException,
+    // also before the scan starts: no permission, no radio, or Bluetooth off.
+    fun scan(nameFilter: String): Flow&lt;Device&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanningService.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.core.outbound.PermissionChecker
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+// Service: the app's scan rules on top of a raw radio scan. Start the radio only when the
+// permission is granted and the radio is there and on. Then keep the devices that have a
+// name containing the filter (ignoring case and surrounding spaces), and report each once.
+class ScanningService(
+    private val scanner: BleScanner,
+    private val permissions: PermissionChecker,
+) : DeviceScanning {
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+        checkReady()
+        val wanted = nameFilter.trim()
+        val seen = mutableSetOf&lt;String&gt;()
+        scanner.scan().collect { device -&gt;
+            val named = device.name.isNotBlank()
+            if (named &amp;&amp; device.name.contains(wanted, ignoreCase = true) &amp;&amp; seen.add(device.id)) {
+                emit(device)
+            }
+        }
+    }
+
+    // In this order: on iOS, the radio's first use is what shows the permission prompt.
+    private suspend fun checkReady() {
+        if (permissions.check(Permission.Bluetooth) != PermissionStatus.Granted) {
+            throw ScanException("Scanning needs the Bluetooth permission.")
+        }
+        if (!scanner.isAvailable()) throw ScanException("This phone has no Bluetooth LE radio.")
+        if (!scanner.isEnabled()) throw ScanException("Bluetooth is off. Turn it on, then scan again.")
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModel.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.Permission
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.inbound.PermissionAccess
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
+
+// Inbound adapter: turns the screen's events into calls on the DeviceScanning and
+// PermissionAccess ports, and the results into UI state. It knows the ports only.
+class DeviceListViewModel(
+    private val scanning: DeviceScanning,
+    private val permissions: PermissionAccess,
+) : ViewModel() {
+    private val _uiState = MutableStateFlow(
+        DeviceListUiState(bluetooth = permissions.status(Permission.Bluetooth)),
+    )
+    val uiState: StateFlow&lt;DeviceListUiState&gt; = _uiState.asStateFlow()
+
+    private var scanJob: Job? = null
+    private var permissionJob: Job? = null
+
+    fun startScan(filter: String) {
+        if (scanJob?.isActive == true) return
+        _uiState.update { it.copy(scan = ScanState.Scanning(emptyList())) }
+        scanJob = viewModelScope.launch {
+            val found = mutableListOf&lt;Device&gt;()
+            try {
+                withTimeoutOrNull(SCAN_TIMEOUT) {
+                    scanning.scan(filter).collect { device -&gt;
+                        found += device
+                        _uiState.update { it.copy(scan = ScanState.Scanning(found.toList())) }
+                    }
+                }
+                _uiState.update { it.copy(scan = ScanState.Finished(found.toList())) }
+            } catch (e: ScanException) {
+                _uiState.update { it.copy(scan = ScanState.Idle, errorMessage = e.message) }
+            }
+        }
+    }
+
+    // The Stop button. Cancelling the scan's coroutine cancels its collection, which stops the
+    // service's scan and the radio. The devices found so far stay on screen.
+    fun stopScan() {
+        val job = scanJob ?: return
+        if (!job.isActive) return
+        job.cancel()
+        _uiState.update { state -&gt;
+            val scan = state.scan
+            if (scan is ScanState.Scanning) state.copy(scan = ScanState.Finished(scan.found)) else state
+        }
+    }
+
+    fun errorShown() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    // The screen calls this each time it comes back to the foreground: the user may have
+    // changed the permission in Settings meanwhile.
+    fun refreshPermission() {
+        if (permissionJob?.isActive == true) return
+        _uiState.update { it.copy(bluetooth = permissions.status(Permission.Bluetooth)) }
+    }
+
+    fun requestPermission() {
+        if (permissionJob?.isActive == true) return
+        permissionJob = viewModelScope.launch {
+            val result = permissions.request(listOf(Permission.Bluetooth))
+            _uiState.update { it.copy(bluetooth = result.getValue(Permission.Bluetooth)) }
+        }
+    }
+
+    fun openSettings() {
+        permissions.openSettings()
+    }
+
+    companion object {
+        // A real radio drains the battery while it scans, so every scan has a time limit.
+        val SCAN_TIMEOUT = 10.seconds
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SimulatedBleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.outbound.BleScanner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+// Outbound adapter: a pretend radio behind the BleScanner port. Like a real one, it hears
+// every device over and over, one advertisement every 0.3 s, until the collector cancels.
+// The app no longer uses it; bind it in place of a real radio to run without one.
+class SimulatedBleScanner : BleScanner {
+    override suspend fun isAvailable(): Boolean = true
+
+    override suspend fun isEnabled(): Boolean = true
+
+    override fun scan(): Flow&lt;Device&gt; = flow {
+        while (true) {
+            for (device in SampleDevices.all) {
+                delay(300)
+                emit(device)
+            }
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SampleDevices.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+
+// The devices the simulated radio "hears". The detail screen still looks devices up here.
+object SampleDevices {
+    val all: List&lt;Device&gt; = listOf(
+        Device(id = "C4:7C:8D:6A:01:10", name = "OBD-II Adapter", rssi = -48),
+        Device(id = "C4:7C:8D:6A:01:11", name = "Heart Rate Monitor", rssi = -61),
+        Device(id = "C4:7C:8D:6A:01:12", name = "Tire Pressure Sensor", rssi = -67),
+        Device(id = "C4:7C:8D:6A:01:13", name = "Thermometer", rssi = -74),
+        Device(id = "C4:7C:8D:6A:01:14", name = "Smart Scale", rssi = -85),
+    )
+
+    fun find(id: String): Device? = all.firstOrNull { it.id == id }
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.core.PermissionService
+import com.example.devicemonitor.core.ScanningService
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.inbound.PermissionAccess
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.core.outbound.PermissionChecker
+import org.koin.core.context.startKoin
+import org.koin.core.module.dsl.viewModelOf
+import org.koin.dsl.module
+
+// The composition root, as a Koin module: which service implements each inbound port,
+// which adapter implements each outbound port, and how to build each ViewModel.
+internal val appModule = module {
+    single&lt;DeviceScanning&gt; { ScanningService(get(), get()) }
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    viewModelOf(::DeviceListViewModel)
+}
+
+// The outbound adapters that each platform builds itself and passes to initKoin.
+internal fun platformModule(permissionChecker: PermissionChecker, bleScanner: BleScanner) = module {
+    single { permissionChecker }
+    single { bleScanner }
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+fun initKoin(permissionChecker: PermissionChecker, bleScanner: BleScanner) {
+    startKoin {
+        modules(appModule, platformModule(permissionChecker, bleScanner))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.outbound.BleScanner
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+
+// Outbound adapter: the phone's Bluetooth LE radio, behind the BleScanner port.
+// BluetoothLeScanner reports to a callback object; callbackFlow turns those calls into a Flow.
+class AndroidBleScanner(private val context: Context) : BleScanner {
+    private val adapter: BluetoothAdapter? =
+        context.getSystemService(BluetoothManager::class.java)?.adapter
+
+    override suspend fun isAvailable(): Boolean =
+        adapter != null &amp;&amp; context.packageManager.hasSystemFeature(PackageManager.FEATURE_BLUETOOTH_LE)
+
+    override suspend fun isEnabled(): Boolean = adapter?.isEnabled == true
+
+    // ScanningService checks the permission before every scan, so lint's check is suppressed.
+    @SuppressLint("MissingPermission")
+    override fun scan(): Flow&lt;Device&gt; = callbackFlow {
+        val scanner = adapter?.bluetoothLeScanner ?: throw ScanException("Bluetooth is off.")
+        val callback = object : ScanCallback() {
+            override fun onScanResult(callbackType: Int, result: ScanResult) {
+                val name = result.scanRecord?.deviceName.orEmpty()
+                trySend(Device(id = result.device.address, name = name, rssi = result.rssi))
+            }
+
+            override fun onScanFailed(errorCode: Int) {
+                close(ScanException("The scan failed (Android error $errorCode)."))
+            }
+        }
+        // Turning Bluetooth off ends the scan without a call to the callback, so listen for it.
+        // The broadcast comes from the Bluetooth app, so the receiver must be exported.
+        val bluetoothOff = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                if (state != BluetoothAdapter.STATE_ON) close(ScanException("Bluetooth was turned off."))
+            }
+        }
+        ContextCompat.registerReceiver(
+            context, bluetoothOff, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
+            ContextCompat.RECEIVER_EXPORTED,
+        )
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+        scanner.startScan(null, settings, callback)
+
+        awaitClose {
+            context.unregisterReceiver(bluetoothOff)
+            // stopScan throws once Bluetooth is off; by then the scan has ended anyway.
+            if (adapter.isEnabled) scanner.stopScan(callback)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/ScanFlow.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import kotlinx.coroutines.channels.ProducerScope
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+
+// Swift can't build a Kotlin Flow, so the Swift scanner asks for one here. Collecting the Flow
+// calls the radio's startScan; cancelling the collector calls its stopScan. Not a port: the
+// app core never sees it. It's the Kotlin half of the iOS adapter.
+fun scanFlow(radio: IosRadio): Flow&lt;Device&gt; = callbackFlow {
+    radio.startScan(ScanFeed(this))
+    awaitClose { radio.stopScan() }
+}
+
+// What the Swift scanner implements for scanFlow: start and stop the real radio.
+interface IosRadio {
+    fun startScan(feed: ScanFeed)
+    fun stopScan()
+}
+
+// Where the Swift scanner reports: each device it hears, or the failure that ends the scan.
+class ScanFeed internal constructor(private val scope: ProducerScope&lt;Device&gt;) {
+    fun heard(device: Device) {
+        scope.trySend(device)
+    }
+
+    fun failed(message: String) {
+        scope.close(ScanException(message))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeBleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.outbound.BleScanner
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.receiveAsFlow
+
+// Fake: an outbound adapter written for tests, behind the BleScanner port. The test plays
+// the radio: whether it exists and is on, what is heard and when, and whether it fails.
+class FakeBleScanner : BleScanner {
+    private val heard = Channel&lt;Device&gt;(Channel.UNLIMITED)
+    var available = true
+    var enabled = true
+    var failure: ScanException? = null
+    var scansStarted = 0
+        private set
+    var isScanning = false
+        private set
+
+    override suspend fun isAvailable(): Boolean = available
+
+    override suspend fun isEnabled(): Boolean = enabled
+
+    override fun scan(): Flow&lt;Device&gt; = flow {
+        scansStarted++
+        failure?.let { throw it }
+        isScanning = true
+        try {
+            emitAll(heard.receiveAsFlow())
+        } finally {
+            isScanning = false
+        }
+    }
+
+    fun hear(vararg devices: Device) {
+        devices.forEach { heard.trySend(it) }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/TestDeviceScanning.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.receiveAsFlow
+
+// Test implementation of the DeviceScanning inbound port. It stands in for the whole app
+// core, so a ViewModel test tests the ViewModel only. The test decides what a scan finds.
+class TestDeviceScanning : DeviceScanning {
+    private val found = Channel&lt;Device&gt;(Channel.UNLIMITED)
+    var failure: ScanException? = null
+    val filters = mutableListOf&lt;String&gt;() // one entry per scan started
+    var isScanning = false
+        private set
+
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+        filters += nameFilter
+        failure?.let { throw it }
+        isScanning = true
+        try {
+            emitAll(found.receiveAsFlow())
+        } finally {
+            isScanning = false
+        }
+    }
+
+    fun find(vararg devices: Device) {
+        devices.forEach { found.trySend(it) }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/core/ScanningServiceTest.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import app.cash.turbine.test
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.doubles.FakeBleScanner
+import com.example.devicemonitor.doubles.FakePermissionChecker
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
+
+class ScanningServiceTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val heart = Device(id = "02", name = "Heart Rate Monitor", rssi = -61)
+    private val scale = Device(id = "03", name = "Smart Scale", rssi = -85)
+    private val nameless = Device(id = "04", name = "", rssi = -70)
+
+    private val radio = FakeBleScanner()
+    private val os = FakePermissionChecker().apply {
+        statuses[Permission.Bluetooth] = PermissionStatus.Granted
+    }
+
+    // The test drives the app core the way the ViewModel does: through the inbound port.
+    private val scanning: DeviceScanning = ScanningService(radio, os)
+
+    @Test
+    fun reportsEachDeviceOnceAsSoonAsItIsHeard() = runTest {
+        scanning.scan(nameFilter = "").test {
+            radio.hear(obd, heart, obd)
+            assertEquals(obd, awaitItem())
+            assertEquals(heart, awaitItem())
+
+            radio.hear(scale, heart)
+            assertEquals(scale, awaitItem())
+        }
+    }
+
+    @Test
+    fun keepsOnlyNamesContainingTheFilterIgnoringCaseAndSpaces() = runTest {
+        scanning.scan(nameFilter = "  MONITOR ").test {
+            radio.hear(obd, heart, scale)
+            assertEquals(heart, awaitItem())
+        }
+    }
+
+    @Test
+    fun skipsDevicesThatAdvertiseNoName() = runTest {
+        scanning.scan(nameFilter = "").test {
+            radio.hear(nameless, obd)
+            assertEquals(obd, awaitItem())
+        }
+    }
+
+    @Test
+    fun eachScanStartsWithNothingSeen() = runTest {
+        scanning.scan(nameFilter = "").test {
+            radio.hear(obd)
+            assertEquals(obd, awaitItem())
+        }
+        scanning.scan(nameFilter = "").test {
+            radio.hear(obd)
+            assertEquals(obd, awaitItem())
+        }
+    }
+
+    @Test
+    fun scansUntilTheCollectorCancelsThenStopsTheRadio() = runTest {
+        val collector = launch { scanning.scan(nameFilter = "").collect {} }
+
+        testScheduler.advanceTimeBy(1.hours) // an hour of virtual time, with nothing heard
+        assertTrue(radio.isScanning)
+
+        collector.cancelAndJoin()
+        assertFalse(radio.isScanning)
+    }
+
+    @Test
+    fun aRadioFailureReachesTheCaller() = runTest {
+        radio.failure = ScanException("The scan failed (Android error 2).")
+
+        scanning.scan(nameFilter = "").test {
+            val error = awaitError()
+            assertIs&lt;ScanException&gt;(error)
+            assertEquals("The scan failed (Android error 2).", error.message)
+        }
+    }
+
+    @Test
+    fun neverStartsTheRadioWithoutThePermission() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Denied
+
+        scanning.scan(nameFilter = "").test {
+            assertEquals("Scanning needs the Bluetooth permission.", awaitError().message)
+        }
+        assertEquals(0, radio.scansStarted)
+    }
+
+    @Test
+    fun neverStartsTheRadioWhenItIsMissingOrOff() = runTest {
+        radio.available = false
+        scanning.scan(nameFilter = "").test {
+            assertEquals("This phone has no Bluetooth LE radio.", awaitError().message)
+        }
+
+        radio.available = true
+        radio.enabled = false
+        scanning.scan(nameFilter = "").test {
+            assertEquals("Bluetooth is off. Turn it on, then scan again.", awaitError().message)
+        }
+        assertEquals(0, radio.scansStarted)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModelTest.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import app.cash.turbine.test
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.PermissionStatus
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.doubles.TestDeviceScanning
+import com.example.devicemonitor.doubles.TestPermissionAccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+
+@OptIn(ExperimentalCoroutinesApi::class) // setMain, resetMain, currentTime
+class DeviceListViewModelTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val heart = Device(id = "02", name = "Heart Rate Monitor", rssi = -61)
+
+    private val scanning = TestDeviceScanning()
+    private val permissions = TestPermissionAccess()
+    private lateinit var viewModel: DeviceListViewModel
+
+    @BeforeTest
+    fun setUp() {
+        // viewModelScope runs on Dispatchers.Main. In a test, Main becomes a test
+        // dispatcher whose clock runTest controls, so delays and timeouts take no real time.
+        Dispatchers.setMain(StandardTestDispatcher())
+        viewModel = DeviceListViewModel(scanning, permissions)
+    }
+
+    @AfterTest
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun showsDevicesAsTheyArriveThenFinishesAtTheTimeout() = runTest {
+        viewModel.uiState.test {
+            assertEquals(ScanState.Idle, awaitItem().scan)
+
+            viewModel.startScan(filter = "")
+            assertEquals(ScanState.Scanning(emptyList()), awaitItem().scan)
+
+            scanning.find(obd)
+            assertEquals(ScanState.Scanning(listOf(obd)), awaitItem().scan)
+
+            scanning.find(heart)
+            assertEquals(ScanState.Scanning(listOf(obd, heart)), awaitItem().scan)
+
+            // Nothing else is found: 10 s of virtual time pass, and the timeout ends the scan.
+            assertEquals(ScanState.Finished(listOf(obd, heart)), awaitItem().scan)
+            assertEquals(DeviceListViewModel.SCAN_TIMEOUT.inWholeMilliseconds, testScheduler.currentTime)
+        }
+    }
+
+    @Test
+    fun stopEndsTheScanAndKeepsWhatWasFound() = runTest {
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.startScan(filter = "")
+            skipItems(1) // Scanning(emptyList())
+            scanning.find(obd)
+            assertEquals(ScanState.Scanning(listOf(obd)), awaitItem().scan)
+
+            viewModel.stopScan()
+            assertEquals(ScanState.Finished(listOf(obd)), awaitItem().scan)
+        }
+        testScheduler.runCurrent()
+        assertFalse(scanning.isScanning)
+        assertEquals(0, testScheduler.currentTime) // stopped by the user, not by the timeout
+    }
+
+    @Test
+    fun aFailedScanBecomesAMessageUntilItIsShown() = runTest {
+        scanning.failure = ScanException("Bluetooth is off")
+
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.startScan(filter = "")
+            skipItems(1) // Scanning(emptyList())
+
+            val failed = awaitItem()
+            assertEquals(ScanState.Idle, failed.scan)
+            assertEquals("Bluetooth is off", failed.errorMessage)
+
+            viewModel.errorShown()
+            assertNull(awaitItem().errorMessage)
+        }
+    }
+
+    @Test
+    fun ignoresStartScanWhileAScanIsRunning() = runTest {
+        viewModel.startScan(filter = "obd")
+        testScheduler.runCurrent()
+        viewModel.startScan(filter = "heart")
+        testScheduler.runCurrent()
+
+        assertEquals(listOf("obd"), scanning.filters)
+    }
+
+    @Test
+    fun startsWithThePermissionStatusThePortReports() {
+        permissions.current = PermissionStatus.Denied
+
+        val fresh = DeviceListViewModel(scanning, permissions)
+
+        assertEquals(PermissionStatus.Denied, fresh.uiState.value.bluetooth)
+    }
+
+    @Test
+    fun showsTheAnswerToAPermissionRequest() = runTest {
+        permissions.answer = PermissionStatus.PermanentlyDenied
+
+        viewModel.requestPermission()
+        testScheduler.runCurrent()
+
+        assertEquals(PermissionStatus.PermanentlyDenied, viewModel.uiState.value.bluetooth)
+    }
+
+    @Test
+    fun rereadsThePermissionOnRefresh() {
+        permissions.current = PermissionStatus.Granted // changed in Settings meanwhile
+
+        viewModel.refreshPermission()
+
+        assertEquals(PermissionStatus.Granted, viewModel.uiState.value.bluetooth)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.doubles.FakeBleScanner
+import com.example.devicemonitor.doubles.FakePermissionChecker
+import org.koin.dsl.koinApplication
+import kotlin.test.Test
+import kotlin.test.assertNotNull
+
+class AppModuleTest {
+    // Koin checks the graph only when something asks for an instance, at run time. This
+    // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
+    // Fakes stand in for the adapters each platform passes to initKoin.
+    @Test
+    fun buildsEveryViewModel() {
+        val koin = koinApplication {
+            modules(appModule, platformModule(FakePermissionChecker(), FakeBleScanner()))
+        }.koin
+
+        assertNotNull(koin.get&lt;DeviceListViewModel&gt;())
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.app.Application
+import com.example.devicemonitor.adapter.outbound.AndroidBleScanner
+import com.example.devicemonitor.adapter.outbound.AndroidPermissionChecker
+import com.example.devicemonitor.di.initKoin
+
+// Runs once per process, before any Activity: the place to start Koin.
+class DeviceMonitorApplication : Application() {
+    // The Android permission adapter, one for the process. Koin hands it to the app core as
+    // its PermissionChecker, and the screen lends it a result launcher.
+    lateinit var permissionChecker: AndroidPermissionChecker
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        permissionChecker = AndroidPermissionChecker(this)
+        initKoin(permissionChecker, AndroidBleScanner(this))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/AndroidManifest.xml · Compose track</summary>
+<pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;!-- Android 11 and lower: Bluetooth itself, and location for BLE scans. --&gt;
+    &lt;uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" /&gt;
+    &lt;uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" /&gt;
+    &lt;uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" /&gt;
+    &lt;!-- Android 12 and higher: the Nearby devices permissions. --&gt;
+    &lt;uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" /&gt;
+    &lt;uses-permission android:name="android.permission.BLUETOOTH_CONNECT" /&gt;
+    &lt;!-- The app uses Bluetooth LE but still installs without it, and checks at run time. --&gt;
+    &lt;uses-feature android:name="android.hardware.bluetooth_le" android:required="false" /&gt;
+
+    &lt;application
+        android:name=".DeviceMonitorApplication"
+        android:label="Device Monitor"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"&gt;
+        &lt;activity android:name=".MainActivity" android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import androidx.activity.compose.LocalActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.PermissionStatus
+import org.koin.compose.viewmodel.koinViewModel
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+@Composable
+fun DeviceListScreen(
+    onDeviceClick: (Device) -&gt; Unit,
+    viewModel: DeviceListViewModel = koinViewModel(),
+) {
+    var filter by rememberSaveable { mutableStateOf("") }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    LendPermissionLauncher()
+    // Back from Settings (or anywhere else): the permission may have changed.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermission() }
+
+    DeviceListContent(
+        filter = filter,
+        onFilterChange = { filter = it },
+        bluetooth = state.bluetooth,
+        isScanning = state.scan is ScanState.Scanning,
+        devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        },
+        onScan = { viewModel.startScan(filter) },
+        onStop = viewModel::stopScan,
+        onAllow = viewModel::requestPermission,
+        onOpenSettings = viewModel::openSettings,
+        onDeviceClick = onDeviceClick,
+    )
+
+    state.errorMessage?.let { message -&gt;
+        AlertDialog(
+            onDismissRequest = viewModel::errorShown,
+            confirmButton = { TextButton(onClick = viewModel::errorShown) { Text("OK") } },
+            title = { Text("Scan failed") },
+            text = { Text(message) },
+        )
+    }
+}
+
+// Android lets only an Activity or a Fragment register for a result, so the screen lends
+// the permission adapter its launcher. It decides nothing: the adapter reads the answer.
+@Composable
+private fun LendPermissionLauncher() {
+    val activity = checkNotNull(LocalActivity.current)
+    val permissionChecker = (activity.application as DeviceMonitorApplication).permissionChecker
+    val launcher = rememberLauncherForActivityResult(RequestMultiplePermissions()) {
+        permissionChecker.onResult(activity)
+    }
+    DisposableEffect(permissionChecker, activity, launcher) {
+        permissionChecker.attach(activity, launcher)
+        onDispose { permissionChecker.detach(launcher) }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+@Composable
+fun DeviceListContent(
+    filter: String,
+    onFilterChange: (String) -&gt; Unit,
+    bluetooth: PermissionStatus,
+    isScanning: Boolean,
+    devices: List&lt;Device&gt;?,
+    onScan: () -&gt; Unit,
+    onStop: () -&gt; Unit,
+    onAllow: () -&gt; Unit,
+    onOpenSettings: () -&gt; Unit,
+    onDeviceClick: (Device) -&gt; Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Device Monitor", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = filter,
+            onValueChange = onFilterChange,
+            label = { Text("Device name filter") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        PermissionRow(status = bluetooth, onAllow = onAllow, onOpenSettings = onOpenSettings)
+        // One button: Scan while idle, Stop while scanning.
+        Button(
+            onClick = if (isScanning) onStop else onScan,
+            enabled = isScanning || bluetooth == PermissionStatus.Granted,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (isScanning) "Stop" else "Scan")
+        }
+        ScanStatus(isScanning = isScanning, devices = devices)
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(devices.orEmpty(), key = { it.id }) { device -&gt;
+                DeviceRow(device = device, onClick = { onDeviceClick(device) })
+                HorizontalDivider()
+            }
+        }
+    }
+}
+
+// One message and at most one action per permission status.
+@Composable
+private fun PermissionRow(status: PermissionStatus, onAllow: () -&gt; Unit, onOpenSettings: () -&gt; Unit) {
+    val error = MaterialTheme.colorScheme.error
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        when (status) {
+            PermissionStatus.Granted -&gt; Text(
+                "Bluetooth permission: allowed",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            PermissionStatus.NotRequested -&gt; {
+                Text("Device Monitor needs Bluetooth permission to find nearby devices.")
+                TextButton(onClick = onAllow) { Text("Allow Bluetooth") }
+            }
+            PermissionStatus.Denied -&gt; {
+                Text("Bluetooth permission was denied. Scanning needs it to find nearby devices.", color = error)
+                TextButton(onClick = onAllow) { Text("Ask again") }
+            }
+            PermissionStatus.PermanentlyDenied -&gt; {
+                Text("Bluetooth permission is off. You can turn it on in Settings.", color = error)
+                TextButton(onClick = onOpenSettings) { Text("Open Settings") }
+            }
+            PermissionStatus.Restricted -&gt;
+                Text("Bluetooth is restricted on this device, so scanning isn't available.", color = error)
+        }
+    }
+}
+
+@Composable
+private fun ScanStatus(isScanning: Boolean, devices: List&lt;Device&gt;?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            isScanning -&gt; {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Scanning…")
+            }
+            devices == null -&gt; Text("Tap Scan to look for devices.")
+            devices.isEmpty() -&gt; Text(
+                "No devices found. Try another filter.",
+                color = MaterialTheme.colorScheme.error,
+            )
+            else -&gt; Text("Devices found: ${devices.size}")
+        }
+    }
+}
+
+@Composable
+private fun DeviceRow(device: Device, onClick: () -&gt; Unit) {
+    ListItem(
+        headlineContent = { Text(device.name) },
+        supportingContent = { Text(device.id) },
+        trailingContent = { Text("${device.rssi} dBm") },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/AndroidManifest.xml · XML track</summary>
+<pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;!-- Android 11 and lower: Bluetooth itself, and location for BLE scans. --&gt;
+    &lt;uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" /&gt;
+    &lt;uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" /&gt;
+    &lt;uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" android:maxSdkVersion="30" /&gt;
+    &lt;!-- Android 12 and higher: the Nearby devices permissions. --&gt;
+    &lt;uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" /&gt;
+    &lt;uses-permission android:name="android.permission.BLUETOOTH_CONNECT" /&gt;
+    &lt;!-- The app uses Bluetooth LE but still installs without it, and checks at run time. --&gt;
+    &lt;uses-feature android:name="android.hardware.bluetooth_le" android:required="false" /&gt;
+
+    &lt;application
+        android:name=".DeviceMonitorApplication"
+        android:label="Device Monitor"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"&gt;
+        &lt;activity android:name=".MainActivity" android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.DividerItemDecoration
+import com.example.devicemonitor.adapter.inbound.DeviceListUiState
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.android.databinding.FragmentDeviceListBinding
+import com.example.devicemonitor.core.PermissionStatus
+import kotlinx.coroutines.launch
+import org.koin.androidx.viewmodel.ext.android.viewModel
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+    private val viewModel: DeviceListViewModel by viewModel()
+
+    // Android lets only an Activity or a Fragment register for a result, and only while it is
+    // being created, so the Fragment registers here and lends the launcher to the adapter.
+    // It decides nothing: the adapter reads the answer.
+    private val permissionChecker by lazy {
+        (requireActivity().application as DeviceMonitorApplication).permissionChecker
+    }
+    private val permissionLauncher = registerForActivityResult(RequestMultiplePermissions()) {
+        permissionChecker.onResult(requireActivity())
+    }
+
+    private var binding: FragmentDeviceListBinding? = null
+    private var errorDialog: AlertDialog? = null
+    private val adapter = DeviceAdapter { device -&gt;
+        val nav = findNavController()
+        // A fast double tap delivers two clicks; only navigate from the list itself.
+        if (nav.currentDestination?.id == R.id.deviceList) {
+            nav.navigate(R.id.toDetail, Bundle().apply { putString("deviceId", device.id) })
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceListBinding.inflate(inflater, container, false)
+        binding = b
+        b.deviceList.adapter = adapter
+        b.deviceList.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
+        // One button: Scan while idle, Stop while scanning.
+        b.scanButton.setOnClickListener {
+            if (viewModel.uiState.value.scan is ScanState.Scanning) {
+                viewModel.stopScan()
+            } else {
+                viewModel.startScan(b.filterInput.text.toString())
+            }
+        }
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { render(it) }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        permissionChecker.attach(requireActivity(), permissionLauncher)
+    }
+
+    // Back from Settings (or anywhere else): the permission may have changed.
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshPermission()
+    }
+
+    override fun onStop() {
+        permissionChecker.detach(permissionLauncher)
+        super.onStop()
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        errorDialog?.dismiss() // a dismiss() doesn't call the cancel listener, so the error stays in state
+        errorDialog = null
+        binding?.deviceList?.adapter = null // the adapter outlives the view; don't let it keep the old list
+        binding = null
+    }
+
+    // The one place that touches views: every new state ends here. The EditText keeps its
+    // own text (and restores it after rotation), so render() never sets it.
+    private fun render(state: DeviceListUiState) {
+        val b = binding ?: return
+        val isScanning = state.scan is ScanState.Scanning
+        val devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        }
+        renderPermission(b, state.bluetooth)
+        b.scanButton.text = if (isScanning) "Stop" else "Scan"
+        b.scanButton.isEnabled = isScanning || state.bluetooth == PermissionStatus.Granted
+        b.progress.visibility = if (isScanning) View.VISIBLE else View.GONE
+        b.statusText.text = when {
+            isScanning -&gt; "Scanning…"
+            devices == null -&gt; "Tap Scan to look for devices."
+            devices.isEmpty() -&gt; "No devices found. Try another filter."
+            else -&gt; "Devices found: ${devices.size}"
+        }
+        b.statusText.setTextColor(if (devices?.isEmpty() == true &amp;&amp; !isScanning) Color.RED else Color.DKGRAY)
+        adapter.submitList(devices.orEmpty())
+        renderError(state.errorMessage)
+    }
+
+    // One message and at most one action per permission status.
+    private fun renderPermission(b: FragmentDeviceListBinding, status: PermissionStatus) {
+        val (message, action) = when (status) {
+            PermissionStatus.Granted -&gt; "Bluetooth permission: allowed" to null
+            PermissionStatus.NotRequested -&gt;
+                "Device Monitor needs Bluetooth permission to find nearby devices." to "Allow Bluetooth"
+            PermissionStatus.Denied -&gt;
+                "Bluetooth permission was denied. Scanning needs it to find nearby devices." to "Ask again"
+            PermissionStatus.PermanentlyDenied -&gt;
+                "Bluetooth permission is off. You can turn it on in Settings." to "Open Settings"
+            PermissionStatus.Restricted -&gt;
+                "Bluetooth is restricted on this device, so scanning isn't available." to null
+        }
+        b.permissionText.text = message
+        val blocked = status != PermissionStatus.Granted &amp;&amp; status != PermissionStatus.NotRequested
+        b.permissionText.setTextColor(if (blocked) Color.RED else Color.DKGRAY)
+        b.permissionButton.visibility = if (action == null) View.GONE else View.VISIBLE
+        b.permissionButton.text = action
+        b.permissionButton.setOnClickListener {
+            if (status == PermissionStatus.PermanentlyDenied) {
+                viewModel.openSettings()
+            } else {
+                viewModel.requestPermission()
+            }
+        }
+    }
+
+    private fun renderError(message: String?) {
+        if (message == null) {
+            errorDialog?.dismiss()
+            errorDialog = null
+        } else if (errorDialog == null) {
+            errorDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Scan failed")
+                .setMessage(message)
+                .setPositiveButton("OK") { _, _ -&gt; viewModel.errorShown() }
+                .setOnCancelListener { viewModel.errorShown() }
+                .show()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>iosApp/iosApp/IosBleScanner.swift · both iOS tracks</summary>
+<pre><code>import CoreBluetooth
+import Shared
+
+// Outbound adapter: the iPhone's Bluetooth LE radio, behind the Kotlin BleScanner port.
+// CBCentralManager reports everything to its delegate, this object, and holds it only weakly:
+// Koin keeps this adapter alive for the life of the app, and the adapter keeps the manager.
+@MainActor
+final class IosBleScanner: NSObject, @preconcurrency BleScanner, @preconcurrency IosRadio,
+    @preconcurrency CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private var waitingForState: [CheckedContinuation&lt;Void, Never&gt;] = []
+    private var feed: ScanFeed?
+
+    // The Kotlin suspend funs. As with __request in Lesson 12, Swift implements the
+    // originals; a Kotlin Boolean crosses as KotlinBoolean.
+    func __isAvailable() async throws -&gt; KotlinBoolean {
+        let state = await knownState()
+        return KotlinBoolean(bool: state != .unsupported)
+    }
+
+    func __isEnabled() async throws -&gt; KotlinBoolean {
+        let state = await knownState()
+        return KotlinBoolean(bool: state == .poweredOn)
+    }
+
+    // Swift can't build a Kotlin Flow, so it asks Kotlin for one (ScanFlow.kt, in iosMain).
+    // SKIE shows a Kotlin Flow to Swift as SkieSwiftFlow, in both directions.
+    func scan() -&gt; SkieSwiftFlow&lt;Device&gt; {
+        scanFlow(radio: self)
+    }
+
+    // IosRadio: scanFlow calls these when the Flow is collected and when it is cancelled.
+    func startScan(feed: ScanFeed) {
+        guard let manager, manager.state == .poweredOn else {
+            feed.failed(message: "Bluetooth is off.")
+            return
+        }
+        self.feed = feed
+        manager.scanForPeripherals(withServices: nil)
+    }
+
+    func stopScan() {
+        feed = nil
+        if manager?.state == .poweredOn { manager?.stopScan() }
+    }
+
+    // Called on the main queue (queue: nil) for each advertisement the radio hears.
+    func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
+                        advertisementData: [String: Any], rssi RSSI: NSNumber) {
+        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? ""
+        feed?.heard(device: Device(id: peripheral.identifier.uuidString, name: name, rssi: RSSI.int32Value))
+    }
+
+    // Called on the main queue whenever the radio's state changes: first when the manager
+    // learns it, then each time Bluetooth is turned off or on.
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central.state != .unknown, central.state != .resetting else { return }
+        let waiting = waitingForState
+        waitingForState = []
+        waiting.forEach { $0.resume() }
+        // Below poweredOn, scanning has stopped: end the scan the app is waiting on.
+        if central.state != .poweredOn, let feed {
+            self.feed = nil
+            feed.failed(message: "Bluetooth was turned off.")
+        }
+    }
+
+    // A new manager starts in .unknown and learns the radio's state a moment later, in
+    // centralManagerDidUpdateState. Wait for that before answering.
+    private func knownState() async -&gt; CBManagerState {
+        let manager = self.manager ?? makeManager()
+        if manager.state == .unknown || manager.state == .resetting {
+            await withCheckedContinuation { waitingForState.append($0) }
+        }
+        return manager.state
+    }
+
+    // No system alert when Bluetooth is off: the app shows its own message (ScanningService).
+    private func makeManager() -&gt; CBCentralManager {
+        let manager = CBCentralManager(
+            delegate: self, queue: nil,
+            options: [CBCentralManagerOptionShowPowerAlertKey: false]
+        )
+        self.manager = manager
+        return manager
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/iOSApp.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+@main
+struct iOSApp: App {
+    init() {
+        AppModuleKt.doInitKoin(permissionChecker: IosPermissionChecker(), bleScanner: IosBleScanner())
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var owner = ViewModelOwner()
+    @State private var filter = ""
+    @State private var state: DeviceListUiState?
+
+    var body: some View {
+        let viewModel: DeviceListViewModel = owner.viewModel()
+        let state = self.state ?? viewModel.uiState.value
+        DeviceListContent(
+            filter: $filter,
+            bluetooth: state.bluetooth,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) },
+            onStop: { viewModel.stopScan() },
+            onAllow: { viewModel.requestPermission() },
+            onOpenSettings: { viewModel.openSettings() }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+        // Back from Settings (or anywhere else): the permission may have changed.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { viewModel.refreshPermission() }
+        }
+    }
+
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        switch onEnum(of: scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let bluetooth: PermissionStatus
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+    let onStop: () -&gt; Void
+    let onAllow: () -&gt; Void
+    let onOpenSettings: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            PermissionRow(status: bluetooth, onAllow: onAllow, onOpenSettings: onOpenSettings)
+            // One button: Scan while idle, Stop while scanning.
+            Button(action: isScanning ? onStop : onScan) {
+                Text(isScanning ? "Stop" : "Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!isScanning &amp;&amp; bluetooth != .granted)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(id: device.id)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+// One message and at most one action per permission status. SKIE makes the Kotlin enum a
+// Swift enum, so this switch is exhaustive.
+private struct PermissionRow: View {
+    let status: PermissionStatus
+    let onAllow: () -&gt; Void
+    let onOpenSettings: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch status {
+            case .granted:
+                Text("Bluetooth permission: allowed")
+                    .foregroundStyle(.secondary)
+            case .notRequested:
+                Text("Device Monitor needs Bluetooth permission to find nearby devices.")
+                Button("Allow Bluetooth", action: onAllow)
+            case .denied:
+                Text("Bluetooth permission was denied. Scanning needs it to find nearby devices.")
+                    .foregroundStyle(.red)
+                Button("Ask again", action: onAllow)
+            case .permanentlyDenied:
+                Text("Bluetooth permission is off. You can turn it on in Settings.")
+                    .foregroundStyle(.red)
+                Button("Open Settings", action: onOpenSettings)
+            case .restricted:
+                Text("Bluetooth is restricted on this device, so scanning isn't available.")
+                    .foregroundStyle(.red)
+            }
+        }
+        .font(.callout)
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/AppDelegate.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        AppModuleKt.doInitKoin(permissionChecker: IosPermissionChecker(), bleScanner: IosBleScanner())
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {
+        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListViewController.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel()
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let filterField = UITextField()
+    private let permissionLabel = UILabel()
+    private let permissionButton = UIButton(configuration: .plain())
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    // The rows' devices by id, from the last state rendered: the snapshot holds only the ids.
+    private var devicesById: [String: Device] = [:]
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        [unowned self] tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = devicesById[deviceId] {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        // One button: Scan while idle, Stop while scanning.
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if viewModel.uiState.value.scan is ScanStateScanning {
+                viewModel.stopScan()
+            } else {
+                viewModel.startScan(filter: filterField.text ?? "")
+            }
+        }, for: .touchUpInside)
+        permissionLabel.numberOfLines = 0
+        permissionLabel.font = .preferredFont(forTextStyle: .callout)
+        permissionButton.contentHorizontalAlignment = .leading
+        permissionButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if viewModel.uiState.value.bluetooth == .permanentlyDenied {
+                viewModel.openSettings()
+            } else {
+                viewModel.requestPermission()
+            }
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let permissionRow = UIStackView(arrangedSubviews: [permissionLabel, permissionButton])
+        permissionRow.axis = .vertical
+        permissionRow.alignment = .leading
+        let stack = UIStackView(arrangedSubviews: [filterField, permissionRow, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(viewModel.uiState.value)
+        // Back from Settings (or anywhere else): the permission may have changed.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sceneDidActivate),
+            name: UIScene.didActivateNotification, object: nil
+        )
+    }
+
+    @objc private func sceneDidActivate() {
+        viewModel.refreshPermission()
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+        let devices: [Device]? = switch onEnum(of: state.scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+        renderPermission(state.bluetooth)
+        scanButton.configuration?.title = isScanning ? "Stop" : "Scan"
+        scanButton.isEnabled = isScanning || state.bluetooth == .granted
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        devicesById = Dictionary(uniqueKeysWithValues: (devices ?? []).map { ($0.id, $0) })
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    // One message and at most one action per permission status. SKIE makes the Kotlin enum a
+    // Swift enum, so this switch is exhaustive.
+    private func renderPermission(_ status: PermissionStatus) {
+        let (message, action): (String, String?) = switch status {
+        case .granted: ("Bluetooth permission: allowed", nil)
+        case .notRequested: ("Device Monitor needs Bluetooth permission to find nearby devices.", "Allow Bluetooth")
+        case .denied: ("Bluetooth permission was denied. Scanning needs it to find nearby devices.", "Ask again")
+        case .permanentlyDenied: ("Bluetooth permission is off. You can turn it on in Settings.", "Open Settings")
+        case .restricted: ("Bluetooth is restricted on this device, so scanning isn't available.", nil)
+        }
+        permissionLabel.text = message
+        permissionLabel.textColor = switch status {
+        case .granted: .secondaryLabel
+        case .notRequested: .label
+        case .denied, .permanentlyDenied, .restricted: .systemRed
+        }
+        permissionButton.configuration?.title = action
+        permissionButton.isHidden = action == nil
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath) else { return }
+        navigationController?.pushViewController(DeviceDetailViewController(deviceId: deviceId), animated: true)
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="12-permissions.html">← 12 Permissions</a>
+    <span class="muted">Next: 14 BLE: connect</span>
+  </nav>
+</main>
+</body>
+</html>
