@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lessons 13–14</p>
+  <p class="kicker">Reference · from Lessons 13–15</p>
   <h1>BLE</h1>
-  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a> (scan) and <a href="../lessons/14-ble-connect.html">Lesson 14</a> (connect). Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators. Lessons 15–16 add discovery, read and notify.</p>
+  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a> (scan), <a href="../lessons/14-ble-connect.html">Lesson 14</a> (connect) and <a href="../lessons/15-ble-discovery-and-read.html">Lesson 15</a> (discovery and read). Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators. Lesson 16 adds notify.</p>
 
   <h2>Words</h2>
   <div class="table-wrap">
@@ -23,6 +23,8 @@
     <tr><td>characteristic</td><td>one value, its properties, 0–n descriptors; identified by a UUID</td><td>15</td></tr>
     <tr><td>UUID</td><td>128-bit; many standard ones have a 16- or 32-bit short form, filled out on the base UUID <code>00000000-0000-1000-8000-00805F9B34FB</code></td><td>13, 15</td></tr>
     <tr><td>read · write</td><td>the central reads or writes the value; write-without-response gets no response</td><td>15 (read)</td></tr>
+    <tr><td>properties field</td><td>one bit per property, the same numbers on Android (<code>PROPERTY_*</code>) and iOS (<code>CBCharacteristicProperties</code>): read <code>0x02</code>, write without response <code>0x04</code>, write <code>0x08</code>, notify <code>0x10</code>, indicate <code>0x20</code>. The app core's <code>propertiesOf(bits)</code></td><td>15</td></tr>
+    <tr><td>discovery</td><td>asking a connected device for its services and their characteristics; per connection</td><td>15</td></tr>
     <tr><td>notify · indicate</td><td>the peripheral pushes new values; an indication is confirmed by the central, a notification isn't</td><td>16 (notify)</td></tr>
     <tr><td>connection state</td><td>disconnected · connecting · connected · disconnecting, on both platforms. The app core's <code>ConnectionState</code> keeps three: <code>Disconnected</code>, <code>Connecting(device)</code>, <code>Connected(device)</code></td><td>14</td></tr>
   </table>
@@ -118,6 +120,56 @@ override suspend fun connect(device: Device) {
 }
 // ViewModel: viewModelScope.launch { session.connect(device) }: survives rotation, ends when cleared</code></pre>
 
+  <h2>Discovering and reading, side by side</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>Android (<code>AndroidBleConnection</code>)</th><th>iOS (<code>IosBleConnection</code>, Swift half)</th></tr>
+    <tr><td>discover</td><td><code>gatt.discoverServices()</code>: services, characteristics and descriptors in one request</td><td><code>peripheral.discoverServices(nil)</code>, then in <code>didDiscoverServices</code> one <code>discoverCharacteristics(nil, for: service)</code> per service: two nested rounds</td></tr>
+    <tr><td>discovery answered</td><td><code>onServicesDiscovered(gatt, status)</code>, then <code>gatt.services</code></td><td><code>peripheral(_:didDiscoverServices:)</code>, then one <code>peripheral(_:didDiscoverCharacteristicsFor:error:)</code> per service; read <code>peripheral.services</code> and <code>service.characteristics</code></td></tr>
+    <tr><td>find a characteristic</td><td><code>gatt.getService(uuid)?.getCharacteristic(uuid)</code> (first instance of each)</td><td>search <code>peripheral.services</code>, compare <code>CBUUID</code>s (equal across short and full forms)</td></tr>
+    <tr><td>read</td><td><code>gatt.readCharacteristic(c)</code>: <code>false</code> if not readable or another request is waiting</td><td><code>peripheral.readValue(for: c)</code></td></tr>
+    <tr><td>read answered</td><td><code>onCharacteristicRead(gatt, c, value, status)</code> from API 33; before, <code>onCharacteristicRead(gatt, c, status)</code> with <code>c.value</code>: override both</td><td><code>peripheral(_:didUpdateValueFor:error:)</code>, then <code>characteristic.value</code>; the same callback carries notifications</td></tr>
+    <tr><td>UUIDs reported</td><td>full 128-bit form, lower case</td><td><code>CBUUID.uuidString</code>, which can be the short form ("2A19")</td></tr>
+    <tr><td>who answers</td><td>the <code>BluetoothGattCallback</code> passed to <code>connectGatt</code></td><td><code>peripheral.delegate</code>: weak, one per peripheral, set it before discovering</td></tr>
+  </table>
+  </div>
+
+  <h2>Requests as suspend funs</h2>
+  <pre><code>// Port: one request at a time on the open link
+suspend fun discoverServices(): List&lt;DeviceService&gt;
+suspend fun read(characteristic: Characteristic): ByteArray
+
+// Android: the callback completes the waiting request
+private suspend fun request(send: () -&gt; Boolean): Answer {
+    val pending = CompletableDeferred&lt;Answer&gt;(); answer = pending
+    try { if (!send()) throw ConnectionException("…"); return pending.await() } finally { answer = null }
+}
+// in awaitClose: answer?.completeExceptionally(ConnectionException("The link closed …"))
+
+// iOS: the Kotlin half implements the port; Swift answers through a reply
+override suspend fun read(c: Characteristic): ByteArray =
+    suspendCancellableCoroutine { link.read(c, ValueReply(it)) }   // Swift: reply.read(value:) / reply.failed(message:)
+// A Swift error thrown into Kotlin arrives as ObjCErrorException, not ConnectionException
+
+// Service: one request at a time, only what can be read, decoded in the app core
+private val requests = Mutex()
+if (CharacteristicProperty.Read !in c.properties) throw ConnectionException("…")
+val bytes = requests.withLock { connection.read(c) }
+return ValueDecoder.decode(c.uuid, bytes)</code></pre>
+
+  <h2>Bytes</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Rule</th><th>Kotlin</th></tr>
+    <tr><td>a <code>Byte</code> is signed (−128..127): get the 0..255 the device sent</td><td><code>b.toInt() and 0xFF</code></td></tr>
+    <tr><td>little endian unless stated (GSS 2.4): octet 0 is the low byte</td><td><code>(bytes[1].toInt() shl 8) or (bytes[0].toInt() and 0xFF)</code> for a signed 16-bit value; mask both bytes for an unsigned one</td></tr>
+    <tr><td>scale: Temperature <code>0x2A6E</code> is <code>sint16</code> in 0.01 °C; 0x8000 = not known</td><td>print whole and hundredths yourself: common Kotlin has no <code>String.format</code></td></tr>
+    <tr><td>Battery Level <code>0x2A19</code>: <code>uint8</code>, 0–100 %, the rest reserved</td><td><code>"$percent %"</code>, else hex</td></tr>
+    <tr><td><code>utf8s</code> strings (Manufacturer Name <code>0x2A29</code>, Model Number <code>0x2A24</code>)</td><td><code>bytes.decodeToString()</code></td></tr>
+    <tr><td>unknown format, wrong length, reserved value</td><td>hex: <code>01 02 03 04</code></td></tr>
+  </table>
+  </div>
+
   <h2>Where things go</h2>
   <div class="table-wrap">
   <table>
@@ -128,6 +180,9 @@ override suspend fun connect(device: Device) {
     <tr><td>connect: permission → one device at a time → 10 s to answer; the connection state</td><td><code>SessionService</code> (app core), a Koin <code>single</code></td></tr>
     <tr><td>how long a connection lives</td><td>the caller's scope: <code>viewModelScope</code> in <code>DeviceDetailViewModel</code> (inbound adapter)</td></tr>
     <tr><td><code>BluetoothGatt</code>, <code>CBPeripheral</code></td><td>the connection adapters, never a screen</td></tr>
+    <tr><td>discover only when connected; read only what has Read; one request at a time; a failed discovery ends the connection</td><td><code>SessionService</code> (app core)</td></tr>
+    <tr><td>what the bytes mean; UUID spelling; property bits</td><td><code>ValueDecoder</code>, <code>fullUuid</code>, <code>propertiesOf</code> (app core), tested on JVM and iOS</td></tr>
+    <tr><td>discover when the link is up; where an answer is shown</td><td><code>DeviceDetailViewModel</code> (inbound adapter)</td></tr>
     <tr><td>which radio the app uses</td><td><code>platformModule</code>, filled by <code>initKoin(permissionChecker, bleScanner, bleConnection)</code></td></tr>
   </table>
   </div>
@@ -144,6 +199,11 @@ override suspend fun connect(device: Device) {
     <li><strong>Disappear is not "gone".</strong> <code>onDisappear</code> / <code>viewDidDisappear</code> also run when a screen is pushed on top. End a connection when the ViewModel is cleared, not there.</li>
     <li><strong>iOS connection attempts never time out.</strong> The app sets its own limit (10 s, in the service).</li>
     <li><strong>Always <code>close()</code> a <code>BluetoothGatt</code></strong> when done: put it in <code>awaitClose</code>, so every path runs it.</li>
+    <li><strong>The peripheral's delegate (iOS).</strong> Separate from the manager's, <code>weak</code>, one per peripheral, no required methods: unset or released, discovery and reads are answered to no one and nothing fails. Set it as soon as you have the peripheral.</li>
+    <li><strong>One GATT request at a time (Android).</strong> <code>readCharacteristic</code> returns <code>false</code> while another request waits for its callback. Queue them (here: a <code>Mutex</code> in the service).</li>
+    <li><strong>A signed <code>Byte</code>.</strong> Without <code>and 0xFF</code>, 200 reads as −56.</li>
+    <li><strong>Byte order.</strong> GATT values are little endian unless the characteristic says otherwise.</li>
+    <li><strong>A request still waiting when the link closes</strong> never gets its callback: fail it when the link closes.</li>
   </ul>
 </main>
 </body>
