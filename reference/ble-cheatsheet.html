@@ -127,7 +127,7 @@ override suspend fun connect(device: Device) {
     <tr><td>discover</td><td><code>gatt.discoverServices()</code>: services, characteristics and descriptors in one request</td><td><code>peripheral.discoverServices(nil)</code>, then in <code>didDiscoverServices</code> one <code>discoverCharacteristics(nil, for: service)</code> per service: two nested rounds</td></tr>
     <tr><td>discovery answered</td><td><code>onServicesDiscovered(gatt, status)</code>, then <code>gatt.services</code></td><td><code>peripheral(_:didDiscoverServices:)</code>, then one <code>peripheral(_:didDiscoverCharacteristicsFor:error:)</code> per service; read <code>peripheral.services</code> and <code>service.characteristics</code></td></tr>
     <tr><td>find a characteristic</td><td><code>gatt.getService(uuid)?.getCharacteristic(uuid)</code> (first instance of each)</td><td>search <code>peripheral.services</code>, compare <code>CBUUID</code>s (equal across short and full forms)</td></tr>
-    <tr><td>read</td><td><code>gatt.readCharacteristic(c)</code>: <code>false</code> if not readable or another request is waiting</td><td><code>peripheral.readValue(for: c)</code></td></tr>
+    <tr><td>read</td><td><code>gatt.readCharacteristic(c)</code>: <code>false</code> if not readable or another read or write is waiting</td><td><code>peripheral.readValue(for: c)</code></td></tr>
     <tr><td>read answered</td><td><code>onCharacteristicRead(gatt, c, value, status)</code> from API 33; before, <code>onCharacteristicRead(gatt, c, status)</code> with <code>c.value</code>: override both</td><td><code>peripheral(_:didUpdateValueFor:error:)</code>, then <code>characteristic.value</code>; the same callback carries notifications</td></tr>
     <tr><td>UUIDs reported</td><td>full 128-bit form, lower case</td><td><code>CBUUID.uuidString</code>, which can be the short form ("2A19")</td></tr>
     <tr><td>who answers</td><td>the <code>BluetoothGattCallback</code> passed to <code>connectGatt</code></td><td><code>peripheral.delegate</code>: weak, one per peripheral, set it before discovering</td></tr>
@@ -200,10 +200,10 @@ return ValueDecoder.decode(c.uuid, bytes)</code></pre>
     <li><strong>iOS connection attempts never time out.</strong> The app sets its own limit (10 s, in the service).</li>
     <li><strong>Always <code>close()</code> a <code>BluetoothGatt</code></strong> when done: put it in <code>awaitClose</code>, so every path runs it.</li>
     <li><strong>The peripheral's delegate (iOS).</strong> Separate from the manager's, <code>weak</code>, one per peripheral, no required methods: unset or released, discovery and reads are answered to no one and nothing fails. Set it as soon as you have the peripheral.</li>
-    <li><strong>One GATT request at a time (Android).</strong> <code>readCharacteristic</code> returns <code>false</code> while another request waits for its callback. Queue them (here: a <code>Mutex</code> in the service).</li>
+    <li><strong>One GATT request at a time (Android).</strong> <code>readCharacteristic</code> returns <code>false</code> while another read or write waits for its callback (<code>discoverServices()</code> doesn't count). Queue them (here: a <code>Mutex</code> in the service).</li>
     <li><strong>A signed <code>Byte</code>.</strong> Without <code>and 0xFF</code>, 200 reads as −56.</li>
     <li><strong>Byte order.</strong> GATT values are little endian unless the characteristic says otherwise.</li>
-    <li><strong>A request still waiting when the link closes</strong> never gets its callback: fail it when the link closes.</li>
+    <li><strong>A request still waiting when the adapter closes the link</strong> never gets its callback (Android's <code>close()</code> unregisters it): fail the request in the same close.</li>
   </ul>
 </main>
 </body>

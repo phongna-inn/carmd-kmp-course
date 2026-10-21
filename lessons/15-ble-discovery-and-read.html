@@ -133,8 +133,8 @@
 <mark>    CharacteristicProperty.entries.filter { bits and it.bit != 0 }</mark></code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>Two meanings of "service".</strong> In the hexagon, a service is a class in the app core that implements an inbound port (<code>SessionService</code>). In Bluetooth, a service is a group of characteristics on the device. The model is named <code>DeviceService</code> so the two never meet in one name.</li>
-    <li><strong><code>serviceUuid</code> travels with each characteristic</strong>, because a characteristic's UUID is only unique inside its service: to read it, both adapters first find the service, then the characteristic in it.</li>
+    <li><strong>Two meanings of "service".</strong> In the app's architecture, a service is a class in the app core that implements an inbound port (<code>SessionService</code>). In Bluetooth, a service is a group of characteristics on the device. The model is named <code>DeviceService</code> so the two never meet in one name.</li>
+    <li><strong><code>serviceUuid</code> travels with each characteristic</strong>, because the same characteristic UUID can appear in more than one service: to read it, both adapters first find the service, then the characteristic in it.</li>
     <li><strong>The same bits on both platforms.</strong> Android's <code>BluetoothGattCharacteristic.PROPERTY_READ</code> is <code>0x02</code>, <code>PROPERTY_WRITE_NO_RESPONSE</code> <code>0x04</code>, <code>PROPERTY_WRITE</code> <code>0x08</code>, <code>PROPERTY_NOTIFY</code> <code>0x10</code>, <code>PROPERTY_INDICATE</code> <code>0x20</code> (Android's source), and iOS's <code>CBCharacteristicProperties</code> uses the same values (<code>CBCharacteristic.h</code>). So each adapter hands its platform's number to <code>propertiesOf</code>, and the rule that turns bits into properties is written and tested once, in the app core. <code>bits and it.bit != 0</code> is TypeScript's <code>(bits &amp; bit) !== 0</code>: Kotlin spells bitwise AND as the infix function <code>and</code>.</li>
     <li><strong>A <code>List</code>, not a <code>Set</code></strong>: the order of the bit field, so every screen shows "read · notify" in the same order. A Kotlin list reaches Swift as an array; a set would arrive as a Swift <code>Set</code>, with no order.</li>
   </ol>
@@ -339,7 +339,7 @@ object ValueDecoder {
   </ol>
 
   <h2>5. Android: one discovery, one request at a time</h2>
-  <p>Android's guide: "The service needs to override the <code>onServicesDiscovered()</code> function in the <code>BluetoothGattCallback</code>. This function is called when the device reports on its available services. Once the services have been discovered, the service can call <code>getServices()</code> to get the reported data" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/transfer-ble-data">Transfer BLE data</a>). The callback object is the one Lesson 14 wrote for the connection; it gets three more methods.</p>
+  <p>Android's guide: "The service needs to override the <code>onServicesDiscovered()</code> function in the <code>BluetoothGattCallback</code>. This function is called when the device reports on its available services. … Once the services have been discovered, the service can call <code>getServices()</code> to get the reported data" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/transfer-ble-data">Transfer BLE data</a>). The callback object is the one Lesson 14 wrote for the connection; it gets three more methods.</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleConnection.kt</figcaption>
 <pre><code><span class="elide">⋯  the class and its BluetoothAdapter, as in Lesson 14</span>
@@ -368,9 +368,9 @@ object ValueDecoder {
 <span class="elide">⋯  Android 12 and earlier call the older onCharacteristicRead(gatt, characteristic, status): the value is in characteristic.value</span></code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>A <code>CompletableDeferred</code></strong> is a <code>Deferred</code> (Lesson 01's <code>async</code> result) that someone else completes: the request suspends in <code>await()</code>, and the callback, on a background thread, calls <code>complete</code>. It plays the role of a JavaScript <code>Promise</code> whose <code>resolve</code> you keep. It is safe to complete from any thread.</li>
+    <li><strong>A <code>CompletableDeferred</code></strong>, as in Lesson 12's permission request, is a value that someone else completes: the request suspends in <code>await()</code>, and the callback, on a background thread, calls <code>complete</code>. It plays the role of a JavaScript <code>Promise</code> whose <code>resolve</code> you keep. It is safe to complete from any thread.</li>
     <li><strong>Two <code>onCharacteristicRead</code>s.</strong> API 33 added one that carries the value and deprecated the old one, which leaves the value in the characteristic object (<code>api-versions.xml</code>: the old one <code>deprecated="33"</code>, the new one <code>since="33"</code>). The app runs from API 26, so it overrides both. In Android's source, the new one's default body calls the old one, and from API 33 the system calls only the new one; our override of the new one doesn't call it, so each read completes once. The old override carries <code>@Deprecated</code> and <code>@Suppress("DEPRECATION")</code>, so the build stays free of warnings.</li>
-    <li><strong><code>@Volatile</code></strong>: the fields are written on a background thread (the callbacks) and read on the main thread (the requests). <code>@Volatile</code> makes each write visible to the other thread at once.</li>
+    <li><strong><code>@Volatile</code></strong>: each field is written on one thread and read on another. The callbacks, on a background thread, set <code>gatt</code> and read <code>answer</code>; the requests, on the main thread, set <code>answer</code> and read <code>gatt</code>. <code>@Volatile</code> makes each write visible to the other thread at once.</li>
   </ol>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleConnection.kt</figcaption>
@@ -386,7 +386,7 @@ object ValueDecoder {
     }
 <span class="elide">⋯  read(characteristic): gatt.getService(…)?.getCharacteristic(…), then request { gatt.readCharacteristic(target) }</span>
     // Sends one request and waits for its callback. send returns false when Android won't send it,
-    // for example while another request on this link is still waiting for its answer.
+    // for example while a read or write on this link is still waiting for its answer.
 <mark>    private suspend fun request(send: () -&gt; Boolean): Answer {</mark>
         val pending = CompletableDeferred&lt;Answer&gt;()
 <mark>        answer = pending</mark>
@@ -399,7 +399,7 @@ object ValueDecoder {
     }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>Why one at a time on Android.</strong> <code>BluetoothGatt.readCharacteristic</code> starts with <code>if (mDeviceBusy) return false; mDeviceBusy = true;</code>, and the answer's callback clears it (Android's source, API 35). A second read sent before the first one's answer is simply refused. The guide doesn't mention it, and neither does the method's return value beyond "true, if the read operation was initiated successfully". The service's <code>Mutex</code> (section 4) is what keeps our requests apart, and one <code>answer</code> slot is enough.</li>
+    <li><strong>Why one at a time on Android.</strong> <code>BluetoothGatt.readCharacteristic</code> checks the Read property, then, under a lock, runs <code>if (mDeviceBusy) return false; mDeviceBusy = true;</code>, and the answer's callback clears the flag (Android's source, API 35). Reads and writes of characteristics and descriptors set that flag; <code>discoverServices()</code> doesn't. A second read sent before the first one's answer is simply refused. The guide doesn't mention it, and neither does the method's return value beyond "true, if the read operation was initiated successfully". The service's <code>Mutex</code> (section 4) is what keeps our requests apart, and one <code>answer</code> slot is enough.</li>
     <li><strong><code>answer</code> is set before <code>send()</code></strong>, so a callback that comes back fast still finds it.</li>
     <li><strong>The services come from <code>gatt.services</code></strong>, as the guide says, once the callback has reported <code>GATT_SUCCESS</code>. <code>toDeviceService()</code> maps each one with <code>fullUuid(uuid.toString())</code> and <code>propertiesOf(it.properties)</code>.</li>
     <li><strong>Finding the characteristic to read</strong>: <code>getService(uuid)</code> then <code>getCharacteristic(uuid)</code>, with <code>UUID.fromString</code> on the full form. If a device has two instances of the same service, "the first instance of the service is returned" (<code>BluetoothGatt.getService</code>'s documentation); the app reads that one.</li>
@@ -418,7 +418,7 @@ object ValueDecoder {
   <p>After <code>close()</code> no callback comes, so a read that was waiting would wait for ever. <code>completeExceptionally</code> ends it with a message instead, whatever closed the link: a drop, Disconnect, or leaving the screen.</p>
   <div class="callout gotcha">
     <span class="label">Gotcha · the emulator can't show any of this with a real device</span>
-    As Lessons 13 and 14 found, the emulator's simulated beacons never accept a connection, so a real discovery and a real read need your Android phone and LightBlue: they're on the device-check list. On the emulator, the real adapter still shows what it did in Lesson 14 (we ran it: "didn't answer within 10 seconds", then <code>cancelOpen()</code>, <code>close()</code>, <code>unregisterApp()</code>), and the simulated adapters show the screen (section 9).
+    As Lesson 14 found, the emulator's simulated beacons (Lesson 13) never answered a connection on our API 30 image, so a real discovery and a real read need your Android phone and LightBlue: they're on the device-check list. On the emulator, the real adapter still shows what it did in Lesson 14 (we ran it: "didn't answer within 10 seconds", then <code>cancelOpen()</code>, <code>close()</code>, <code>unregisterApp()</code>), and the simulated adapters show the screen (section 9).
   </div>
 
   <h2>6. iOS: a new split, and two nested discoveries</h2>
@@ -973,11 +973,11 @@ private fun NSData.toByteArray(): ByteArray {
     <p class="q">Why does <code>SessionService</code> send one request at a time over the link?</p>
     <div class="opts">
       <button class="opt">so the UI shows one value at a time</button>
-      <button class="opt" data-correct>Android's <code>BluetoothGatt</code> refuses a read while another request is waiting for its answer, and the port's contract (one at a time) lets each adapter keep a single waiting slot</button>
+      <button class="opt" data-correct>Android's <code>BluetoothGatt</code> refuses a read while another read or write is waiting for its answer, and the port's contract (one at a time) lets each adapter keep a single waiting slot</button>
       <button class="opt">CoreBluetooth crashes on two reads</button>
     </div>
     <p class="feedback"></p>
-    <p class="why"><code>readCharacteristic</code> returns <code>false</code> while <code>mDeviceBusy</code> is set (Android's source). The <code>Mutex</code> in the service keeps the contract for every adapter, and <code>sendsOneRequestAtATime</code> checks it.</p>
+    <p class="why"><code>readCharacteristic</code> returns <code>false</code> while <code>mDeviceBusy</code> is set, which a read or write does until its answer comes (Android's source). The <code>Mutex</code> in the service keeps the contract for every adapter, and <code>sendsOneRequestAtATime</code> checks it.</p>
   </div>
 
   <h3>Mixed review (interleaved)</h3>
@@ -1151,7 +1151,7 @@ Do NOT do the unaided exercise for me.</pre>
 
   <h2>Further reading</h2>
   <ul>
-    <li>Android: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/transfer-ble-data">Transfer BLE data</a> (primary source: "Discover services", "Read BLE characteristics"), and the reference pages for <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGatt">BluetoothGatt</a> (<code>discoverServices</code>, <code>getService</code>, <code>readCharacteristic</code>), <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGattCallback">BluetoothGattCallback</a> (<code>onServicesDiscovered</code>, both <code>onCharacteristicRead</code>s) and <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGattCharacteristic">BluetoothGattCharacteristic</a> (the <code>PROPERTY_*</code> bits). The one-request-at-a-time rule is only in the source (<code>mDeviceBusy</code> in <code>BluetoothGatt.java</code>).</li>
+    <li>Android: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/transfer-ble-data">Transfer BLE data</a> (primary source: "Discover services", "Read BLE characteristics"), and the reference pages for <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGatt">BluetoothGatt</a> (<code>discoverServices</code>, <code>getService</code>, <code>readCharacteristic</code>), <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGattCallback">BluetoothGattCallback</a> (<code>onServicesDiscovered</code>, both <code>onCharacteristicRead</code>s) and <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGattCharacteristic">BluetoothGattCharacteristic</a> (the <code>PROPERTY_*</code> bits). The rule that a read or write is refused while another one waits for its answer is only in the source (<code>mDeviceBusy</code> in <code>BluetoothGatt.java</code>).</li>
     <li>iOS: <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheral">CBPeripheral</a> (primary source: <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheral/discoverservices(_:)">discoverServices(_:)</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheral/discovercharacteristics(_:for:)">discoverCharacteristics(_:for:)</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheral/readvalue(for:)-6u2kr">readValue(for:)</a>), <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate">CBPeripheralDelegate</a> (<a href="https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate/peripheral(_:diddiscoverservices:)">didDiscoverServices</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate/peripheral(_:diddiscovercharacteristicsfor:error:)">didDiscoverCharacteristicsFor</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheraldelegate/peripheral(_:didupdatevaluefor:error:)-1xyna">didUpdateValueFor</a>), <a href="https://developer.apple.com/documentation/corebluetooth/cbcharacteristicproperties">CBCharacteristicProperties</a> and <a href="https://developer.apple.com/documentation/corebluetooth/cbuuid">CBUUID</a>. <code>CBPeripheral.h</code>, which Xcode opens with Jump to Definition, shows the delegate as <code>weak</code>.</li>
     <li>Bytes: the Bluetooth SIG's <a href="https://www.bluetooth.com/specifications/gss/">GATT Specification Supplement</a> (section 2.4, byte order; section 3, each characteristic's format) and its <a href="https://bitbucket.org/bluetooth-SIG/public/src/main/">public repository</a> (the same definitions as YAML under <code>gss/</code>, and the UUIDs under <code>assigned_numbers/uuids/</code>). Kotlin: <a href="https://kotlinlang.org/docs/numbers.html">Numbers</a> (signed <code>Byte</code>, bitwise <code>and</code>, <code>shl</code>, <code>or</code>) and <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.text/decode-to-string.html">decodeToString</a>.</li>
     <li>Coroutines: <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-completable-deferred/">CompletableDeferred</a>, <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/suspend-cancellable-coroutine.html">suspendCancellableCoroutine</a> and <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.sync/-mutex/">Mutex</a>. Kotlin/Native: <a href="https://kotlinlang.org/docs/native-objc-interop.html">Interoperability with Swift/Objective-C</a> (errors and exceptions, top-level functions).</li>
@@ -1281,7 +1281,8 @@ import com.example.devicemonitor.core.DeviceService
 import kotlinx.coroutines.flow.Flow
 
 // Outbound port: what the app needs from a Bluetooth radio to hold a link to one device, in the
-// app's own terms. One adapter per platform: Kotlin in androidMain, Swift in the iOS app.
+// app's own terms. One adapter per platform: Kotlin in androidMain; on iOS, a Kotlin half in
+// iosMain (LinkedBleConnection) over a Swift half in the iOS app.
 interface BleConnection {
     // The link to device, as its state changes: Connecting, then Connected once it's up.
     // Collecting starts the connection, and cancelling the collector ends it and frees what the
@@ -1766,7 +1767,7 @@ class AndroidBleConnection(private val context: Context) : BleConnection {
     private fun openGatt(): BluetoothGatt = gatt ?: throw ConnectionException("Not connected.")
 
     // Sends one request and waits for its callback. send returns false when Android won't send it,
-    // for example while another request on this link is still waiting for its answer.
+    // for example while a read or write on this link is still waiting for its answer.
     private suspend fun request(send: () -&gt; Boolean): Answer {
         val pending = CompletableDeferred&lt;Answer&gt;()
         answer = pending
