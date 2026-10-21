@@ -988,7 +988,7 @@ paths are relative to demo/. Touch no file that isn't listed here.
      XML: DeviceListFragment.kt and res/layout/fragment_device_list.xml: replaced.
    iOS, both tracks: add iosApp/iosApp/IosPermissionChecker.swift; iosApp/project.yml:
    replaced (my track's). Then run `xcodegen generate` in iosApp/: it adds the new Swift file
-   to the Xcode project and writes NSBluetoothAlwaysUsageDescription into iosApp/Info.plist.
+   to the Xcode project and writes NSBluetoothAlwaysUsageDescription into iosApp/iosApp/Info.plist.
    Do NOT edit Info.plist or the .xcodeproj by hand.
      SwiftUI: iOSApp.swift and DeviceListView.swift: replaced.
      UIKit: AppDelegate.swift and DeviceListViewController.swift: replaced.
@@ -1055,7 +1055,10 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   (USER_SET after the first, USER_SET|USER_FIXED after the second).
 - Android, driving the emulator: find buttons with `adb shell uiautomator dump`. The dialog's
   "Allow Device Monitor to …" title also starts with "Allow", so tap the node whose text is
-  exactly "Allow". A dump takes about 2 s: wait for the screen you expect before the next tap.
+  exactly "Allow". The refusing button is "Don’t allow" with a typographic apostrophe
+  (U+2019), not a straight one: match it exactly, or by its prefix "Don".
+  To read whether Scan is enabled in the Compose track's dump, look at the clickable node
+  just before the "Scan" text (its enabled="false"): the text node itself always says true. A dump takes about 2 s: wait for the screen you expect before the next tap.
 - Optional, if you have an emulator with Android 11 (API 30): the same steps ask for location
   instead ("Allow Device Monitor to access this device's location?", with "While using the
   app", "Only this time" and "Deny"), and every step's row matches. Grant with
