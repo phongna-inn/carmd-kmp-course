@@ -28,7 +28,7 @@
     <strong>Why this matters:</strong> in m04 the shared ViewModel builds its own scanner: its factory says <code>DeviceListViewModel(FakeDeviceScanner())</code>. From Lesson 13 the app needs two real radios instead, a Kotlin one that only exists on Android and a Swift one that only exists on iOS, and shared code can name neither. Today you restructure the shared code into a <strong>hexagon</strong>: an <strong>app core</strong> that holds the app's rules and imports nothing from Android, iOS or any framework, with <strong>ports</strong> on its edges and <strong>adapters</strong> plugged into them. The ViewModel reaches scanning only through a port, the radio sits behind another port, and one file wires them together. That's milestone <strong>m05</strong>. It's also the answer to a question you'll ask every day on the team's app: where does this code go?
   </div>
 
-  <p><span class="tag">Primary source</span> Alistair Cockburn's <a href="https://alistair.cockburn.us/hexagonal-architecture/">Hexagonal architecture</a>, the article that named the pattern. Read its "Intent" and "Nature of the solution" sections after section 2.</p>
+  <p><span class="tag">Primary source</span> Alistair Cockburn's <a href="https://alistair.cockburn.us/hexagonal-architecture/">Hexagonal architecture</a>, the article that named the pattern. Read its "Intent" and "Nature of the Solution" sections after section 2.</p>
   <p><span class="tag">Tracks</span> Almost everything today is in <code>shared/</code>, the same on every track. On each UI track the screen changes one line, the one that gets the ViewModel (section 6), and Android files change their imports for the new packages. Each excerpt shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
 
   <h2>What changes from m04</h2>
@@ -229,7 +229,7 @@
     </div>
     <div class="sort-item" data-answer="composition root">
       <span class="sort-label">"In this app, <code>BleScanner</code> means <code>SimulatedBleScanner</code>"</span>
-      <p class="why">The wiring decision. It's the line Lesson 13 changes, so it lives in exactly one place, <code>AppContainer</code>.</p>
+      <p class="why">The wiring decision. It lives only in the composition root: <code>AppContainer</code> today, Lesson 11's Koin module after that. It's the binding Lesson 13 changes to the real radios.</p>
     </div>
     <div class="sort-item" data-answer="outbound adapter">
       <span class="sort-label">Lesson 13's Swift class that drives <code>CBCentralManager</code></span>
@@ -487,7 +487,7 @@ object AppContainer {
 }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>The only file that names <code>SimulatedBleScanner</code> and <code>ScanningService</code></strong>, apart from their own files. In Lesson 13 the first line becomes "the Android radio on Android, the Swift radio on iOS". One decision, in one place.</li>
+    <li><strong>The only file whose code names <code>SimulatedBleScanner</code> and <code>ScanningService</code></strong>, apart from their own files. From Lesson 11 this wiring moves into a Koin module, and in Lesson 13 the scanner binding there becomes "the Android radio on Android, the Swift radio on iOS". One decision, made only in the composition root.</li>
     <li><strong>Each property's type is the port</strong> (<code>BleScanner</code>, <code>DeviceScanning</code>), and its value is what implements it. Read each line as a binding: "this port means this class".</li>
     <li><strong><code>by lazy</code></strong> builds each one on first use and then reuses it, so the whole app shares one radio and one service. A screen opened twice must not scan with two radios. Sharing the service is safe because it keeps no state between scans (section 4).</li>
     <li><strong>The factory</strong> is the one Lesson 08's companion object had, moved here. The ViewModel store still keeps the ViewModel; the factory runs only when the store has none. You write the order yourself: scanner, then service, then ViewModel. Android lists that as the first cost of wiring by hand: "Dependencies have to be declared in order". In exchange, a missing dependency is a compile error. Lesson 11 trades that for Koin.</li>
@@ -572,7 +572,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
 
   <div class="callout gotcha">
     <span class="label">Gotcha · a known shortcut, kept on purpose until the BLE lessons</span>
-    The detail screens still look devices up with <code>SampleDevices.find(id)</code>, and so does the UIKit list's cell provider. On Android you can see it in the import, <code>com.example.devicemonitor.adapter.outbound.SampleDevices</code>: a screen reaching straight into an outbound adapter, past every port. Swift gives no such clue, because Kotlin packages don't reach the header. It works only because the simulated radio's devices are a fixed list. When the detail screen becomes the connect screen in the BLE lessons, it gets its own ViewModel and port, and the shortcut goes away. Packages make a shortcut like this visible; only separate Gradle modules would make it impossible, and this course keeps one shared module.
+    The detail screens still look devices up with <code>SampleDevices.find(id)</code>, and so does the UIKit list's cell provider. On Android you can see it in the import, <code>com.example.devicemonitor.adapter.outbound.SampleDevices</code>: a screen reaching straight into an outbound adapter, past every port. Swift gives no such clue, because Kotlin packages don't reach the header. It works only because the simulated radio's devices are a fixed list. When the detail screen becomes the connect screen in the BLE lessons, it gets its own ViewModel and port, and the shortcut goes away. Packages make a shortcut like this visible, but they can't forbid it: Kotlin has no package-private visibility (<a href="https://kotlinlang.org/docs/visibility-modifiers.html">Visibility modifiers</a>), so any file can import any public class.
   </div>
 
   <h2>7. The finished app, and how to add things</h2>
@@ -682,7 +682,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
     <div class="opts">
       <button class="opt">so that Android and iOS can each define their own version</button>
       <button class="opt">because SKIE only exports interfaces from the core package</button>
-      <button class="opt" data-correct>shared code can't import Swift, but Swift can implement a Kotlin interface</button>
+      <button class="opt" data-correct>the service calls it, and the app core imports nothing outside itself</button>
     </div>
     <p class="feedback"></p>
     <p class="why">The core uses the port, so the port must be visible to the core. The adapters, including Lesson 13's Swift class, depend on the port, never the other way round.</p>
