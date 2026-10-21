@@ -262,7 +262,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
     </svg>
     <figcaption>A row's remembered state belongs to its key. With the id as key it follows the device. With the position as key it stays behind.</figcaption>
   </figure>
-  <p class="callout ts"><span class="label">From TypeScript</span>This is React's <code>key</code> prop on list items, or Angular's <code>track item.id</code> in an <code>@for</code> block. React warns you when you skip it. Compose, if you skip it, silently falls back to the position, and the bug shows up only when the list is reordered.</p>
+  <p class="callout ts"><span class="label">From TypeScript</span>This is React's <code>key</code> prop on list items, or Angular's <code>track item.id</code> in an <code>@for</code> block. React warns you when you skip it. Compose, if you skip it, silently falls back to the position, and the bug shows up only when items change position: an insert, a removal (a new filter) or a reorder.</p>
   <div class="table-wrap">
   <table>
     <tr><th>Track</th><th>Where the key goes</th></tr>
@@ -296,7 +296,7 @@ private fun DeviceRow(device: Device, onClick: () -&gt; Unit) {
 }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong><code>LazyColumn</code></strong> composes only the rows on screen. <code>Modifier.weight(1f)</code> gives it all the height left in the <code>Column</code> after the field, button and status.</li>
+    <li><strong><code>LazyColumn</code></strong> composes only the rows on screen. <code>Modifier.weight(1f)</code> gives it all the height left in the <code>Column</code> after the title, field, button and status.</li>
     <li><strong><code>items(list, key = { it.id })</code></strong> is the key. <code>devices.orEmpty()</code> turns the <code>null</code> of "never scanned" into an empty list, so the list shows nothing and the status line explains why.</li>
     <li><strong><code>ListItem</code></strong> is Material 3's row with headline, supporting and trailing slots, and <code>Modifier.clickable</code> turns the whole row into a tap target.</li>
   </ol>
@@ -417,7 +417,7 @@ private struct DeviceRow: View {
   <p>Every UI toolkit here is single-threaded. Android's two rules are "Don't block the UI thread" and "Don't access the Android UI toolkit from outside the UI thread", because "the Android UI toolkit is <em>not</em> thread-safe" (<a href="https://developer.android.com/guide/components/processes-and-threads">Processes and threads</a>). On iOS, <code>UIViewController</code> and SwiftUI's <code>View</code> are <code>@MainActor</code>, and the Swift 6 compiler checks it (Lesson 02). The scan you wrote in section 1 follows both rules: <code>delay</code> and <code>Task.sleep</code> <em>suspend</em> without blocking a thread, and the state updates after them run on the main thread.</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 640 262" role="img" aria-labelledby="l07-async-title">
-      <title id="l07-async-title">A scan over time, on three lanes. On the main thread, the tap handler sets isScanning to true, clears the results and renders. The scan coroutine then waits in delay for 1.5 seconds: it is suspended and holds no thread, so the main thread is free to draw frames and take taps. When the delay ends, the coroutine resumes on the main thread, sets the results and isScanning to false, and renders. A third lane, a background thread, is where slow work would run. Its result must be handed back to the main thread before it touches UI state.</title>
+      <title id="l07-async-title">A scan over time, on three lanes. On the main thread, the tap handler sets isScanning to true, clears the results and renders. The scan coroutine then waits in delay for 1.5 seconds: it is suspended and holds no thread, so the main thread is free to draw frames and take taps. When the delay ends, the coroutine resumes on the main thread, sets the results and isScanning to false, and renders. A third lane, a background thread, is where slow work would run and where some radio callbacks arrive. Its result must be handed back to the main thread before it touches UI state.</title>
       <defs><marker id="l07-async-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <text x="14" y="58" font-weight="600">Main thread</text>
       <text x="14" y="130" font-weight="600">Scan coroutine</text>
@@ -435,7 +435,7 @@ private struct DeviceRow: View {
       <path class="edge" d="M462,106 L462,74" marker-end="url(#l07-async-arrow)"/>
       <text class="small muted" x="454" y="100" text-anchor="end">resumes on main</text>
       <rect class="box" x="250" y="178" width="210" height="38" rx="5" stroke-dasharray="5 4"/>
-      <text class="small" x="262" y="195">slow work would run here</text><text class="small muted" x="262" y="209">(for example BLE radio callbacks)</text>
+      <text class="small" x="262" y="195">work off the main thread</text><text class="small muted" x="262" y="209">(slow work, BLE radio callbacks)</text>
       <path class="edge dashed" d="M462,178 L520,178 L520,74" marker-end="url(#l07-async-arrow)"/>
       <text class="small muted" x="530" y="140">hand the result</text><text class="small muted" x="530" y="154">back to main</text>
       <line class="axis" x1="140" y1="238" x2="590" y2="238"/>
@@ -450,11 +450,11 @@ private struct DeviceRow: View {
     <tr><th>Track</th><th>What we changed</th><th>What happened</th></tr>
     <tr><td>Compose</td><td><code>withContext(Dispatchers.Default) { foundIds = … }</code></td><td>No crash. The list updated (the write ran on <code>DefaultDispatcher-worker-1</code>). Compose state tolerates it, but don't build on that: Lesson 08's shared ViewModel publishes UI state on the main thread.</td></tr>
     <tr><td>XML</td><td><code>withContext(Dispatchers.Default) { render() }</code></td><td><strong>Crash:</strong> <code>CalledFromWrongThreadException: Only the original thread that created a view hierarchy can touch its views. Expected: main Calling: DefaultDispatcher-worker-1</code></td></tr>
-    <tr><td>SwiftUI</td><td><code>Task.detached { devices = … }</code></td><td>Compiler <strong>warning</strong> (Swift 6 mode): <code>main actor-isolated property 'devices' can not be mutated from a nonisolated context</code>. Apple documents <code>@State</code> as safe to mutate from any thread, so it's a warning rather than an error. This course treats warnings as errors.</td></tr>
+    <tr><td>SwiftUI</td><td><code>Task.detached { devices = … }</code></td><td>Compiler <strong>warning</strong> (Swift 6 mode): <code>main actor-isolated property 'devices' can not be mutated from a nonisolated context</code>. It's only a warning because the view gets its main-actor isolation from <code>View</code>, which SwiftUI declares <code>@preconcurrency</code>: a home-made property wrapper in the same place gets the same warning, and in a struct marked <code>@MainActor</code> directly the same write is an error. This course treats warnings as errors.</td></tr>
     <tr><td>UIKit</td><td><code>Task.detached { self.render() }</code></td><td>Compiler <strong>error</strong>: <code>main actor-isolated instance method 'render()' cannot be called from outside of the actor</code></td></tr>
   </table>
   </div>
-  <p>The rule to carry forward: <strong>do slow work off the main thread, and publish UI state on it.</strong> In the BLE lessons, radio callbacks can arrive on threads other than the main one, and the adapter's job is to get them back to the main thread before the UI sees them.</p>
+  <p>The rule to carry forward: <strong>do slow work off the main thread, and publish UI state on it.</strong> In the BLE lessons, radio callbacks can arrive on threads other than the main one, and they must be back on the main thread before the UI sees them. From Lesson 08 that's the shared ViewModel's job: it publishes UI state on the main thread, whatever thread the data came from.</p>
   <p class="callout ts"><span class="label">From TypeScript</span>The browser has one UI thread too, and <code>await</code> doesn't block it, exactly like <code>delay</code> and <code>Task.sleep</code> here. What differs is how easy it is to leave that thread. A web page's JavaScript has no other thread that can touch the page (a Worker can't reach the DOM), while on Android and iOS another thread is one call away (<code>Dispatchers.Default</code>, <code>Task.detached</code>) and can reach UI objects. That is why these platforms have a written rule, and why Swift 6 enforces it in the compiler.</p>
 
   <h2>4. A second screen: navigation as a back stack</h2>
@@ -834,7 +834,7 @@ final class DeviceDetailViewController: UIViewController {
   <div class="callout gotcha">
     <span class="label">Gotcha · Android: a fast double tap navigates twice</span>
     <ul>
-      <li><strong>Compose:</strong> with <code>onClick = { navController.popBackStack() }</code>, two fast taps on our Back button popped the detail screen <em>and then the list</em>, leaving an empty <code>NavHost</code> and a blank app. <code>dropUnlessResumed { … }</code> (from <code>lifecycle-runtime-compose</code>) fixed it: the second tap arrives while the list isn't resumed yet, and it's dropped.</li>
+      <li><strong>Compose:</strong> with <code>onClick = { navController.popBackStack() }</code>, two fast taps on our Back button popped the detail screen <em>and then the list</em>, leaving an empty <code>NavHost</code> and a blank app. <code>dropUnlessResumed { … }</code> (from <code>lifecycle-runtime-compose</code>) fixed it. Inside a <code>NavHost</code> destination, the lifecycle it checks is the detail screen's back-stack entry, which stops being resumed as soon as the first tap pops it, so the second tap is dropped.</li>
       <li><strong>Fragments, worse because it's hidden:</strong> two truly simultaneous taps on an unguarded Back left the list <em>on screen</em> but popped its back-stack entry too. The <em>next</em> row tap crashed with <code>IllegalArgumentException: Navigation action/destination …:id/toDetail cannot be found from the current destination</code>. An unguarded double tap on a row crashed immediately, the same way. Checking <code>currentDestination?.id</code> before <code>navigate</code>/<code>popBackStack</code> fixed both. Tapping slowly by hand, or through one adb session, never showed the problem. It took two parallel adb sessions.</li>
     </ul>
   </div>
@@ -948,7 +948,7 @@ final class DeviceDetailViewController: UIViewController {
     <span class="label">Unaided exercise (no agent, on your m02 build)</span>
     <ol>
       <li><strong>Find the state of the detail screen.</strong> Without scrolling up, write down what state the detail screen needs. (Hint: compare it with what it <em>displays</em>.) Check your answer against section 4.</li>
-      <li><strong>Keys, made visible.</strong> Add a "Reverse" button that reverses the results. Compose/SwiftUI: give each row a local star toggle (<code>var starred by remember { mutableStateOf(false) }</code> in <code>DeviceRow</code>; <code>@State private var starred = false</code> in Swift's <code>DeviceRow</code>). Star one device and reverse: the star follows the device. Then key by position (Compose: drop <code>key = </code>; SwiftUI: <code>List(Array((devices ?? []).enumerated()), id: \.offset) { _, device in … }</code>), star, reverse again, and explain what you see. XML/UIKit: make the id comparison always return <code>false</code> (XML: <code>areItemsTheSame</code>; UIKit: append <code>UUID().uuidString</code> to each identifier) and compare the reverse animation with and without that change.</li>
+      <li><strong>Keys, made visible.</strong> Add a "Reverse" button that reverses the results. Compose/SwiftUI: give each row a local star toggle (<code>var starred by remember { mutableStateOf(false) }</code> in <code>DeviceRow</code>; <code>@State private var starred = false</code> in Swift's <code>DeviceRow</code>). Star one device and reverse: the star follows the device. Then key by position (Compose: drop <code>key = </code>; SwiftUI: <code>List(Array((devices ?? []).enumerated()), id: \.offset) { _, device in … }</code>), star, reverse again, and explain what you see. XML/UIKit: make the id comparison always return <code>false</code> (XML: <code>areItemsTheSame</code>; UIKit: append <code>"#" + UUID().uuidString</code> to each identifier, and look the device up with the part before <code>#</code> in the cell provider and in <code>didSelectRowAt</code>, or the rows come out blank) and compare the reverse animation with and without that change.</li>
       <li><strong>Block the main thread on purpose.</strong> Replace <code>delay(1_500)</code> with <code>Thread.sleep(1_500)</code> (Android), or <code>try? await Task.sleep(…)</code> with <code>Thread.sleep(forTimeInterval: 1.5)</code> (iOS). Predict whether you'll see "Scanning…", then run it. Explain the result using section 3's first rule. Revert.</li>
     </ol>
   </div>
