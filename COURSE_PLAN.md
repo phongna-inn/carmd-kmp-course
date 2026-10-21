@@ -193,8 +193,8 @@ Check status; request; handle granted, denied, and permanently denied/restricted
 ### A.3 BLE (Lessons 13–16, E3)
 Flow: scan → select → connect → discover services → discover characteristics → subscribe → receive → read → disconnect.
 - **Scan.** Check availability, enabled state and permissions; start; stream discovered devices into a list; stop (manually and on timeout); handle scan errors.
-  - Inbound port `DeviceScanning`: `scan(nameFilter): Flow<List<Device>>`, `stopScan()`. The scanning service owns the scan rule: filter by name, report each device once.
-  - Outbound port `BleScanner`: `isAvailable()`, `isEnabled()`, `startScan(): Flow<Device>`, `stopScan()`.
+  - Inbound port `DeviceScanning`: `scan(nameFilter): Flow<Device>`, each matching device once, as it's found; cancelling the collection stops the scan (Lesson 10). The scanning service owns the scan rule: filter by name, report each device once.
+  - Outbound port `BleScanner`: `scan(): Flow<Device>`, every advertisement the radio hears; cancelling the collection stops the radio (Lesson 10). `isAvailable()` and `isEnabled()` come with the real radios (Lesson 13).
 - **Connect.** Connect to the selected device; report connection state; handle failure and unexpected disconnection.
   - Inbound port `DeviceSession`: `connect(device)`, `disconnect()`, `connectionState: StateFlow<ConnectionState>`. The session service owns the connection-state machine.
   - Outbound port `BleConnection`: `connect(device)`, `disconnect()`, `connectionState: Flow<ConnectionState>`.

@@ -165,20 +165,24 @@
 
   <h2>Architecture, DI and testing</h2>
   <dl>
-    <dt><strong>Layer</strong>: presentation · domain · data</dt>
-    <dd>Groups of code with one kind of responsibility. Presentation: ViewModels and UI state. Domain: models, ports and use cases, the app's own rules. Data: adapters that provide what the ports promise. In the course each layer is a package in <code>shared</code>. The native screens sit on top. (06)</dd>
-    <dt><strong>Dependency rule</strong></dt>
-    <dd>Dependencies point toward the domain. The domain imports no other layer, and only the composition root knows every layer. (06)</dd>
-    <dt><strong>Port</strong></dt>
-    <dd>An interface in <code>commonMain</code>, owned by the code that needs it and written in the app's terms (<code>BleScanner</code>). Platform code implements it. (06)</dd>
-    <dt><strong>Adapter</strong></dt>
-    <dd>One concrete implementation of a port: simulated, a platform radio (Kotlin in <code>androidMain</code>, or Swift), a library (Kable), or a test fake. (06)</dd>
-    <dt><strong>Use case</strong></dt>
-    <dd>A domain class for one app rule, named <code>VerbNounUseCase</code> and called through <code>operator fun invoke</code>. It keeps no mutable state between calls. (06)</dd>
+    <dt><strong>Hexagonal architecture</strong> / <strong>ports and adapters</strong></dt>
+    <dd>Alistair Cockburn's pattern: an inside (the app core) that the outside reaches only through ports, with adapters plugged into the ports. The hexagon is just room to draw ports; six means nothing. (10)</dd>
+    <dt><strong>App core</strong></dt>
+    <dd>The part of the shared code that holds the app's models, ports and services, and imports nothing from Android, iOS or any framework (only Kotlin's standard library and kotlinx.coroutines). Package <code>core</code>. (10)</dd>
+    <dt><strong>Inbound port</strong></dt>
+    <dd>An interface for what the app offers, one per capability (<code>DeviceScanning</code>), implemented by a service and called by inbound adapters. Package <code>core.inbound</code>. Elsewhere: driving or primary port, input boundary. (10)</dd>
+    <dt><strong>Outbound port</strong></dt>
+    <dd>An interface for what the app needs from the outside world, named in the app's terms (<code>BleScanner</code>, never <code>ApiClient</code>), implemented by outbound adapters. Package <code>core.outbound</code>. Elsewhere: driven or secondary port; roughly a repository. (10)</dd>
+    <dt><strong>Service</strong></dt>
+    <dd>A class in the app core that implements an inbound port by applying the app's rules and calling outbound ports (<code>ScanningService</code>). Elsewhere, each method is roughly a use case. (10)</dd>
+    <dt><strong>Inbound adapter</strong></dt>
+    <dd>Code that drives the app through inbound ports: the shared ViewModels, and tests. Package <code>adapter.inbound</code>. (10)</dd>
+    <dt><strong>Outbound adapter</strong></dt>
+    <dd>One concrete implementation of an outbound port for one platform or technology: the simulated scanner, an Android radio (Kotlin in <code>androidMain</code>), a Swift CoreBluetooth class, a Ktor HTTP client. Shared ones live in <code>adapter.outbound</code>. (10)</dd>
     <dt><strong>Dependency injection (DI)</strong> / <strong>constructor injection</strong></dt>
-    <dd>A class receives its dependencies (through its constructor) instead of building them. The app decides what to pass. (06)</dd>
+    <dd>A class receives its dependencies (through its constructor) instead of building them. The app decides what to pass. (10)</dd>
     <dt><strong>Composition root</strong></dt>
-    <dd>The one place that builds the object graph and names the adapters: <code>AppContainer</code> by hand, then Koin's <code>appModule</code>. (06)</dd>
+    <dd>The one place that builds the object graph and names the services and adapters: which service backs each inbound port, which adapter backs each outbound port. <code>AppContainer</code> by hand, then a Koin module. (10)</dd>
     <dt><strong>Service locator</strong></dt>
     <dd>A registry that classes ask for their dependencies (<code>KoinComponent</code> + <code>get()</code>). It hides what a class needs, so the course allows it only at the edges. (06)</dd>
     <dt><strong>DI container</strong> / <strong>Koin module</strong></dt>

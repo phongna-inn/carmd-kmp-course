@@ -1,0 +1,1688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>10 — The hexagon: app core, ports, adapters, DI by hand</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+<script src="../assets/sorter.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 10 · Week 2 · Day 10 · Native Device Monitor course</p>
+  <h1>The Hexagon: App Core, Ports, Adapters, DI by Hand</h1>
+  <div class="meta">
+    <span class="tag">~2 h · +0.25 h per extra UI track</span>
+    <span class="tag">Milestone: m05 shared code restructured as app core + adapters, wired by hand</span>
+    <span class="tag">Prereq: <a href="09-kotlin-swift-with-skie.html">09</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> in m04 the shared ViewModel builds its own scanner: its factory says <code>DeviceListViewModel(FakeDeviceScanner())</code>. From Lesson 13 the app needs two real radios instead, a Kotlin one that only exists on Android and a Swift one that only exists on iOS, and shared code can name neither. Today you restructure the shared code into a <strong>hexagon</strong>: an <strong>app core</strong> that holds the app's rules and imports nothing from Android, iOS or any framework, with <strong>ports</strong> on its edges and <strong>adapters</strong> plugged into them. The ViewModel reaches scanning only through a port, the radio sits behind another port, and one file wires them together. That's milestone <strong>m05</strong>. It's also the answer to a question you'll ask every day on the team's app: where does this code go?
+  </div>
+
+  <p><span class="tag">Primary source</span> Alistair Cockburn's <a href="https://alistair.cockburn.us/hexagonal-architecture/">Hexagonal architecture</a>, the article that named the pattern. Read its "Intent" and "Nature of the solution" sections after section 2.</p>
+  <p><span class="tag">Tracks</span> Almost everything today is in <code>shared/</code>, the same on every track. On each UI track the screen changes one line, the one that gets the ViewModel (section 6), and Android files change their imports for the new packages. Each excerpt shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m04</h2>
+  <p>The screens look the same, and scanning behaves the same, with one exception: the filter <code>fail</code> no longer fakes a radio error (section 1 says why, and section 6 shows the error dialog another way). What changes is the shape of the shared code:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m04</th><th>m05</th></tr>
+    <tr><td>where the ViewModel gets its scanner</td><td>its own factory builds a <code>FakeDeviceScanner</code></td><td>it receives a <code>DeviceScanning</code> port through its constructor</td></tr>
+    <tr><td>the scan rule</td><td>the name filter, in <code>SampleDevices.matching</code></td><td>the name filter <em>and</em> "each device once", in <code>ScanningService</code></td></tr>
+    <tr><td>the pretend radio</td><td><code>FakeDeviceScanner</code>: each matching device once, then waits</td><td><code>SimulatedBleScanner</code>: every device, over and over, like a real radio</td></tr>
+    <tr><td>who picks the scanner</td><td>the ViewModel</td><td><code>AppContainer</code>, the composition root</td></tr>
+    <tr><td>files</td><td colspan="2">shared: five files in the root package deleted, ten files added in <code>core</code>, <code>adapter</code> and <code>di</code> packages; each UI track: the list screen's ViewModel line; Android tracks: imports in the screens that use shared types</td></tr>
+  </table>
+  </div>
+
+  <h2>1. The problem: a ViewModel that builds its own scanner</h2>
+  <p>Lesson 08 left this note on the m03 factory: the ViewModel's own factory picks a concrete scanner, so nothing else can be passed in. Here it is in m04:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/DeviceListViewModel.kt (m04)</figcaption>
+<pre><code>class DeviceListViewModel(
+<mark>    private val scanner: FakeDeviceScanner,</mark>
+) : ViewModel() {
+<span class="elide">⋯  uiState, startScan(filter), errorShown()</span>
+    companion object {
+        val SCAN_TIMEOUT = 3.seconds
+
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+<mark>            initializer { DeviceListViewModel(FakeDeviceScanner()) }</mark>
+        }
+    }
+}</code></pre>
+  </figure>
+  <p>And <code>FakeDeviceScanner</code> does three different jobs in one function:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/FakeDeviceScanner.kt (m04)</figcaption>
+<pre><code>class FakeDeviceScanner {
+    fun scan(filter: String): Flow&lt;Device&gt; = flow {
+        // Test hook for now: the filter "fail" simulates a radio error.
+<mark>        if (filter.trim().equals("fail", ignoreCase = true)) {</mark>
+            delay(500)
+            throw ScanException("Bluetooth adapter not responding (simulated).")
+        }
+<mark>        for (device in SampleDevices.matching(filter)) {</mark>
+<mark>            delay(300)</mark>
+<mark>            emit(device)</mark>
+        }
+        awaitCancellation()
+    }
+}</code></pre>
+  </figure>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 700 250" role="img" aria-labelledby="l10-problem-title">
+      <title id="l10-problem-title">The problem in m04. The DeviceListViewModel's own factory builds a FakeDeviceScanner, so the ViewModel names its scanner's class. FakeDeviceScanner mixes three jobs: a test hook that fails on the filter "fail", the app's rule that keeps names containing the filter, and a pretend radio that emits devices every 0.3 seconds. From Lesson 13 the app needs an Android radio written in Kotlin in androidMain and an iOS radio written in Swift in the iOS app. Shared code in commonMain can import neither, so the ViewModel can't build them.</title>
+      <defs><marker id="l10-problem-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="14" y="20" font-weight="600">m04: shared code (commonMain)</text>
+      <rect class="box" x="14" y="34" width="170" height="64" rx="6"/>
+      <text class="mono small" x="24" y="56">DeviceListViewModel</text>
+      <text class="small muted" x="24" y="74">its own factory calls</text>
+      <text class="mono small" x="24" y="89">FakeDeviceScanner()</text>
+      <rect class="box" x="220" y="34" width="210" height="110" rx="6"/>
+      <text class="mono small" x="230" y="56">FakeDeviceScanner</text>
+      <text class="small" x="230" y="78">1. test hook: "fail" → error</text>
+      <text class="small" x="230" y="98">2. app rule: name contains filter</text>
+      <text class="small" x="230" y="118">3. pretend radio: a device</text>
+      <text class="small" x="244" y="132">every 0.3 s</text>
+      <path class="edge" d="M186,66 L218,66" marker-end="url(#l10-problem-arrow)"/>
+      <text class="small" x="470" y="20" font-weight="600">from Lesson 13</text>
+      <g data-part="android">
+        <rect class="box" x="470" y="34" width="216" height="50" rx="6"/>
+        <text class="title small" x="480" y="54">Android radio</text>
+        <text class="small muted" x="480" y="72">Kotlin, in androidMain</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="470" y="100" width="216" height="50" rx="6"/>
+        <text class="title small" x="480" y="120">iOS radio</text>
+        <text class="small muted" x="480" y="138">Swift, in the iOS app</text>
+      </g>
+      <path class="edge dashed" d="M120,100 L120,190 L466,190 L466,152" />
+      <text class="small" x="300" y="183">✗ can't build these</text>
+      <text class="small muted" x="140" y="210">commonMain can import neither: Android classes and Swift classes aren't visible</text>
+      <text class="small muted" x="140" y="226">to shared code. A ViewModel that builds its own scanner can't use them.</text>
+    </svg>
+    <figcaption>One class decides what the ViewModel talks to, and it mixes a rule of the app with a pretend radio and a test hook.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <p>Three problems, each of which gets worse as the app grows:</p>
+  <ol class="walk">
+    <li><strong>The ViewModel can't be given a different scanner.</strong> Lesson 13 needs a different one per platform, and Lesson 11's tests need one they control. A Swift class can implement a Kotlin interface, but <code>commonMain</code> can never import a Swift class. So the ViewModel must ask for an <em>interface</em>, and someone outside it must choose what to pass.</li>
+    <li><strong>The app's rule is hidden in a fake.</strong> "Show devices whose name contains the filter" is a rule of the app, true on both platforms whatever the radio. In m04 it lives in <code>SampleDevices.matching</code>, inside the pretend radio, so it would vanish when the real radio arrives. A real radio also brings a second rule: it can report the same device again and again (Android's scanner can call back for every advertisement it hears, <a href="https://developer.android.com/reference/android/bluetooth/le/ScanSettings#CALLBACK_TYPE_ALL_MATCHES"><code>CALLBACK_TYPE_ALL_MATCHES</code></a>, and CoreBluetooth does when you turn off its duplicate filtering, <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerscanoptionallowduplicateskey"><code>CBCentralManagerScanOptionAllowDuplicatesKey</code></a>), so someone has to report each device only once.</li>
+    <li><strong>A test hook in user input.</strong> Typing <code>fail</code> into the filter fakes a radio error. That's handy while the app has no tests, but it mixes what the user typed with what the radio did. From today, an error is something a radio adapter throws; Lesson 11's tests use a fake radio that fails on command, and section 6 shows the dialog by plugging in a failing one.</li>
+  </ol>
+
+  <h2>2. The hexagon in five words</h2>
+  <p>The pattern is older than mobile. Alistair Cockburn named it <strong>hexagonal architecture</strong>, also called <strong>ports and adapters</strong>, with this intent: "Allow an application to equally be driven by users, programs, automated test or batch scripts, and to be developed and tested in isolation from its eventual run-time devices and databases" (<a href="https://alistair.cockburn.us/hexagonal-architecture/">Hexagonal architecture</a>). Swap "devices and databases" for "Bluetooth radios", and that's what the app needs. The course uses five words for it, the same in every lesson from now on:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Word</th><th>What it is</th><th>In m05</th></tr>
+    <tr><td><strong>app core</strong></td><td>the part of the shared code that holds the app's models, ports and services, and imports nothing from Android, iOS or any framework</td><td>package <code>core</code></td></tr>
+    <tr><td><strong>inbound port</strong></td><td>an interface for what the app <em>offers</em>, one per capability. A service implements it; inbound adapters call it</td><td><code>DeviceScanning</code></td></tr>
+    <tr><td><strong>outbound port</strong></td><td>an interface for what the app <em>needs</em> from the outside world, named in the app's terms. Outbound adapters implement it</td><td><code>BleScanner</code></td></tr>
+    <tr><td><strong>service</strong></td><td>a class in the app core that implements an inbound port by applying the app's rules and calling outbound ports</td><td><code>ScanningService</code></td></tr>
+    <tr><td><strong>adapter</strong></td><td><em>inbound</em>: code that drives the app through inbound ports (the shared ViewModels, and the tests from Lesson 11). <em>Outbound</em>: one concrete implementation of an outbound port for one platform or technology</td><td><code>DeviceListViewModel</code> (inbound), <code>SimulatedBleScanner</code> (outbound)</td></tr>
+  </table>
+  </div>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 345" role="img" aria-labelledby="l10-m05-title">
+      <title id="l10-m05-title">The hexagon at m05. On the left, the Android screen and the iOS screen call the DeviceListViewModel, the inbound adapter. It calls the inbound port DeviceScanning on the app core's left edge. Inside the app core, a hexagon, ScanningService implements DeviceScanning and calls the outbound port BleScanner on the right edge; the models are Device and ScanException. On the right, the outbound adapter SimulatedBleScanner, with its SampleDevices, implements BleScanner. Below, di/AppContainer, the composition root, builds the adapter, the service and the ViewModel and wires them together. Solid arrows are calls; dashed arrows mean implements.</title>
+      <defs><marker id="l10-m05-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="android">
+        <rect class="box" x="10" y="80" width="110" height="50" rx="6"/>
+        <text class="title small" x="20" y="100">Android screen</text>
+        <text class="small muted" x="20" y="118">Compose · XML</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="10" y="170" width="110" height="50" rx="6"/>
+        <text class="title small" x="20" y="190">iOS screen</text>
+        <text class="small muted" x="20" y="208">SwiftUI · UIKit</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="140" y="105" width="130" height="90" rx="6"/>
+        <text class="title small" x="150" y="125">inbound adapter</text>
+        <text class="mono small" x="150" y="145">DeviceList</text>
+        <text class="mono small" x="150" y="160">ViewModel</text>
+        <text class="small muted" x="150" y="182">adapter.inbound</text>
+      </g>
+      <g data-part="core">
+        <polygon class="box" points="290,165 335,55 545,55 590,165 545,275 335,275"/>
+        <text class="title" x="440" y="82" text-anchor="middle">App core</text>
+        <text class="small muted" x="440" y="98" text-anchor="middle">package core</text>
+        <rect class="box" x="380" y="185" width="120" height="40" rx="6"/>
+        <text class="mono small" x="390" y="202">ScanningService</text>
+        <text class="small muted" x="390" y="218">service</text>
+        <text class="small muted" x="440" y="252" text-anchor="middle">models: Device · ScanException</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="318" y="118" width="104" height="44" rx="6"/>
+        <text class="mono small" x="326" y="136">DeviceScanning</text>
+        <text class="small muted" x="326" y="153">inbound port</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="458" y="118" width="104" height="44" rx="6"/>
+        <text class="mono small" x="466" y="136">BleScanner</text>
+        <text class="small muted" x="466" y="153">outbound port</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="610" y="105" width="140" height="90" rx="6"/>
+        <text class="title small" x="620" y="125">outbound adapter</text>
+        <text class="mono small" x="620" y="145">SimulatedBle</text>
+        <text class="mono small" x="620" y="160">Scanner</text>
+        <text class="small muted" x="620" y="182">+ SampleDevices</text>
+      </g>
+      <path class="edge" d="M120,105 L138,128" marker-end="url(#l10-m05-arrow)"/>
+      <path class="edge" d="M120,195 L138,172" marker-end="url(#l10-m05-arrow)"/>
+      <path class="edge" d="M270,140 L316,140" marker-end="url(#l10-m05-arrow)"/>
+      <path class="edge dashed" d="M400,185 L385,164" marker-end="url(#l10-m05-arrow)"/>
+      <path class="edge" d="M480,185 L495,164" marker-end="url(#l10-m05-arrow)"/>
+      <path class="edge dashed" d="M608,140 L564,140" marker-end="url(#l10-m05-arrow)"/>
+      <rect class="box" x="140" y="295" width="610" height="40" rx="6"/>
+      <text class="mono small" x="150" y="313">di/AppContainer</text>
+      <text class="small muted" x="260" y="313">the composition root: builds the adapter, the service and the ViewModel,</text>
+      <text class="small muted" x="260" y="327">and passes each one what it needs. The only file that names them all.</text>
+    </svg>
+    <figcaption>m05. Solid arrows are calls; dashed arrows mean "implements". Nothing inside the hexagon knows what's outside it.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound (port and adapter)</li>
+    <li data-part="outbound">Outbound (port and adapter)</li>
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <p><strong>Why a hexagon?</strong> Not for the number six. Cockburn: "The hexagon is not a hexagon because the number six is important, but rather to allow the people doing the drawing to have room to insert ports and adapters as they need". The point of the drawing is that there's an inside, the app core, and an outside, and the outside talks to the inside only through ports. <strong>Inbound</strong> and <strong>outbound</strong> are the course's names for Cockburn's two sides: a primary actor "drives the application", and the application drives a secondary actor. "They could be also called driving adapters and driven adapters." You'll meet <em>driving/driven</em> and <em>primary/secondary</em> in other codebases; they mean inbound and outbound.</p>
+  <p><strong>One rule for where code goes.</strong> UI code goes in the screen. A rule of the app goes in a service. Anything that talks to a platform, a library or the network goes in an outbound adapter, behind an outbound port. ViewModels talk only to inbound ports. And the app core imports nothing from Android, iOS or any framework: only Kotlin's standard library and kotlinx.coroutines, whose <code>Flow</code> is how the ports describe a stream, plus the core's own packages. No <code>androidx</code>, no <code>platform.*</code>, no Koin or Ktor.</p>
+  <p>Try the rule. Where does each of these belong?</p>
+  <div class="sorter" data-buckets="screen|inbound adapter|app core|outbound adapter|composition root">
+    <div class="sort-item" data-answer="app core">
+      <span class="sort-label"><code>interface BleScanner { fun scan(): Flow&lt;Device&gt; }</code></span>
+      <p class="why">An outbound port: what the app needs, in its own terms. It sits in the core, in <code>core.outbound</code>, because every radio and every test fake implements it, and the core may not import any of them.</p>
+    </div>
+    <div class="sort-item" data-answer="outbound adapter">
+      <span class="sort-label"><code>class SimulatedBleScanner : BleScanner</code></span>
+      <p class="why">One concrete way of providing what the port promises. Lesson 13's real radios are outbound adapters too, one per platform.</p>
+    </div>
+    <div class="sort-item" data-answer="app core">
+      <span class="sort-label">"Show each device once, and only names that contain the filter"</span>
+      <p class="why">A rule of the app, the same on every screen and both platforms, whatever the radio: a service, <code>ScanningService</code>.</p>
+    </div>
+    <div class="sort-item" data-answer="inbound adapter">
+      <span class="sort-label">"After 3 s, stop scanning and show what was found"</span>
+      <p class="why">This screen's behaviour, with its own states (<code>Scanning</code> → <code>Finished</code>): the ViewModel. Another screen could scan with a different timeout, or until the user taps Stop.</p>
+    </div>
+    <div class="sort-item" data-answer="screen">
+      <span class="sort-label">"Show the status text in red when nothing was found"</span>
+      <p class="why">How the state looks. The ViewModel says <code>Finished(emptyList())</code>, and each platform draws that in its own style.</p>
+    </div>
+    <div class="sort-item" data-answer="composition root">
+      <span class="sort-label">"In this app, <code>BleScanner</code> means <code>SimulatedBleScanner</code>"</span>
+      <p class="why">The wiring decision. It's the line Lesson 13 changes, so it lives in exactly one place, <code>AppContainer</code>.</p>
+    </div>
+    <div class="sort-item" data-answer="outbound adapter">
+      <span class="sort-label">Lesson 13's Swift class that drives <code>CBCentralManager</code></span>
+      <p class="why">An outbound adapter like the simulated one, written in Swift. It conforms to the Kotlin <code>BleScanner</code> interface, which Swift sees as a protocol in the framework header.</p>
+    </div>
+    <p class="sort-score"></p>
+  </div>
+  <p class="callout ts"><span class="label">From TypeScript</span>If you've used Angular, you know this shape. A port is an abstract class or an <code>InjectionToken</code>; an adapter is the <code>@Injectable</code> that implements it; constructor injection is <code>constructor(private scanning: DeviceScanning)</code>; and the composition root is the <code>providers: [{ provide: BleScanner, useClass: SimulatedBleScanner }]</code> array. The difference is that Angular's injector is built in, and Kotlin has none: today you wire everything by hand, and Lesson 11 adds Koin as the injector.</p>
+  <div class="callout">
+    <span class="label">Sidebar · reading Clean-style code</span>
+    Much Android code, and much of what you'll read online, uses Clean Architecture words. They map roughly onto the hexagon:
+    <div class="table-wrap">
+    <table>
+      <tr><th>Clean word</th><th>Hexagon (this course)</th><th>The difference</th></tr>
+      <tr><td><strong>use case</strong> (<code>ScanForDevicesUseCase</code>, one class per action)</td><td>a <strong>service method</strong> (<code>ScanningService.scan</code>)</td><td>one service per capability holds all its actions, instead of one class per action</td></tr>
+      <tr><td><strong>repository</strong> (<code>DeviceRepository</code>)</td><td>an <strong>outbound port</strong>, with its adapter</td><td>a repository is often a class in a data layer; an outbound port is an interface owned by the app core</td></tr>
+      <tr><td><strong>input boundary</strong></td><td>an <strong>inbound port</strong></td><td>the same idea: the interface the outside calls, implemented inside</td></tr>
+      <tr><td>domain layer · data layer · presentation layer</td><td>app core · outbound adapters · inbound adapters</td><td>the hexagon has an inside and an outside rather than a stack of layers</td></tr>
+    </table>
+    </div>
+    When you read a <code>…UseCase</code> class in the team's code, think "a service method". When you read <code>…Repository</code>, ask which outbound port it is.
+  </div>
+
+  <h2>3. Packages: <code>core</code>, <code>inbound</code>, <code>outbound</code></h2>
+  <p>Files move into packages named after their part of the hexagon, so every <code>import</code> line shows which part it reaches into. The five m04 files in the root package (<code>Device.kt</code>, <code>DeviceListUiState.kt</code>, <code>DeviceListViewModel.kt</code>, <code>FakeDeviceScanner.kt</code>, <code>SampleDevices.kt</code>) are deleted. <code>Greeting.kt</code> and the <code>Platform*.kt</code> files from Lesson 05 stay where they are. Under <code>shared/src/commonMain/kotlin/com/example/devicemonitor/</code>:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Package</th><th>Part</th><th>Files</th></tr>
+    <tr data-part="core"><td><code>core</code></td><td>app core: models and services</td><td><code>Device.kt</code> · <code>ScanException.kt</code> · <code>ScanningService.kt</code></td></tr>
+    <tr data-part="inbound"><td><code>core.inbound</code></td><td>app core: inbound ports</td><td><code>DeviceScanning.kt</code></td></tr>
+    <tr data-part="outbound"><td><code>core.outbound</code></td><td>app core: outbound ports</td><td><code>BleScanner.kt</code></td></tr>
+    <tr data-part="inbound"><td><code>adapter.inbound</code></td><td>inbound adapters</td><td><code>DeviceListUiState.kt</code> · <code>DeviceListViewModel.kt</code></td></tr>
+    <tr data-part="outbound"><td><code>adapter.outbound</code></td><td>shared outbound adapters</td><td><code>SimulatedBleScanner.kt</code> · <code>SampleDevices.kt</code></td></tr>
+    <tr><td><code>di</code></td><td>the composition root</td><td><code>AppContainer.kt</code></td></tr>
+  </table>
+  </div>
+  <p><strong>Why <code>inbound</code>/<code>outbound</code> and not <code>in</code>/<code>out</code>?</strong> Some hexagonal code in Java uses <code>in</code> and <code>out</code>: the <a href="https://github.com/thombergs/buckpal">BuckPal</a> sample application, for example, has packages <code>application.port.in</code> and <code>adapter.out</code>. In Kotlin, <code>in</code> is a <strong>hard keyword</strong>: Kotlin's keyword list says hard keywords "are always interpreted as keywords and cannot be used as identifiers" (<a href="https://kotlinlang.org/docs/keyword-reference.html">Keywords and operators</a>). A package named <code>core.in</code> doesn't compile:</p>
+<pre><code>e: …/DeviceScanning.kt:1:40 Syntax error: Package name must be a '.'-separated identifier list.</code></pre>
+  <p>You could write <code>core.`in`</code> in backticks, in every package and import line. (<code>out</code> on its own would compile: it's a <em>modifier</em> keyword, which "can be used as identifiers in other contexts".) <code>inbound</code> and <code>outbound</code> need no backticks, read as the words the course uses, and keep the two names symmetrical.</p>
+
+  <h2>4. The app core</h2>
+  <p>Start with the model and the error. Both are the words the ports speak, so they live in <code>core</code> and depend on nothing:</p>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/Device.kt · ScanException.kt</figcaption>
+<pre><code><mark>package com.example.devicemonitor.core</mark>
+
+data class Device(val id: String, val name: String, val rssi: Int)
+<span class="elide">⋯  ScanException.kt, same package:</span>
+// A scan that failed, for example because the radio stopped responding. Outbound adapters
+// throw it, and it reaches inbound adapters through DeviceScanning.
+<mark>class ScanException(message: String) : Exception(message)</mark></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><code>Device</code> is unchanged except for its package: a <strong>model</strong>, used by every part of the app.</li>
+    <li><code>ScanException</code> moved out of the pretend radio. Adapters throw it and the ViewModel catches it, so it belongs to neither of them: it's part of what both ports promise.</li>
+  </ol>
+  <p>The inbound port is what the ViewModel needs from the app. Look at its one method: it has exactly the shape of m04's <code>FakeDeviceScanner.scan(filter)</code>. The ViewModel already used that shape; now it's a promise instead of a class.</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceScanning.kt</figcaption>
+<pre><code>package com.example.devicemonitor.core.inbound
+<span class="elide">⋯  imports: core.Device, kotlinx.coroutines.flow.Flow</span>
+// Inbound port: what the app offers for finding devices. Inbound adapters (the shared
+// ViewModels) call it, and ScanningService implements it.
+<mark>interface DeviceScanning {</mark>
+    // Devices whose name contains nameFilter, each reported once, as they are found.
+    // Collecting starts a scan, and cancelling the collector stops it. Throws ScanException.
+<mark>    fun scan(nameFilter: String): Flow&lt;Device&gt;</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>One inbound port per capability, not per action.</strong> "Device scanning" is a capability. If the app later needs to stop a scan from a button or check whether the radio is on, those become methods on <code>DeviceScanning</code>, not new ports. The finished app has about five inbound ports (section 7).</li>
+    <li><strong>Start and stop are collect and cancel.</strong> A <code>Flow</code> is cold (Lesson 01): collecting it starts the scan, and cancelling the collector stops it. So the scan can't be left running by a forgotten <code>stopScan()</code>.</li>
+    <li><strong>The comment is the contract.</strong> An interface can't enforce "each reported once"; the service that implements it must. Lesson 11 turns this comment into tests.</li>
+  </ol>
+  <p>The outbound port is what the app needs from a radio, and it promises only what every radio can do:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleScanner.kt</figcaption>
+<pre><code>package com.example.devicemonitor.core.outbound
+<span class="elide">⋯  imports: core.Device, kotlinx.coroutines.flow.Flow</span>
+// Outbound port: what the app needs from a Bluetooth radio, in the app's own terms.
+// Outbound adapters implement it: a simulated radio for now, real ones from Lesson 13.
+<mark>interface BleScanner {</mark>
+    // Every device the radio hears, again with each advertisement it hears. Collecting
+    // starts the radio scan, and cancelling the collector stops it. Throws ScanException.
+<mark>    fun scan(): Flow&lt;Device&gt;</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Named in the app's terms.</strong> <code>Flow&lt;Device&gt;</code>, not Android's <code>ScanResult</code> or iOS's <code>CBPeripheral</code>. Each adapter translates its platform's types into ours, so the core never mentions a platform.</li>
+    <li><strong>No filter parameter.</strong> The radios' own scan filters can't do "name contains this text, ignoring case", so the port doesn't promise it. Filtering is the app's rule, and it moves into the service. Lesson 13 adds what the real radios need, such as whether Bluetooth is on.</li>
+    <li><strong>Why an interface and not <code>expect</code>/<code>actual</code>?</strong> Lesson 05's <code>expect fun platformName()</code> gives exactly one implementation per platform, chosen at compile time, and the iOS one must be Kotlin. This port will have several: simulated, a test fake, and the real radios, one of them in Swift. JetBrains says the same: "With interfaces, you don't limit your design to one implementation per target platform. Also, it's much easier to substitute a fake implementation in tests or provide multiple implementations on a single platform" (<a href="https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html">Expected and actual declarations</a>).</li>
+  </ol>
+  <p>The service implements the inbound port, holds the rule, and calls the outbound port:</p>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanningService.kt</figcaption>
+<pre><code>package com.example.devicemonitor.core
+<span class="elide">⋯  imports: core.inbound.DeviceScanning, core.outbound.BleScanner, Flow, flow</span>
+// Service: the app's scan rule on top of a raw radio scan. Keep the devices whose name
+// contains the filter (ignoring case and surrounding spaces), and report each device once.
+<mark>class ScanningService(private val scanner: BleScanner) : DeviceScanning {</mark>
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+<mark>        val wanted = nameFilter.trim()</mark>
+<mark>        val seen = mutableSetOf&lt;String&gt;()</mark>
+<mark>        scanner.scan().collect { device -&gt;</mark>
+<mark>            if (device.name.contains(wanted, ignoreCase = true) &amp;&amp; seen.add(device.id)) {</mark>
+                emit(device)
+            }
+        }
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>(private val scanner: BleScanner) : DeviceScanning</code></strong>: the service receives an outbound port through its constructor, and implements an inbound port. It never builds a scanner. That's <strong>constructor injection</strong>, which Android's guide defines as: "you take the dependencies of a class and provide them rather than having the class instance obtain them itself" (<a href="https://developer.android.com/training/dependency-injection">Dependency injection in Android</a>).</li>
+    <li><strong><code>seen</code> is created inside <code>flow { }</code></strong>, so every collection, every scan, starts with an empty set. As a property of the class, it would remember the previous scan's devices and hide them all on the next scan. The service keeps no state between calls.</li>
+    <li><strong><code>seen.add(device.id)</code></strong> returns <code>true</code> only the first time an id is added: one call both checks and records. The filter is m04's rule, trimmed once per scan and case-insensitive.</li>
+    <li><strong>The imports are the proof.</strong> This file imports two core packages and kotlinx.coroutines. Nothing in it could tell an Android radio from a Swift one from a test fake.</li>
+  </ol>
+
+  <h2>5. The adapters</h2>
+  <p>The outbound adapter is the pretend radio, now honest about being a radio: it hears every device over and over, as a real one can:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SimulatedBleScanner.kt</figcaption>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+<span class="elide">⋯  imports: core.Device, core.outbound.BleScanner, delay, Flow, flow</span>
+// Outbound adapter: a pretend radio behind the BleScanner port. Like a real one, it hears
+// every device over and over, one advertisement every 0.3 s, until the collector cancels.
+<mark>class SimulatedBleScanner : BleScanner {</mark>
+    override fun scan(): Flow&lt;Device&gt; = flow {
+<mark>        while (true) {</mark>
+            for (device in SampleDevices.all) {
+                delay(300)
+                emit(device)
+            }
+        }
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>: BleScanner</code></strong> and <code>override</code>: an adapter plugs into a port by implementing it. Nothing in the app core names this class, and only the composition root does outside its own package.</li>
+    <li><strong><code>while (true)</code></strong>: after the fifth device, at 1.5 s, it starts again with the first. The rows on screen still look exactly as in m04, five of them, because the service drops the repeats. Exercise 3 shows what happens without that rule.</li>
+    <li><code>SampleDevices</code> moves into the same package, without <code>matching</code>: the filter now lives in the service. Its <code>all</code> list and <code>find(id)</code> are unchanged.</li>
+  </ol>
+  <p>The inbound adapter is the ViewModel. Only two things change: its constructor asks for the port, and <code>startScan</code> calls it. The timeout, the copies and the error handling are Lesson 08's, line for line.</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModel.kt</figcaption>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+<span class="elide">⋯  imports: androidx.lifecycle, core.Device, core.ScanException, core.inbound.DeviceScanning, coroutines</span>
+// Inbound adapter: turns the screen's events into calls on the DeviceScanning port, and
+// the results into UI state. It knows the port only, never the service or a scanner.
+class DeviceListViewModel(
+<mark>    private val scanning: DeviceScanning,</mark>
+) : ViewModel() {
+<span class="elide">⋯  _uiState, uiState, scanJob: as in m04</span>
+    fun startScan(filter: String) {
+<span class="elide">⋯  ignore while a scan runs; Scanning(emptyList()); launch; found</span>
+            try {
+                withTimeoutOrNull(SCAN_TIMEOUT) {
+<mark>                    scanning.scan(filter).collect { device -&gt;</mark>
+<span class="elide">⋯  found += device; Scanning(found.toList())</span>
+                }
+<span class="elide">⋯  Finished(found.toList()); catch (e: ScanException) → Idle + errorMessage</span>
+    }
+<span class="elide">⋯  errorShown(): as in m04</span>
+    companion object {
+<mark>        val SCAN_TIMEOUT = 3.seconds</mark>
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>private val scanning: DeviceScanning</code></strong>: the type is the inbound port. The ViewModel could be handed <code>ScanningService</code>, or in Lesson 11 a test's own class that implements the port, and it can't tell which. It imports nothing from <code>core.outbound</code> or <code>adapter.outbound</code>.</li>
+    <li><strong>The <code>Factory</code> is gone from the companion object.</strong> It had to name a concrete scanner, which is exactly the knowledge this lesson moves out. <code>SCAN_TIMEOUT</code> stays.</li>
+    <li><strong>The 3-second timeout stays here</strong>, not in the service: it's this screen's behaviour (the sorter in section 2). The scan rule that's true for every screen is in the service.</li>
+    <li><code>DeviceListUiState.kt</code> moves into <code>adapter.inbound</code> too: UI state belongs to the ViewModel. Only its package line and the <code>Device</code> import change.</li>
+  </ol>
+  <p>Here is one scan, from the tap to the radio and back:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 270" role="img" aria-labelledby="l10-path-title">
+      <title id="l10-path-title">One call path at m05, from the screen to the adapter and back. Top row, the calls, left to right: the user taps Scan on the screen; the screen calls DeviceListViewModel.startScan with the filter; the ViewModel collects DeviceScanning.scan with the filter, an inbound port, which is ScanningService.scan; the service collects BleScanner.scan, an outbound port, which is SimulatedBleScanner.scan. Bottom row, the devices coming back, right to left: the simulated radio emits every sample device, again and again, one every 0.3 seconds; the service keeps names that contain the filter and drops devices it has already seen; the ViewModel adds each device to found and updates uiState to Scanning; the screen re-renders the list. After 3 seconds the ViewModel's timeout cancels the collection, which stops the service's collection and the simulated radio, and the state becomes Finished.</title>
+      <defs><marker id="l10-path-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="10" y="18" font-weight="600">calls →</text>
+      <rect class="box" x="10" y="28" width="113" height="62" rx="6"/>
+      <text class="small" x="18" y="48">the screen</text>
+      <text class="small muted" x="18" y="64">Scan tapped</text>
+      <g data-part="inbound">
+        <rect class="box" x="135" y="28" width="113" height="62" rx="6"/>
+        <text class="mono small" x="143" y="46">DeviceList</text>
+        <text class="mono small" x="143" y="60">ViewModel</text>
+        <text class="mono small" x="143" y="78">startScan(f)</text>
+        <rect class="box" x="260" y="28" width="113" height="62" rx="6"/>
+        <text class="mono small" x="268" y="46">DeviceScanning</text>
+        <text class="mono small" x="268" y="62">.scan(f)</text>
+        <text class="small muted" x="268" y="80">inbound port</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="385" y="28" width="113" height="62" rx="6"/>
+        <text class="mono small" x="393" y="46">Scanning</text>
+        <text class="mono small" x="393" y="60">Service</text>
+        <text class="mono small" x="393" y="78">.scan(f)</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="510" y="28" width="113" height="62" rx="6"/>
+        <text class="mono small" x="518" y="46">BleScanner</text>
+        <text class="mono small" x="518" y="62">.scan()</text>
+        <text class="small muted" x="518" y="80">outbound port</text>
+        <rect class="box" x="635" y="28" width="113" height="62" rx="6"/>
+        <text class="mono small" x="643" y="46">SimulatedBle</text>
+        <text class="mono small" x="643" y="60">Scanner</text>
+        <text class="mono small" x="643" y="78">.scan()</text>
+      </g>
+      <path class="edge" d="M123,59 L133,59" marker-end="url(#l10-path-arrow)"/>
+      <path class="edge" d="M248,59 L258,59" marker-end="url(#l10-path-arrow)"/>
+      <path class="edge" d="M373,59 L383,59" marker-end="url(#l10-path-arrow)"/>
+      <path class="edge" d="M498,59 L508,59" marker-end="url(#l10-path-arrow)"/>
+      <path class="edge" d="M623,59 L633,59" marker-end="url(#l10-path-arrow)"/>
+      <text class="small muted" x="268" y="106">a port is an interface: the call</text>
+      <text class="small muted" x="268" y="120">lands in whatever implements it</text>
+      <text class="small" x="10" y="146" font-weight="600">← devices</text>
+      <path class="edge" d="M748,160 L12,160" marker-end="url(#l10-path-arrow)"/>
+      <text class="small" x="635" y="180">emits every sample</text>
+      <text class="small" x="635" y="194">device, again and</text>
+      <text class="small" x="635" y="208">again, every 0.3 s</text>
+      <text class="small" x="385" y="180">keeps names with the</text>
+      <text class="small" x="385" y="194">filter, drops devices</text>
+      <text class="small" x="385" y="208">it has already seen</text>
+      <text class="small" x="135" y="180">adds each to found,</text>
+      <text class="small" x="135" y="194">uiState = Scanning</text>
+      <text class="small" x="10" y="180">re-renders</text>
+      <text class="small" x="10" y="194">the list</text>
+      <text class="small muted" x="10" y="240">At 3 s the ViewModel's timeout cancels its collection. Cancelling travels right: the service's collection and the radio</text>
+      <text class="small muted" x="10" y="254">stop too, and uiState becomes Finished. Nobody calls a stop method.</text>
+    </svg>
+    <figcaption>Calls go right, through two ports; devices come back left. The ViewModel knows only <code>DeviceScanning</code>, and the service knows only <code>BleScanner</code>.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="inbound">Inbound</li>
+    <li data-part="core">App core</li>
+    <li data-part="outbound">Outbound</li>
+  </ul>
+
+  <h2>6. Wire it by hand</h2>
+  <p>Someone still has to choose the adapter and call the constructors. Android's <a href="https://developer.android.com/training/dependency-injection/manual">Manual dependency injection</a> guide calls that someone a <em>dependencies container</em>, a class "that you use to get dependencies". The one place where the whole graph of objects is built is called the <strong>composition root</strong>. Ours is a Kotlin <code>object</code> in shared code, so both platforms get the same wiring:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppContainer.kt</figcaption>
+<pre><code>package com.example.devicemonitor.di
+<span class="elide">⋯  imports: the ViewModel, SimulatedBleScanner, ScanningService, both ports, and the factory helpers</span>
+// The composition root, wired by hand: the one place that knows which service implements
+// each inbound port and which adapter implements each outbound port.
+object AppContainer {
+<mark>    private val bleScanner: BleScanner by lazy { SimulatedBleScanner() }</mark>
+<mark>    private val deviceScanning: DeviceScanning by lazy { ScanningService(bleScanner) }</mark>
+
+    val deviceListViewModelFactory: ViewModelProvider.Factory = viewModelFactory {
+<mark>        initializer { DeviceListViewModel(deviceScanning) }</mark>
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The only file that names <code>SimulatedBleScanner</code> and <code>ScanningService</code></strong>, apart from their own files. In Lesson 13 the first line becomes "the Android radio on Android, the Swift radio on iOS". One decision, in one place.</li>
+    <li><strong>Each property's type is the port</strong> (<code>BleScanner</code>, <code>DeviceScanning</code>), and its value is what implements it. Read each line as a binding: "this port means this class".</li>
+    <li><strong><code>by lazy</code></strong> builds each one on first use and then reuses it, so the whole app shares one radio and one service. A screen opened twice must not scan with two radios. Sharing the service is safe because it keeps no state between scans (section 4).</li>
+    <li><strong>The factory</strong> is the one Lesson 08's companion object had, moved here. The ViewModel store still keeps the ViewModel; the factory runs only when the store has none. You write the order yourself: scanner, then service, then ViewModel. Android lists that as the first cost of wiring by hand: "Dependencies have to be declared in order". In exchange, a missing dependency is a compile error. Lesson 11 trades that for Koin.</li>
+  </ol>
+  <p>Each screen changes the line that gets the ViewModel:</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</figcaption>
+<pre><code><span class="elide">⋯  package and the androidx imports, as in m04</span>
+<mark>import com.example.devicemonitor.adapter.inbound.DeviceListViewModel</mark>
+<mark>import com.example.devicemonitor.adapter.inbound.ScanState</mark>
+<mark>import com.example.devicemonitor.core.Device</mark>
+<mark>import com.example.devicemonitor.di.AppContainer</mark>
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+@Composable
+fun DeviceListScreen(
+    onDeviceClick: (Device) -&gt; Unit,
+<mark>    viewModel: DeviceListViewModel = viewModel(factory = AppContainer.deviceListViewModelFactory),</mark>
+) {
+<span class="elide">⋯  the rest of the file: unchanged from m04</span></code></pre>
+  </figure>
+  <p><code>DeviceDetailScreen.kt</code> changes one import, to <code>com.example.devicemonitor.adapter.outbound.SampleDevices</code> (see the gotcha below).</p>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</figcaption>
+<pre><code><span class="elide">⋯  package, android and androidx imports, as in m04</span>
+<mark>import com.example.devicemonitor.adapter.inbound.DeviceListUiState</mark>
+<mark>import com.example.devicemonitor.adapter.inbound.DeviceListViewModel</mark>
+<mark>import com.example.devicemonitor.adapter.inbound.ScanState</mark>
+import com.example.devicemonitor.android.databinding.FragmentDeviceListBinding
+<mark>import com.example.devicemonitor.di.AppContainer</mark>
+import kotlinx.coroutines.launch
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+<mark>    private val viewModel: DeviceListViewModel by viewModels { AppContainer.deviceListViewModelFactory }</mark>
+<span class="elide">⋯  the rest of the file: unchanged from m04</span></code></pre>
+  </figure>
+  <p>Two more files change one import each, which keeps the imports sorted: <code>DeviceAdapter.kt</code> imports <code>com.example.devicemonitor.core.Device</code> (after the <code>…android.databinding</code> import), and <code>DeviceDetailFragment.kt</code> imports <code>com.example.devicemonitor.adapter.outbound.SampleDevices</code> (before it).</p>
+  </div>
+  </div>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListView.swift</figcaption>
+<pre><code><span class="elide">⋯  imports and properties, as in m04</span>
+    var body: some View {
+<mark>        let viewModel: DeviceListViewModel = owner.viewModel(factory: AppContainer.shared.deviceListViewModelFactory)</mark>
+<span class="elide">⋯  the rest of the file: unchanged from m04</span></code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListViewController.swift</figcaption>
+<pre><code><span class="elide">⋯  imports</span>
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+<mark>    private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: AppContainer.shared.deviceListViewModelFactory)</mark>
+<span class="elide">⋯  the rest of the file: unchanged from m04</span></code></pre>
+  </figure>
+  </div>
+  </div>
+  <p>Swift needs no import changes. Kotlin packages don't reach the Objective-C header, so <code>Device</code>, <code>SampleDevices</code> and <code>ScanState</code> keep their Swift names, and a Kotlin <code>object</code> is reached through <code>.shared</code> (Lesson 05). The ports are there too: the header declares <code>BleScanner</code> and <code>DeviceScanning</code> as Objective-C protocols, which Swift sees as protocols. That's what lets Lesson 13's Swift radio implement <code>BleScanner</code>.</p>
+
+  <p><strong>Swap the adapter.</strong> This is what the structure buys. To see the error dialog again, replace the radio in one line, run either app, tap Scan, and then put the line back:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppContainer.kt (temporary)</figcaption>
+<pre><code>    private val bleScanner: BleScanner by lazy {
+<mark>        object : BleScanner {</mark>
+<mark>            override fun scan(): Flow&lt;Device&gt; = flow {</mark>
+<mark>                delay(500)</mark>
+<mark>                throw ScanException("Bluetooth adapter not responding (simulated).")</mark>
+            }
+        }
+    }</code></pre>
+  </figure>
+  <p>(It needs imports for <code>Flow</code>, <code>flow</code>, <code>delay</code>, <code>Device</code> and <code>ScanException</code>, and the <code>SimulatedBleScanner</code> import is unused until you put the line back.) After 0.5 s the "Scan failed" dialog shows, as m04's <code>fail</code> filter did. No other file changed: not the service, not the ViewModel, not a screen. The exception travels left along the path in section 5, through the service, to the ViewModel's <code>catch</code>.</p>
+
+  <div class="callout gotcha">
+    <span class="label">Gotcha · a known shortcut, kept on purpose until the BLE lessons</span>
+    The detail screens still look devices up with <code>SampleDevices.find(id)</code>, and so does the UIKit list's cell provider. On Android you can see it in the import, <code>com.example.devicemonitor.adapter.outbound.SampleDevices</code>: a screen reaching straight into an outbound adapter, past every port. Swift gives no such clue, because Kotlin packages don't reach the header. It works only because the simulated radio's devices are a fixed list. When the detail screen becomes the connect screen in the BLE lessons, it gets its own ViewModel and port, and the shortcut goes away. Packages make a shortcut like this visible; only separate Gradle modules would make it impossible, and this course keeps one shared module.
+  </div>
+
+  <h2>7. The finished app, and how to add things</h2>
+  <p>m05 has one port on each side. The plan for the finished app (m15) has five inbound ports, one per capability, and eight outbound ports. The names come from the course plan and may be refined in the lessons that build them, but the shape won't change:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 380" role="img" aria-labelledby="l10-final-title">
+      <title id="l10-final-title">The hexagon of the finished app, as planned. On the left, the inbound adapters: the shared ViewModels, one per screen, and the tests from Lesson 11. They call the app core's five inbound ports: DeviceScanning, DeviceSession, PermissionAccess, StatusReport and DeviceMonitoring. Each is implemented by a service, and the models include Device, ConnectionState, DeviceStatus and LogRecord. The services call eight outbound ports: BleScanner, BleConnection, PermissionChecker, BatteryProvider, NetworkProvider, BluetoothProvider, LogStore and MonitorScheduler. On the right, the outbound adapters that implement them: on Android, Kotlin in androidMain for the BLE radio, permissions and WorkManager; shared in commonMain, the simulated scanner and in Extension E1 a Ktor HTTP client; on iOS, Swift in the iOS app for CoreBluetooth and BGTaskScheduler, plus one Kotlin/Native adapter in iosMain, the log store. Everything is wired in one place: by hand today, with Koin from Lesson 11.</title>
+      <defs><marker id="l10-final-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="inbound">
+        <rect class="box" x="10" y="110" width="160" height="140" rx="6"/>
+        <text class="title small" x="20" y="132">inbound adapters</text>
+        <text class="small" x="20" y="156">shared ViewModels,</text>
+        <text class="small" x="20" y="172">one per screen</text>
+        <text class="small" x="20" y="200">tests (Lesson 11)</text>
+      </g>
+      <g data-part="core">
+        <polygon class="box" points="190,180 240,30 520,30 570,180 520,330 240,330"/>
+        <text class="title" x="380" y="55" text-anchor="middle">App core</text>
+      </g>
+      <g data-part="inbound">
+        <text class="title small" x="236" y="88">inbound ports</text>
+      </g>
+      <text class="mono small" x="236" y="106">DeviceScanning</text>
+      <text class="mono small" x="236" y="122">DeviceSession</text>
+      <text class="mono small" x="236" y="138">PermissionAccess</text>
+      <text class="mono small" x="236" y="154">StatusReport</text>
+      <text class="mono small" x="236" y="170">DeviceMonitoring</text>
+      <g data-part="outbound">
+        <text class="title small" x="400" y="88">outbound ports</text>
+      </g>
+      <text class="mono small" x="400" y="106">BleScanner</text>
+      <text class="mono small" x="400" y="122">BleConnection</text>
+      <text class="mono small" x="400" y="138">PermissionChecker</text>
+      <text class="mono small" x="400" y="154">BatteryProvider</text>
+      <text class="mono small" x="400" y="170">NetworkProvider</text>
+      <text class="mono small" x="400" y="186">BluetoothProvider</text>
+      <text class="mono small" x="400" y="202">LogStore</text>
+      <text class="mono small" x="400" y="218">MonitorScheduler</text>
+      <g data-part="core">
+        <text class="title small" x="236" y="208">services</text>
+      </g>
+      <text class="small" x="236" y="224">one per inbound port</text>
+      <text class="small muted" x="380" y="270" text-anchor="middle">models: Device · ConnectionState ·</text>
+      <text class="small muted" x="380" y="285" text-anchor="middle">DeviceStatus · LogRecord …</text>
+      <g data-part="android">
+        <rect class="box" x="590" y="30" width="160" height="90" rx="6"/>
+        <text class="title small" x="600" y="50">Android, Kotlin</text>
+        <text class="small muted" x="600" y="66">androidMain</text>
+        <text class="small" x="600" y="86">BLE radio · permissions</text>
+        <text class="small" x="600" y="102">WorkManager</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="590" y="135" width="160" height="80" rx="6"/>
+        <text class="title small" x="600" y="155">shared, Kotlin</text>
+        <text class="small muted" x="600" y="171">commonMain</text>
+        <text class="small" x="600" y="189">simulated scanner</text>
+        <text class="small" x="600" y="205">Ktor HTTP client (E1)</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="590" y="230" width="160" height="100" rx="6"/>
+        <text class="title small" x="600" y="250">iOS, Swift</text>
+        <text class="small muted" x="600" y="266">the iOS app</text>
+        <text class="small" x="600" y="284">CoreBluetooth</text>
+        <text class="small" x="600" y="300">BGTaskScheduler</text>
+        <text class="small muted" x="600" y="320">+ log store: Kotlin, iosMain</text>
+      </g>
+      <path class="edge" d="M170,180 L190,180" marker-end="url(#l10-final-arrow)"/>
+      <path class="edge dashed" d="M588,75 L548,110" marker-end="url(#l10-final-arrow)"/>
+      <path class="edge dashed" d="M588,175 L572,175" marker-end="url(#l10-final-arrow)"/>
+      <path class="edge dashed" d="M588,280 L548,250" marker-end="url(#l10-final-arrow)"/>
+      <text class="small muted" x="10" y="360">Outbound adapters implement outbound ports (dashed). Everything is wired in one place: by hand in AppContainer</text>
+      <text class="small muted" x="10" y="374">today, and with Koin from Lesson 11, which binds each inbound port to its service and each outbound port to its adapter.</text>
+    </svg>
+    <figcaption>The finished app, as planned. Outbound adapters carry the colour of where they're written: Android, shared, or iOS.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound</li>
+    <li data-part="outbound">Outbound (shared adapters)</li>
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <p>Every change you'll make to the app after the course is one of four kinds. Each has a fixed recipe:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>You're adding…</th><th>What you write</th><th>What you don't touch</th></tr>
+    <tr><td><strong>a new screen</strong> (for example, a list of recent scans)</td><td>an <strong>inbound adapter</strong>: a ViewModel and its UI state in <code>adapter.inbound</code>, calling the inbound ports that already exist; a factory for it in the composition root; the screen on each UI track</td><td>the app core</td></tr>
+    <tr><td><strong>a new business rule</strong> (for example, hide devices weaker than −80 dBm)</td><td>the <strong>service</strong> that owns that capability, and from Lesson 11 a test through its inbound port</td><td>ports, adapters, ViewModels, screens</td></tr>
+    <tr><td><strong>a new platform capability</strong> (for example, the phone's battery level)</td><td><strong>both port kinds</strong>: an outbound port in the app's terms (<code>BatteryProvider</code>) with an adapter per platform (Kotlin in <code>androidMain</code>, Swift in the iOS app); an inbound port method and a service that uses it (a new port only for a new capability); the bindings in the composition root</td><td>existing services that don't need it</td></tr>
+    <tr><td><strong>a new API request</strong> (for example, uploading logs)</td><td>an <strong>outbound port named for what the app needs</strong> (<code>LogUploader</code>, never <code>ApiClient</code> or <code>HttpClient</code>), a shared HTTP adapter in <code>adapter.outbound</code> that holds the HTTP client, and the binding</td><td>the app core never mentions HTTP, JSON or URLs</td></tr>
+  </table>
+  </div>
+  <p>The last row is the one most often done wrong. If the port is called <code>ApiClient</code> with <code>get(url)</code>, the app core starts building URLs and parsing JSON, and the rule "the core imports no framework" quietly breaks. Name the port after the job, and the HTTP details stay in the adapter.</p>
+
+  <h2>8. What actually happens</h2>
+  <p>We built m05 on all four tracks (Kotlin 2.4.20, SKIE 0.10.15, Lifecycle 2.11.0, coroutines 1.11.0, AGP 9.4.1, Xcode 26.2) and ran it on the Android 16 emulator and the iOS 26.2 simulator. Both apps behave as m04 did: rows arrive one by one under "Scanning…", and the status reads "Devices found: 5" at 3 s, even though the simulated radio has started repeating every device by then. The filter <code>sens</code> finds the Tire Pressure Sensor; <code>fail</code> now finds nothing and shows "No devices found. Try another filter."; the failing adapter from section 6 shows the "Scan failed" dialog. The builds print no compiler warnings from our code.</p>
+  <p><strong>m05 is a natural stop.</strong> It's done when both apps build and behave as described, and the app core's imports are only <code>core</code> packages and kotlinx.coroutines. Commit it before the next lesson, which tests the app core through its inbound port.</p>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to list every <code>import</code> line in <code>shared/src/commonMain/kotlin/com/example/devicemonitor/core/</code> and explain why each one is allowed. Then ask: "If I wanted the scan to stop after 10 devices on every screen, which file would change, and why not the ViewModel?" Check its answer against section 7's recipe.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>BleScanner</code> live in the app core, and not with its adapters?</p>
+    <div class="opts">
+      <button class="opt">so that Android and iOS can each define their own version</button>
+      <button class="opt">because SKIE only exports interfaces from the core package</button>
+      <button class="opt" data-correct>shared code can't import Swift, but Swift can implement a Kotlin interface</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The core uses the port, so the port must be visible to the core. The adapters, including Lesson 13's Swift class, depend on the port, never the other way round.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">What does <code>DeviceListViewModel</code>'s constructor ask for?</p>
+    <div class="opts">
+      <button class="opt" data-correct>DeviceScanning, the inbound port</button>
+      <button class="opt">ScanningService, the class that holds the rule</button>
+      <button class="opt">BleScanner, so it can pick a radio</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">ViewModels talk only to inbound ports. They don't know which service implements the port, and they never see an outbound port.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why are the packages called <code>inbound</code> and <code>outbound</code> rather than <code>in</code> and <code>out</code>?</p>
+    <div class="opts">
+      <button class="opt">Kotlin package names must be at least three characters</button>
+      <button class="opt" data-correct><code>in</code> is a hard keyword, so <code>core.in</code> is a syntax error</button>
+      <button class="opt">Swift reserves <code>in</code> and <code>out</code> in the framework header</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Hard keywords can't be identifiers; you'd need backticks in every package and import line. <code>out</code> alone would compile (a modifier keyword), but the pair stays symmetrical.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The team wants to hide devices weaker than −80 dBm on every screen. Which file changes?</p>
+    <div class="opts">
+      <button class="opt">SimulatedBleScanner, which knows each device's signal</button>
+      <button class="opt">DeviceListViewModel, which builds the list</button>
+      <button class="opt" data-correct>ScanningService, which owns the scan rule</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">It's a rule of the app, true for every screen and every radio: the service. In the adapter it would vanish when Lesson 13 swaps the radio; in the ViewModel, each new screen would need it again.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why is <code>seen</code> created inside <code>flow { }</code> and not as a property of <code>ScanningService</code>?</p>
+    <div class="opts">
+      <button class="opt">a property can't be modified inside a flow</button>
+      <button class="opt" data-correct>each scan must start with an empty set</button>
+      <button class="opt">sets aren't thread-safe as class members</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The service is shared app-wide. As a property, <code>seen</code> would outlive the scan, and the second scan would treat every device from the first as already seen and show nothing.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">What does <code>expect</code>/<code>actual</code> give you that rules it out for <code>BleScanner</code>? (Lesson 05)</p>
+    <div class="opts">
+      <button class="opt" data-correct>one Kotlin implementation per platform, chosen at compile time</button>
+      <button class="opt">an implementation picked at run time from a registry</button>
+      <button class="opt">a Swift protocol that iOS must implement in Swift</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The scanner needs several implementations at once (simulated, a test fake, the real radios), and the iOS one is Swift. An interface allows both.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q"><code>viewModel(factory = AppContainer.deviceListViewModelFactory)</code> runs on every recomposition. How many ViewModels does it create while the list is on the back stack? (Lesson 08)</p>
+    <div class="opts">
+      <button class="opt">one per recomposition, then the old ones are cleared</button>
+      <button class="opt" data-correct>one: the store returns the same instance after that</button>
+      <button class="opt">one per rotation, because the Activity is recreated</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The navigation entry's <code>ViewModelStore</code> keeps the ViewModel. The factory runs only when the store has none, which is why moving the factory into <code>AppContainer</code> changes nothing about lifetimes.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m05 build)</span>
+    <ol>
+      <li><strong>A new business rule.</strong> Make the app hide devices weaker than −80 dBm. Before writing any code, write down which files you expect to change, using section 7's recipe. Make the change, run both apps (which device disappears?), and check with <code>git diff --stat</code> that only the files you predicted changed. Then revert it.</li>
+      <li><strong>Where does it go?</strong> On paper, for each feature below, name the part of the hexagon, the package, and the files you'd add or change on each platform: (a) a screen showing the five most recently seen devices; (b) "never show a device whose name is empty"; (c) show whether the phone's Bluetooth is switched on; (d) send each scan's results to the team's server. Then check each answer against the recipe table, and write down one thing you'd have put in the wrong place.</li>
+      <li><strong>The app without the rule.</strong> In <code>ScanningService</code>, delete <code>&amp;&amp; seen.add(device.id)</code>. Before running, predict what each of your apps shows when you tap Scan and wait 3 s: how many rows, and does anything crash? (Think about Lesson 07's stable keys.) Run both apps, write down what really happened on each platform and why, then put the rule back.</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run both apps yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 10 (The hexagon): build milestone m05, the shared code restructured as an app core with
+ports, plus adapters, wired by hand, on top of m04.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m04 project in demo/ (Lesson 09). Use exactly the file contents shown in the
+lesson's "Full files" section for my tracks, including package lines, imports and comments. All
+paths are relative to demo/. Touch no file that isn't listed here.
+
+1. Shared code, all tracks. In shared/src/commonMain/kotlin/com/example/devicemonitor/:
+     delete: Device.kt, DeviceListUiState.kt, DeviceListViewModel.kt, FakeDeviceScanner.kt,
+       SampleDevices.kt (the root package's copies)
+     add (app core):      core/Device.kt, core/ScanException.kt, core/ScanningService.kt,
+                          core/inbound/DeviceScanning.kt, core/outbound/BleScanner.kt
+     add (adapters):      adapter/inbound/DeviceListUiState.kt, adapter/inbound/DeviceListViewModel.kt,
+                          adapter/outbound/SimulatedBleScanner.kt, adapter/outbound/SampleDevices.kt
+     add (wiring):        di/AppContainer.kt
+   Greeting.kt and Platform.kt (commonMain), the Platform files in androidMain and iosMain,
+   ViewModelResolver.kt (iosMain) and both build files stay as in m04.
+
+2. Screens, one line each to get the ViewModel from AppContainer, plus imports on Android:
+     Compose: androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt and
+       DeviceDetailScreen.kt: replaced.
+     XML: androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt,
+       DeviceAdapter.kt and DeviceDetailFragment.kt: replaced.
+     SwiftUI: iosApp/iosApp/DeviceListView.swift: replaced.
+     UIKit: iosApp/iosApp/DeviceListViewController.swift: replaced.
+   Every other Android and iOS file stays as in m04.
+
+3. Build both apps.
+   Android, from demo/:
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Run: `adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk`, then
+     `adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity`.
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`, then
+     `xcrun simctl launch booted com.example.devicemonitor`.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- Both builds succeed with no compiler warnings from our own Kotlin or Swift code, including
+  the Kotlin/Native link step that runs inside the Xcode build (don't use -q to check warnings;
+  read the build output). Not from our code, and expected: SKIE's "Configuration '…' was
+  resolved during configuration time" lines and the SLF4J "Failed to load class" lines
+  (Lesson 09, section 2); Gradle's "Deprecated Gradle features … Gradle 10" line, "Unable to
+  strip the following libraries" from the Android build, Xcode's "appintentsmetadataprocessor
+  … warning: Metadata extraction skipped", and xcodebuild's "WARNING: Using the first of
+  multiple matching destinations". Xcode "note:" lines are not warnings. The SLF4J lines
+  appear only when the framework is rebuilt, so a build may have none.
+- The app core imports nothing from Android, iOS or any framework:
+    grep -rh "^import" shared/src/commonMain/kotlin/com/example/devicemonitor/core | sort -u
+  prints only com.example.devicemonitor.core… and kotlinx.coroutines… lines.
+- Only the composition root names the service and the adapter: outside build/ folders,
+    grep -rn "SimulatedBleScanner\|ScanningService" --include='*.kt' --include='*.swift' .
+  finds them only in their own files, in di/AppContainer.kt, and in the comment at the top of
+  core/inbound/DeviceScanning.kt (quote the --include patterns: zsh expands them otherwise).
+  The ViewModel file imports
+  nothing from core.outbound or adapter.outbound. Nothing is left of m04's wiring:
+    grep -rn 'FakeDeviceScanner\|DeviceListViewModel\.\(companion\.\)\?Factory' --include='*.kt' --include='*.swift' .
+  finds nothing (ViewModelProvider.Factory and deviceListViewModelFactory are fine).
+- Launch: as m04 (the title "Device Monitor", a "Device name filter" field, a full-width Scan
+  button, "Tap Scan to look for devices." and an empty list). The XML button shows "SCAN" in
+  capitals (Material's style), so match that text when automating.
+- Tap Scan: the button is disabled, a spinner + "Scanning…" show in the normal (not red)
+  colour, and rows appear one at a time (~0.3 s apart) in SampleDevices order. After ~3 s the
+  status reads "Devices found: 5" (not more: the simulated radio repeats devices from about
+  1.8 s on, and the service drops the repeats) and the button is enabled again.
+- Filter "sens" + Scan: one row (Tire Pressure Sensor). Filter "zzz" + Scan: "Scanning…" for
+  ~3 s, then the red "No devices found. Try another filter."
+- Filter "fail" + Scan: no dialog any more; it behaves like "zzz" (the m04 test hook is gone).
+- Error path, temporary: copy di/AppContainer.kt aside first (or rely on git). In it, replace SimulatedBleScanner() with the failing
+  object from the lesson's section 6 ("Swap the adapter"), with the imports it needs. Rebuild
+  both apps and tap Scan: after ~0.5 s (allow ~1 s when an XCUITest drives it) a "Scan failed" dialog/alert with "Bluetooth adapter not
+  responding (simulated)."; OK closes it, and the status reads "Tap Scan to look for devices."
+  Then restore the file exactly as in Full files, rebuild, and check that Scan finds 5 again.
+- Rows open the detail screen (name, ID, signal); Back returns to the list with the results
+  still shown.
+- Android, driving the emulator: after launching, wait until a uiautomator dump shows the Scan
+  button before the first tap. Tap the filter field and use `adb shell input text`; find
+  coordinates with `adb shell uiautomator dump`. A dump takes about 2 s, so judge mid-scan
+  states (rows arriving, "Scanning…") from `adb exec-out screencap -p` screenshots instead. A
+  screencap takes up to ~0.9 s, so for rows arriving 0.3 s apart use `adb shell screenrecord`.
+- iOS timing: an XCUITest query also takes about 0.3 s, so judge the rows arriving one at a
+  time from a sequence of screenshots (XCUIScreen.main.screenshot() in a loop), not by polling.
+- iOS: if you can drive the simulator (xcrun simctl has no tap command; idb or a throwaway
+  XCUITest that launches the installed app by bundle ID can. Don't script the Simulator window
+  with System Events: its clicks and keystrokes are unreliable), run the Scan, filter, error
+  and row-tap checks above. In automation, the status text ends in the single character "…",
+  not three dots. If you can't, say so and list which iOS checks you didn't run.
+Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
+numbers, and show me where each part of the lesson's m05 hexagon diagram is in the code. Do NOT
+do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li>Alistair Cockburn, <a href="https://alistair.cockburn.us/hexagonal-architecture/">Hexagonal architecture</a> (primary source): the intent, ports, adapters, and primary/secondary actors.</li>
+    <li>JetBrains: <a href="https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html">Expected and actual declarations</a>, its section on interfaces and its recommendations on dependency injection.</li>
+    <li>Android: <a href="https://developer.android.com/training/dependency-injection">Dependency injection in Android</a> and <a href="https://developer.android.com/training/dependency-injection/manual">Manual dependency injection</a>, which builds an <code>AppContainer</code> step by step and lists what goes wrong as it grows (the problem Lesson 11's Koin solves).</li>
+    <li>Kotlin: <a href="https://kotlinlang.org/docs/keyword-reference.html">Keywords and operators</a>, hard versus modifier keywords.</li>
+    <li><a href="../reference/glossary.html">Course glossary</a>: the hexagon's terms from this lesson are marked (10).</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson adds or changes, complete. Open one to check your work. Five files are deleted, all in <code>shared/src/commonMain/kotlin/com/example/devicemonitor/</code>: <code>Device.kt</code>, <code>DeviceListUiState.kt</code>, <code>DeviceListViewModel.kt</code>, <code>FakeDeviceScanner.kt</code> and <code>SampleDevices.kt</code>. Everything else stays as in m04, including both build files. Each file is in the colour of its part of the app; the composition root carries none.</p>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/Device.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+data class Device(val id: String, val name: String, val rssi: Int)</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanException.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+// A scan that failed, for example because the radio stopped responding. Outbound adapters
+// throw it, and it reaches inbound adapters through DeviceScanning.
+class ScanException(message: String) : Exception(message)</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceScanning.kt</summary>
+<pre><code>package com.example.devicemonitor.core.inbound
+
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.Flow
+
+// Inbound port: what the app offers for finding devices. Inbound adapters (the shared
+// ViewModels) call it, and ScanningService implements it.
+interface DeviceScanning {
+    // Devices whose name contains nameFilter, each reported once, as they are found.
+    // Collecting starts a scan, and cancelling the collector stops it. Throws ScanException.
+    fun scan(nameFilter: String): Flow&lt;Device&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.Flow
+
+// Outbound port: what the app needs from a Bluetooth radio, in the app's own terms.
+// Outbound adapters implement it: a simulated radio for now, real ones from Lesson 13.
+interface BleScanner {
+    // Every device the radio hears, again with each advertisement it hears. Collecting
+    // starts the radio scan, and cancelling the collector stops it. Throws ScanException.
+    fun scan(): Flow&lt;Device&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanningService.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.outbound.BleScanner
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+// Service: the app's scan rule on top of a raw radio scan. Keep the devices whose name
+// contains the filter (ignoring case and surrounding spaces), and report each device once.
+class ScanningService(private val scanner: BleScanner) : DeviceScanning {
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+        val wanted = nameFilter.trim()
+        val seen = mutableSetOf&lt;String&gt;()
+        scanner.scan().collect { device -&gt;
+            if (device.name.contains(wanted, ignoreCase = true) &amp;&amp; seen.add(device.id)) {
+                emit(device)
+            }
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListUiState.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import com.example.devicemonitor.core.Device
+
+// Everything the device list shows that the user didn't type.
+data class DeviceListUiState(
+    val scan: ScanState = ScanState.Idle,
+    val errorMessage: String? = null,
+)
+
+sealed interface ScanState {
+    data object Idle : ScanState
+    data class Scanning(val found: List&lt;Device&gt;) : ScanState
+    data class Finished(val found: List&lt;Device&gt;) : ScanState
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModel.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration.Companion.seconds
+
+// Inbound adapter: turns the screen's events into calls on the DeviceScanning port, and
+// the results into UI state. It knows the port only, never the service or a scanner.
+class DeviceListViewModel(
+    private val scanning: DeviceScanning,
+) : ViewModel() {
+    private val _uiState = MutableStateFlow(DeviceListUiState())
+    val uiState: StateFlow&lt;DeviceListUiState&gt; = _uiState.asStateFlow()
+
+    private var scanJob: Job? = null
+
+    fun startScan(filter: String) {
+        if (scanJob?.isActive == true) return
+        _uiState.update { it.copy(scan = ScanState.Scanning(emptyList())) }
+        scanJob = viewModelScope.launch {
+            val found = mutableListOf&lt;Device&gt;()
+            try {
+                withTimeoutOrNull(SCAN_TIMEOUT) {
+                    scanning.scan(filter).collect { device -&gt;
+                        found += device
+                        _uiState.update { it.copy(scan = ScanState.Scanning(found.toList())) }
+                    }
+                }
+                _uiState.update { it.copy(scan = ScanState.Finished(found.toList())) }
+            } catch (e: ScanException) {
+                _uiState.update { it.copy(scan = ScanState.Idle, errorMessage = e.message) }
+            }
+        }
+    }
+
+    fun errorShown() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+
+    companion object {
+        val SCAN_TIMEOUT = 3.seconds
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SimulatedBleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.outbound.BleScanner
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+// Outbound adapter: a pretend radio behind the BleScanner port. Like a real one, it hears
+// every device over and over, one advertisement every 0.3 s, until the collector cancels.
+class SimulatedBleScanner : BleScanner {
+    override fun scan(): Flow&lt;Device&gt; = flow {
+        while (true) {
+            for (device in SampleDevices.all) {
+                delay(300)
+                emit(device)
+            }
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SampleDevices.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+
+// The devices the simulated radio "hears", until Lesson 13 brings a real one.
+object SampleDevices {
+    val all: List&lt;Device&gt; = listOf(
+        Device(id = "C4:7C:8D:6A:01:10", name = "OBD-II Adapter", rssi = -48),
+        Device(id = "C4:7C:8D:6A:01:11", name = "Heart Rate Monitor", rssi = -61),
+        Device(id = "C4:7C:8D:6A:01:12", name = "Tire Pressure Sensor", rssi = -67),
+        Device(id = "C4:7C:8D:6A:01:13", name = "Thermometer", rssi = -74),
+        Device(id = "C4:7C:8D:6A:01:14", name = "Smart Scale", rssi = -85),
+    )
+
+    fun find(id: String): Device? = all.firstOrNull { it.id == id }
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppContainer.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.outbound.SimulatedBleScanner
+import com.example.devicemonitor.core.ScanningService
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.outbound.BleScanner
+
+// The composition root, wired by hand: the one place that knows which service implements
+// each inbound port and which adapter implements each outbound port.
+object AppContainer {
+    private val bleScanner: BleScanner by lazy { SimulatedBleScanner() }
+    private val deviceScanning: DeviceScanning by lazy { ScanningService(bleScanner) }
+
+    val deviceListViewModelFactory: ViewModelProvider.Factory = viewModelFactory {
+        initializer { DeviceListViewModel(deviceScanning) }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.di.AppContainer
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+@Composable
+fun DeviceListScreen(
+    onDeviceClick: (Device) -&gt; Unit,
+    viewModel: DeviceListViewModel = viewModel(factory = AppContainer.deviceListViewModelFactory),
+) {
+    var filter by rememberSaveable { mutableStateOf("") }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    DeviceListContent(
+        filter = filter,
+        onFilterChange = { filter = it },
+        isScanning = state.scan is ScanState.Scanning,
+        devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        },
+        onScan = { viewModel.startScan(filter) },
+        onDeviceClick = onDeviceClick,
+    )
+
+    state.errorMessage?.let { message -&gt;
+        AlertDialog(
+            onDismissRequest = viewModel::errorShown,
+            confirmButton = { TextButton(onClick = viewModel::errorShown) { Text("OK") } },
+            title = { Text("Scan failed") },
+            text = { Text(message) },
+        )
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+@Composable
+fun DeviceListContent(
+    filter: String,
+    onFilterChange: (String) -&gt; Unit,
+    isScanning: Boolean,
+    devices: List&lt;Device&gt;?,
+    onScan: () -&gt; Unit,
+    onDeviceClick: (Device) -&gt; Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Device Monitor", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = filter,
+            onValueChange = onFilterChange,
+            label = { Text("Device name filter") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = onScan, enabled = !isScanning, modifier = Modifier.fillMaxWidth()) {
+            Text("Scan")
+        }
+        ScanStatus(isScanning = isScanning, devices = devices)
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(devices.orEmpty(), key = { it.id }) { device -&gt;
+                DeviceRow(device = device, onClick = { onDeviceClick(device) })
+                HorizontalDivider()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanStatus(isScanning: Boolean, devices: List&lt;Device&gt;?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            isScanning -&gt; {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Scanning…")
+            }
+            devices == null -&gt; Text("Tap Scan to look for devices.")
+            devices.isEmpty() -&gt; Text(
+                "No devices found. Try another filter.",
+                color = MaterialTheme.colorScheme.error,
+            )
+            else -&gt; Text("Devices found: ${devices.size}")
+        }
+    }
+}
+
+@Composable
+private fun DeviceRow(device: Device, onClick: () -&gt; Unit) {
+    ListItem(
+        headlineContent = { Text(device.name) },
+        supportingContent = { Text(device.id) },
+        trailingContent = { Text("${device.rssi} dBm") },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceDetailScreen.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.dropUnlessResumed
+import com.example.devicemonitor.adapter.outbound.SampleDevices
+
+@Composable
+fun DeviceDetailScreen(deviceId: String, onBack: () -&gt; Unit) {
+    val device = SampleDevices.find(deviceId)
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_bluetooth),
+            contentDescription = null,
+            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.size(96.dp),
+        )
+        if (device == null) {
+            Text("Unknown device", color = MaterialTheme.colorScheme.error)
+        } else {
+            Text(device.name, style = MaterialTheme.typography.headlineSmall)
+            Text("ID: ${device.id}")
+            Text("Signal: ${device.rssi} dBm")
+        }
+        TextButton(onClick = dropUnlessResumed { onBack() }) {
+            Text("Back")
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.Fragment
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.DividerItemDecoration
+import com.example.devicemonitor.adapter.inbound.DeviceListUiState
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.android.databinding.FragmentDeviceListBinding
+import com.example.devicemonitor.di.AppContainer
+import kotlinx.coroutines.launch
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+    private val viewModel: DeviceListViewModel by viewModels { AppContainer.deviceListViewModelFactory }
+
+    private var binding: FragmentDeviceListBinding? = null
+    private var errorDialog: AlertDialog? = null
+    private val adapter = DeviceAdapter { device -&gt;
+        val nav = findNavController()
+        // A fast double tap delivers two clicks; only navigate from the list itself.
+        if (nav.currentDestination?.id == R.id.deviceList) {
+            nav.navigate(R.id.toDetail, Bundle().apply { putString("deviceId", device.id) })
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceListBinding.inflate(inflater, container, false)
+        binding = b
+        b.deviceList.adapter = adapter
+        b.deviceList.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
+        b.scanButton.setOnClickListener { viewModel.startScan(b.filterInput.text.toString()) }
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { render(it) }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        errorDialog?.dismiss() // a dismiss() doesn't call the cancel listener, so the error stays in state
+        errorDialog = null
+        binding?.deviceList?.adapter = null // the adapter outlives the view; don't let it keep the old list
+        binding = null
+    }
+
+    // The one place that touches views: every new state ends here. The EditText keeps its
+    // own text (and restores it after rotation), so render() never sets it.
+    private fun render(state: DeviceListUiState) {
+        val b = binding ?: return
+        val isScanning = state.scan is ScanState.Scanning
+        val devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        }
+        b.scanButton.isEnabled = !isScanning
+        b.progress.visibility = if (isScanning) View.VISIBLE else View.GONE
+        b.statusText.text = when {
+            isScanning -&gt; "Scanning…"
+            devices == null -&gt; "Tap Scan to look for devices."
+            devices.isEmpty() -&gt; "No devices found. Try another filter."
+            else -&gt; "Devices found: ${devices.size}"
+        }
+        b.statusText.setTextColor(if (devices?.isEmpty() == true &amp;&amp; !isScanning) Color.RED else Color.DKGRAY)
+        adapter.submitList(devices.orEmpty())
+        renderError(state.errorMessage)
+    }
+
+    private fun renderError(message: String?) {
+        if (message == null) {
+            errorDialog?.dismiss()
+            errorDialog = null
+        } else if (errorDialog == null) {
+            errorDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Scan failed")
+                .setMessage(message)
+                .setPositiveButton("OK") { _, _ -&gt; viewModel.errorShown() }
+                .setOnCancelListener { viewModel.errorShown() }
+                .show()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceAdapter.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.view.LayoutInflater
+import android.view.ViewGroup
+import androidx.recyclerview.widget.DiffUtil
+import androidx.recyclerview.widget.ListAdapter
+import androidx.recyclerview.widget.RecyclerView
+import com.example.devicemonitor.android.databinding.ItemDeviceBinding
+import com.example.devicemonitor.core.Device
+
+class DeviceAdapter(
+    private val onClick: (Device) -&gt; Unit,
+) : ListAdapter&lt;Device, DeviceAdapter.Holder&gt;(DeviceDiff) {
+
+    class Holder(val binding: ItemDeviceBinding) : RecyclerView.ViewHolder(binding.root)
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): Holder =
+        Holder(ItemDeviceBinding.inflate(LayoutInflater.from(parent.context), parent, false))
+
+    override fun onBindViewHolder(holder: Holder, position: Int) {
+        val device = getItem(position)
+        holder.binding.deviceName.text = device.name
+        holder.binding.deviceId.text = device.id
+        holder.binding.deviceRssi.text = "${device.rssi} dBm"
+        holder.itemView.setOnClickListener { onClick(device) }
+    }
+}
+
+private object DeviceDiff : DiffUtil.ItemCallback&lt;Device&gt;() {
+    override fun areItemsTheSame(oldItem: Device, newItem: Device) = oldItem.id == newItem.id
+    override fun areContentsTheSame(oldItem: Device, newItem: Device) = oldItem == newItem
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceDetailFragment.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.fragment.app.Fragment
+import androidx.navigation.fragment.findNavController
+import com.example.devicemonitor.adapter.outbound.SampleDevices
+import com.example.devicemonitor.android.databinding.FragmentDeviceDetailBinding
+
+class DeviceDetailFragment : Fragment() {
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceDetailBinding.inflate(inflater, container, false)
+        val deviceId = requireArguments().getString("deviceId").orEmpty()
+        val device = SampleDevices.find(deviceId)
+        if (device == null) {
+            b.deviceName.text = "Unknown device"
+        } else {
+            b.deviceName.text = device.name
+            b.deviceId.text = "ID: ${device.id}"
+            b.deviceRssi.text = "Signal: ${device.rssi} dBm"
+        }
+        b.backButton.setOnClickListener {
+            val nav = findNavController()
+            // A fast double tap would otherwise pop the list too and empty the back stack.
+            if (nav.currentDestination?.id == R.id.deviceDetail) nav.popBackStack()
+        }
+        return b.root
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @State private var owner = ViewModelOwner()
+    @State private var filter = ""
+    @State private var state: DeviceListUiState?
+
+    var body: some View {
+        let viewModel: DeviceListViewModel = owner.viewModel(factory: AppContainer.shared.deviceListViewModelFactory)
+        let state = self.state ?? viewModel.uiState.value
+        DeviceListContent(
+            filter: $filter,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+    }
+
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        switch onEnum(of: scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Button(action: onScan) {
+                Text("Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isScanning)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(id: device.id)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListViewController.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: AppContainer.shared.deviceListViewModelFactory)
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let filterField = UITextField()
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = SampleDevices.shared.find(id: deviceId) {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            viewModel.startScan(filter: filterField.text ?? "")
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let stack = UIStackView(arrangedSubviews: [filterField, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(viewModel.uiState.value)
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+        let devices: [Device]? = switch onEnum(of: state.scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+        scanButton.isEnabled = !isScanning
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath) else { return }
+        navigationController?.pushViewController(DeviceDetailViewController(deviceId: deviceId), animated: true)
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="09-kotlin-swift-with-skie.html">← 09 Kotlin↔Swift with SKIE</a>
+    <a href="06-clean-architecture-di-testing.html">Next: 11 Testing the app core + Koin →</a>
+  </nav>
+</main>
+</body>
+</html>

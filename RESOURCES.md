@@ -70,7 +70,7 @@
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
   Generates an Xcode project from a YAML spec, which lets agents create iOS scratch apps without Xcode's GUI. Use for: Lesson 04, and the KMP project's `iosApp` from Lesson 05 on.
 - [Kotlin Multiplatform: project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-discover-project.html), [Hierarchical project structure](https://kotlinlang.org/docs/multiplatform/multiplatform-hierarchy.html) and [Expected and actual declarations](https://kotlinlang.org/docs/multiplatform/multiplatform-expect-actual.html)
-  Official JetBrains docs: targets, source sets, intermediate source sets, expect/actual rules and when to prefer interfaces. Use for: Lesson 05 (project structure is the primary source), Lesson 10 (ports).
+  Official JetBrains docs: targets, source sets, intermediate source sets, expect/actual rules and when to prefer interfaces. Use for: Lesson 05 (project structure is the primary source), Lesson 10 (why ports are interfaces).
 - [Android: Set up the Android Gradle Library Plugin for KMP](https://developer.android.com/kotlin/multiplatform/plugin)
   `com.android.kotlin.multiplatform.library`; `android { }` inside `kotlin { }` from AGP 8.12 (`androidLibrary { }` deprecated); `com.android.library` for KMP deprecated from AGP 9. Use for: Lesson 05.
 - [Kotlin/Native: interoperability with Swift/Objective-C](https://kotlinlang.org/docs/native-objc-interop.html)
@@ -105,9 +105,9 @@
 - [Android: Guide to app architecture](https://developer.android.com/topic/architecture) and [Domain layer](https://developer.android.com/topic/architecture/domain-layer)
   Separation of concerns, UI/data/optional domain layers, "Manage dependencies between components" (DI vs service locator); use cases: `VerbNounUseCase`, `operator fun invoke`, no mutable data, main-safe. Note the guide's domain depends on data; the course inverts that for ports (adapters live per platform). Use for: Lesson 06 (primary source).
 - [Alistair Cockburn: Hexagonal architecture (Ports and Adapters)](https://alistair.cockburn.us/hexagonal-architecture/)
-  The original article: ports as "purposeful conversations", one adapter per external device, test harnesses as adapters. Use for: Lesson 06 A2.
+  The original article: ports as "purposeful conversations", one adapter per external device, test harnesses as adapters, primary/secondary (driving/driven) actors, why the drawing is a hexagon. Use for: Lesson 10 (primary source).
 - [Android: Dependency injection](https://developer.android.com/training/dependency-injection) and [Manual dependency injection](https://developer.android.com/training/dependency-injection/manual)
-  Constructor vs field injection, DI vs service locator, the `AppContainer` pattern and its costs as an app grows. Use for: Lesson 06.
+  Constructor vs field injection, DI vs service locator, the `AppContainer` pattern and its costs as an app grows. Use for: Lesson 10 (DI by hand), Lesson 11 (what Koin adds).
 - [Koin](https://insert-koin.io/): [definitions](https://insert-koin.io/docs/reference/koin-core/definitions/), [ViewModel](https://insert-koin.io/docs/reference/koin-core/viewmodel/), [KoinComponent](https://insert-koin.io/docs/reference/koin-core/koin-component/), [Compose](https://insert-koin.io/docs/reference/koin-compose/compose/), [Android ViewModel](https://insert-koin.io/docs/reference/koin-android/viewmodel/), [KMP](https://insert-koin.io/docs/reference/koin-mp/kmp/)
   `single`/`factory`/`viewModelOf`, `koinViewModel()` (koin-compose-viewmodel), `by viewModel()` (koin-android), KoinComponent only at the edges. The docs say little about iOS ViewModels; the course's Koin-backed `ViewModelProvider.Factory` comes from reading Koin 4.2.2's sources (`KoinViewModelFactory`, `resolveViewModel`). Use for: Lesson 06 Part B, Lessons 07–08 (platform modules).
 - [Android: Test Kotlin coroutines](https://developer.android.com/kotlin/coroutines/test) and [Test doubles](https://developer.android.com/training/testing/fundamentals/test-doubles)
