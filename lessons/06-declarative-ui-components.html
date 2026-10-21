@@ -911,7 +911,7 @@ private struct ScanStatus: View {
     <p class="why">A Kotlin <code>object</code> appears in Swift as its single instance, <code>.shared</code>.</p>
   </div>
   <div class="quiz mcq">
-    <p class="q">A <code>Task { }</code> started in a SwiftUI button action runs its code after <code>await</code> on which actor? (Lesson 02)</p>
+    <p class="q">A <code>Task { }</code> started in a SwiftUI button action runs its code after <code>await</code> on which actor? (Lesson 02 introduced <code>Task</code> and <code>@MainActor</code>)</p>
     <div class="opts">
       <button class="opt" data-correct>the main actor, inherited from View</button>
       <button class="opt">a background actor, chosen at random</button>
@@ -1569,7 +1569,7 @@ final class DeviceMonitorViewController: UIViewController {
 </main>
 
 <script>
-// A1 toy: the same events drive an imperative screen (handlers edit widgets) and a
+// Section 1 toy: the same events drive an imperative screen (handlers edit widgets) and a
 // declarative one (state, then render). The imperative handlers mirror the code shown.
 document.addEventListener("DOMContentLoaded", () => {
   const SAMPLE = ["OBD-II Adapter", "Heart Rate Monitor", "Tire Pressure Sensor"];
