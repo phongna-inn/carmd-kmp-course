@@ -659,7 +659,18 @@ final class ViewController: UIViewController {
   <h2 id="agent-brief">Agent brief</h2>
   <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run both apps yourself, and do the unaided exercise.</p>
   <div class="callout brief copy-wrap">
-<pre class="brief-text">Lesson 05 (Anatomy of a KMP project): build milestone m00, the KMP skeleton of the
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/05-anatomy-of-a-kmp-project.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/05-anatomy-of-a-kmp-project.html" -o .course/lesson-05.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/kmp-anatomy-cheatsheet.html" -o .course/ref-kmp-anatomy-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/glossary.html" -o .course/ref-glossary.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" for my tracks exactly,
+except where the brief below says otherwise.
+
+Lesson 05 (Anatomy of a KMP project): build milestone m00, the KMP skeleton of the
 Native Device Monitor. Both apps show a greeting computed in shared Kotlin.
 My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
 Starting point: nothing. Create the project in demo/ in my workspace; later lessons build on it.

@@ -773,7 +773,18 @@ Caused by: …NoDefinitionFoundException: No definition found for type '…core.
   <h2 id="agent-brief">Agent brief</h2>
   <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run the tests and both apps yourself, and do the unaided exercise.</p>
   <div class="callout brief copy-wrap">
-<pre class="brief-text">Lesson 11 (Testing the app core + Koin): build milestone m06, tests for the app core and the
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/11-testing-and-koin.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/11-testing-and-koin.html" -o .course/lesson-11.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/architecture-di-testing-cheatsheet.html" -o .course/ref-architecture-di-testing-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/glossary.html" -o .course/ref-glossary.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" for my tracks exactly,
+except where the brief below says otherwise.
+
+Lesson 11 (Testing the app core + Koin): build milestone m06, tests for the app core and the
 ViewModel, and Koin instead of hand wiring, on top of m05.
 My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
 Starting point: my m05 project in demo/ (Lesson 10). Use exactly the file contents shown in the

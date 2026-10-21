@@ -443,13 +443,14 @@ Done: OBD-II Dongle (AA:01) -48 dBm, Heart Rate (CC:03) -67 dBm</code></pre>
   <div class="callout brief copy-wrap">
 <pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/01-kotlin-for-typescript-devs.html
 Before anything else, download the lesson and the reference pages it links, then read
-them in full. Don't use a summarising web fetch; it drops the code.
-  mkdir -p .course
-  curl -sL https://phongna-inn.github.io/carmd-kmp-course/lessons/01-kotlin-for-typescript-devs.html -o .course/lesson-01.html
-  curl -sL https://phongna-inn.github.io/carmd-kmp-course/reference/kotlin-swift-typescript-cheatsheet.html -o .course/ref-kotlin-swift-typescript-cheatsheet.html
-  curl -sL https://phongna-inn.github.io/carmd-kmp-course/reference/glossary.html -o .course/ref-glossary.html
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/01-kotlin-for-typescript-devs.html" -o .course/lesson-01.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/kotlin-swift-typescript-cheatsheet.html" -o .course/ref-kotlin-swift-typescript-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/glossary.html" -o .course/ref-glossary.html
 Use these files to answer my questions about this lesson without asking me for context.
-Then build what follows, using the lesson's "Full files" exactly.
+Then build what follows, using the lesson's "Full files" exactly,
+except where the brief below says otherwise.
 
 Lesson 01 (Kotlin for TypeScript developers): set up a Kotlin scratch program.
 Starting point: nothing. Create the folder scratch/lesson-01/kotlin/ in my workspace.

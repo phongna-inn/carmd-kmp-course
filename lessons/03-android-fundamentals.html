@@ -505,7 +505,19 @@ class MainActivity : AppCompatActivity() {
   <h2 id="agent-brief">Agent brief</h2>
   <p>Hand this to your coding agent, telling it your track. Then read its code against the walkthroughs above, run the app yourself, and do the unaided exercise.</p>
   <div class="callout brief copy-wrap">
-<pre class="brief-text">Lesson 03 (Android fundamentals): build a scratch Android app that logs lifecycle events.
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/03-android-fundamentals.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/03-android-fundamentals.html" -o .course/lesson-03.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/platform-lifecycles-cheatsheet.html" -o .course/ref-platform-lifecycles-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/java-reading-cheatsheet.html" -o .course/ref-java-reading-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/glossary.html" -o .course/ref-glossary.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" for my track exactly,
+except where the brief below says otherwise.
+
+Lesson 03 (Android fundamentals): build a scratch Android app that logs lifecycle events.
 My track: Android = [Compose | XML]  (default Compose).
 Starting point: nothing. Work in scratch/lesson-03/android/ in my workspace.
 Prereqs: JDK 17+, Android SDK (ANDROID_HOME, or sdk.dir in local.properties), any Gradle
