@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lesson 05</p>
+  <p class="kicker">Reference · from Lessons 08 and 09</p>
   <h1>Shared ViewModels Across Four Tracks</h1>
-  <p class="source">Compressed from <a href="../lessons/05-shared-viewmodels.html">Lesson 05</a>. Built and checked with Kotlin 2.4.20, SKIE 0.10.15, AndroidX Lifecycle 2.11.0, kotlinx-coroutines 1.11.0, AGP 9.4.1, Xcode 26.2 (Swift 6 mode).</p>
+  <p class="source">Compressed from <a href="../lessons/08-shared-viewmodels.html">Lesson 08</a> (the shared ViewModel, owning it, the hand-written bridge) and <a href="../lessons/09-kotlin-swift-with-skie.html">Lesson 09</a> (SKIE). Built and checked with Kotlin 2.4.20, SKIE 0.10.15, AndroidX Lifecycle 2.11.0, kotlinx-coroutines 1.11.0, AGP 9.4.1, Xcode 26.2 (Swift 6 mode).</p>
 
   <h2>The rules</h2>
   <ol>
@@ -115,7 +115,7 @@ commonMain.dependencies {
     <li>XML: collect on <code>viewLifecycleOwner</code>, not the Fragment, so <code>render</code> never touches dead views. Dismiss a dialog in <code>onDestroyView</code> with <code>dismiss()</code>, which doesn't fire the cancel listener, so the error stays in state across rotation.</li>
     <li>SwiftUI <code>.task</code> re-runs on every return: fine for <em>observing</em>, wrong for <em>starting</em> work.</li>
     <li>UIKit <code>Task { for await … }</code> captures <code>self</code>: cancel it in <code>viewDidDisappear</code>, and cancel any old one before starting a new one.</li>
-    <li>After SKIE, <code>Shared.h</code> looks unchanged; the typed API is in <code>Shared.apinotes</code> and <code>shared/build/skie/…/swift/generated/</code>.</li>
+    <li>After SKIE, <code>uiState</code>'s line in <code>Shared.h</code> is unchanged; the typed API is in <code>Shared.apinotes</code> and <code>shared/build/skie/…/swift/generated/</code>.</li>
     <li>Never check warnings with <code>gradlew -q</code>; the Kotlin/Native link warnings appear inside the Xcode build.</li>
   </ul>
 </main>

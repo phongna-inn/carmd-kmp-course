@@ -78,7 +78,7 @@
 - [KMP: Direct integration with Xcode](https://kotlinlang.org/docs/multiplatform/multiplatform-direct-integration.html)
   The script build phase running `embedAndSignAppleFrameworkForXcode`, and disabling user script sandboxing. Use for: Lesson 05.
 - [Codelab: Get started with Kotlin Multiplatform](https://developer.android.com/codelabs/kmp-get-started) and [JetBrains: share more logic between iOS and Android](https://kotlinlang.org/docs/multiplatform/multiplatform-upgrade-app.html)
-  Google's codelab adds a shared module to existing apps (uses SKIE); JetBrains' tutorial shows the current wizard layout (`sharedLogic`, `androidApp`, `iosApp`). Use for: Lesson 05 further reading, Lesson 09.
+  Google's codelab adds a shared module to existing apps (uses SKIE); JetBrains' tutorial shows the current wizard layout (`sharedLogic`, `androidApp`, `iosApp`). Use for: Lesson 05 further reading.
 - [Android: Display content edge-to-edge](https://developer.android.com/develop/ui/views/layout/edge-to-edge)
   targetSdk 35+ draws behind system bars by default; insets handling for Compose and Views. Use for: Lesson 05, Lesson 06.
 
@@ -96,11 +96,11 @@
 - [Android: ViewModel overview](https://developer.android.com/topic/libraries/architecture/viewmodel), [KMP ViewModel](https://developer.android.com/kotlin/multiplatform/viewmodel), [Coroutines with lifecycle-aware components](https://developer.android.com/topic/libraries/architecture/coroutines) and [for Views](https://developer.android.com/topic/libraries/architecture/views/coroutines-views)
   ViewModel lifetime and scopes, `viewModelScope`, `SavedStateHandle`; the multiplatform `ViewModel` (2.8+) and the iOS `ViewModelStoreOwner` + `resolveViewModel` pattern; `collectAsStateWithLifecycle`, `repeatOnLifecycle(STARTED)`. Use for: Lesson 08, Lesson 11.
 - [SKIE](https://skie.touchlab.co/): [Flows](https://skie.touchlab.co/features/flows), [Sealed classes](https://skie.touchlab.co/features/sealed); [releases](https://github.com/touchlab/SKIE/releases)
-  Touchlab's compiler plugin: flows as typed `AsyncSequence`, `onEnum(of:)`, suspend as async. Check the release notes for the supported Kotlin versions before bumping Kotlin (0.10.15 supports up to 2.4.20). Use for: Lesson 05 Part B, Lessons 08–10.
+  Touchlab's compiler plugin: flows as typed `AsyncSequence`, `onEnum(of:)`, suspend as async. Check the release notes for the supported Kotlin versions before bumping Kotlin (0.10.15 supports up to 2.4.20). Use for: Lesson 09.
 - [Kotlin: Swift export](https://kotlinlang.org/docs/native-swift-export.html)
-  JetBrains' Kotlin→Swift export, Alpha: flows as `AsyncSequence`, sealed types as enums. Use for: Lesson 05 B4 (where interop is heading).
+  JetBrains' Kotlin→Swift export, Alpha: flows as `AsyncSequence`, sealed types as enums. Use for: Lesson 09, section 4 (where interop is heading).
 - [KMP-NativeCoroutines](https://github.com/rickclephas/KMP-NativeCoroutines) and [KMP-ObservableViewModel](https://github.com/rickclephas/KMP-ObservableViewModel); [Compose Multiplatform: common ViewModel](https://kotlinlang.org/docs/multiplatform/compose-viewmodel.html)
-  Alternatives to SKIE + a hand-written owner; JetBrains' page recommends KMP-ObservableViewModel for SwiftUI. Use for: Lesson 05 B4, reading other KMP codebases.
+  Alternatives to SKIE + a hand-written owner; JetBrains' page recommends KMP-ObservableViewModel for SwiftUI. Use for: Lesson 09, section 4, reading other KMP codebases.
 
 - [Android: Guide to app architecture](https://developer.android.com/topic/architecture) and [Domain layer](https://developer.android.com/topic/architecture/domain-layer)
   Separation of concerns, UI/data/optional domain layers, "Manage dependencies between components" (DI vs service locator); use cases: `VerbNounUseCase`, `operator fun invoke`, no mutable data, main-safe. Note the guide's domain depends on data; the course inverts that for ports (adapters live per platform). Use for: Lesson 06 (primary source).

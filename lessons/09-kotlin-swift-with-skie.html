@@ -1,0 +1,897 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>09 — Kotlin↔Swift with SKIE</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 09 · Week 2 · Day 9 · Native Device Monitor course</p>
+  <h1>Kotlin↔Swift with SKIE</h1>
+  <div class="meta">
+    <span class="tag">~1.5 h · +0.5 h per extra UI track</span>
+    <span class="tag">Milestone: m04 iOS observes the ViewModel through SKIE</span>
+    <span class="tag">Prereq: <a href="08-shared-viewmodels.html">08</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> in m03, iOS reaches the shared ViewModel through a bridge you wrote by hand: a 23-line Kotlin watcher, a 29-line observer on SwiftUI, and <code>as?</code> casts that say nothing when Kotlin adds a case. The team's app will have many flows and many sealed types, and each one would need more of that code. Today a compiler plugin, <strong>SKIE</strong>, writes the bridge for you: Swift iterates the <code>StateFlow</code> with <code>for await</code>, and switches over the sealed state with a <code>switch</code> the compiler checks. The bridge files are deleted. That's milestone <strong>m04</strong>. It has a price, which you also learn today: SKIE ties the project to the Kotlin versions it supports.
+  </div>
+
+  <p><span class="tag">Primary source</span> SKIE's <a href="https://skie.touchlab.co/features/flows">Flows</a> page, then its <a href="https://skie.touchlab.co/features/sealed">Sealed classes</a> page. Both are short. Read them after section 1.</p>
+  <p><span class="tag">Tracks</span> Only iOS code changes in this lesson. On both Android tracks the one change is the root build file (the Kotlin version), and the Android sources stay as they are. The SwiftUI and UIKit screens change in section 3. Each excerpt shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m03</h2>
+  <p>The screens look and behave exactly as in m03. What changes is the code between Kotlin and Swift:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m03</th><th>m04</th></tr>
+    <tr><td>how iOS observes <code>uiState</code></td><td><code>StateFlowWatcher</code> and <code>Watch</code> (Kotlin), plus <code>DeviceListObserver</code> on SwiftUI</td><td>a <code>for await</code> loop over <code>uiState</code>, inside a Swift <code>Task</code></td></tr>
+    <tr><td>how Swift reads <code>ScanState</code></td><td><code>as?</code> casts</td><td><code>switch onEnum(of:)</code>, checked by the compiler</td></tr>
+    <tr><td>Kotlin version</td><td>2.4.21</td><td><strong>2.4.20</strong>, the newest one SKIE 0.10.15 supports</td></tr>
+    <tr><td>files</td><td colspan="2">both build files, on every track; <code>StateFlowWatcher.kt</code> deleted; on SwiftUI, <code>DeviceListObserver.swift</code> deleted and <code>DeviceListView.swift</code> replaced; on UIKit, <code>DeviceListViewController.swift</code> replaced. <code>ViewModelOwner.swift</code>, <code>ViewModelResolver.kt</code> and every Android source stay.</td></tr>
+  </table>
+  </div>
+
+  <h2>1. What SKIE generates</h2>
+  <p><a href="https://skie.touchlab.co/">SKIE</a> (from Touchlab) is a Kotlin compiler plugin. Lesson 05 showed that Swift sees Kotlin through the Objective-C header that Kotlin/Native writes into <code>Shared.framework</code>, and Lesson 08 showed what that header loses: a <code>StateFlow</code>'s type argument, and the fact that a sealed interface has exactly three cases. SKIE runs while Gradle builds the framework. It leaves the header's declarations alone, and adds Swift code into the same framework that gives back what the header lost:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 300" role="img" aria-labelledby="l09-gen-title">
+      <title id="l09-gen-title">What SKIE generates between Kotlin and Swift, in four columns: your Kotlin, the Objective-C header Shared.h, what SKIE adds to the framework, and your Swift. Top row, the flow: Kotlin declares uiState as a StateFlow of DeviceListUiState. In Shared.h it is still an untyped StateFlow protocol: the type argument is lost and Swift can't iterate it. SKIE adds Shared.apinotes, which retypes uiState as SkieKotlinStateFlow of DeviceListUiState, a class, so the type argument survives, and generated Swift, SkieSwiftStateFlow of T, an AsyncSequence with a typed value. Your Swift writes for await state in viewModel.uiState and gets a DeviceListUiState. Bottom row, the sealed type: Kotlin declares sealed interface ScanState with Idle, Scanning and Finished. Shared.h has a ScanState protocol and three classes, so Swift must cast with as. SKIE generates a Swift enum with one case per subclass, and an onEnum of function that does the casts once. Your Swift writes switch onEnum of scan, and the compiler checks that it is exhaustive.</title>
+      <defs><marker id="l09-gen-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="12" y="18" font-weight="600">your Kotlin (commonMain)</text>
+      <text class="small" x="162" y="18" font-weight="600">Shared.h, as in m03</text>
+      <text class="small" x="306" y="18" font-weight="600">added by SKIE</text>
+      <text class="small" x="494" y="18" font-weight="600">your Swift</text>
+      <g data-part="inbound">
+        <rect class="box" x="10" y="30" width="136" height="100" rx="6"/>
+        <text class="mono small" x="20" y="52">val uiState:</text>
+        <text class="mono small" x="20" y="68">StateFlow&lt;</text>
+        <text class="mono small" x="20" y="84"> DeviceListUiState&gt;</text>
+        <rect class="box" x="10" y="160" width="136" height="100" rx="6"/>
+        <text class="mono small" x="20" y="182">sealed interface</text>
+        <text class="mono small" x="20" y="198"> ScanState</text>
+        <text class="small muted" x="20" y="218">Idle · Scanning ·</text>
+        <text class="small muted" x="20" y="232">Finished</text>
+      </g>
+      <rect class="box" x="160" y="30" width="132" height="100" rx="6"/>
+      <text class="mono small" x="170" y="52">id&lt;StateFlow&gt;</text>
+      <text class="mono small" x="170" y="68"> uiState</text>
+      <text class="small muted" x="170" y="90">type argument lost,</text>
+      <text class="small muted" x="170" y="104">not iterable</text>
+      <rect class="box" x="160" y="160" width="132" height="100" rx="6"/>
+      <text class="small" x="170" y="182">protocol ScanState</text>
+      <text class="small" x="170" y="198">+ 3 classes</text>
+      <text class="small muted" x="170" y="220">Swift casts with as?</text>
+      <rect class="box" x="306" y="30" width="174" height="100" rx="6"/>
+      <text class="small" x="316" y="48">Shared.apinotes:</text>
+      <text class="mono small" x="316" y="63">SkieKotlinStateFlow&lt;…&gt;</text>
+      <text class="small muted" x="316" y="77">a class: the type survives</text>
+      <text class="small" x="316" y="97">generated Swift:</text>
+      <text class="mono small" x="316" y="112">SkieSwiftStateFlow&lt;T&gt;</text>
+      <text class="small muted" x="316" y="125">AsyncSequence, typed value</text>
+      <rect class="box" x="306" y="160" width="174" height="100" rx="6"/>
+      <text class="small" x="316" y="180">generated Swift:</text>
+      <text class="mono small" x="316" y="196">enum __Sealed</text>
+      <text class="small muted" x="316" y="210">one case per subclass</text>
+      <text class="mono small" x="316" y="230">onEnum(of:)</text>
+      <text class="small muted" x="316" y="244">does the casts, once</text>
+      <g data-part="ios">
+        <rect class="box" x="494" y="30" width="136" height="100" rx="6"/>
+        <text class="mono small" x="504" y="52">for await state</text>
+        <text class="mono small" x="504" y="68"> in vm.uiState</text>
+        <text class="small muted" x="504" y="90">state is a</text>
+        <text class="small muted" x="504" y="104">DeviceListUiState</text>
+        <rect class="box" x="494" y="160" width="136" height="100" rx="6"/>
+        <text class="mono small" x="504" y="182">switch onEnum(</text>
+        <text class="mono small" x="504" y="198"> of: scan) {…}</text>
+        <text class="small muted" x="504" y="220">exhaustive: checked</text>
+        <text class="small muted" x="504" y="234">by the compiler</text>
+      </g>
+      <path class="edge" d="M148,80 L158,80" marker-end="url(#l09-gen-arrow)"/>
+      <path class="edge" d="M294,80 L304,80" marker-end="url(#l09-gen-arrow)"/>
+      <path class="edge" d="M482,80 L492,80" marker-end="url(#l09-gen-arrow)"/>
+      <path class="edge" d="M148,210 L158,210" marker-end="url(#l09-gen-arrow)"/>
+      <path class="edge" d="M294,210 L304,210" marker-end="url(#l09-gen-arrow)"/>
+      <path class="edge" d="M482,210 L492,210" marker-end="url(#l09-gen-arrow)"/>
+      <text class="small muted" x="12" y="284">Kotlin/Native writes the header; SKIE adds the rest to the same Shared.framework while Gradle builds it.</text>
+    </svg>
+    <figcaption>Top row: the flow. Bottom row: the sealed state. The header column is what Lesson 08 worked with; SKIE adds the third column, and your Swift only uses that.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="inbound">Shared ViewModel and its UI state</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Kotlin</th><th>Without SKIE (m03)</th><th>With SKIE (m04)</th></tr>
+    <tr><td><code>Flow&lt;T&gt;</code>, <code>StateFlow&lt;T&gt;</code></td><td>an untyped protocol; no <code>for await</code></td><td><code>SkieSwiftStateFlow&lt;T&gt;</code>: an <code>AsyncSequence</code> of <code>T</code>, with a typed <code>value</code>. "SKIE automatically converts Flows to custom Swift classes that implement <code>AsyncSequence</code>" (<a href="https://skie.touchlab.co/features/flows">Flows</a>)</td></tr>
+    <tr><td>sealed class or interface</td><td>a protocol plus classes; cast with <code>as?</code></td><td><code>onEnum(of:)</code> returns a generated Swift enum, so a <code>switch</code> over it is exhaustive (<a href="https://skie.touchlab.co/features/sealed">Sealed classes</a>)</td></tr>
+    <tr><td><code>suspend fun</code></td><td>a completion handler, or an <code>async</code> function the interop page calls experimental</td><td>a Swift <code>async</code> function that supports cancellation (the app has none yet)</td></tr>
+  </table>
+  </div>
+  <p><strong>Cancellation works in both directions.</strong> When the Swift <code>Task</code> running a <code>for await</code> loop is cancelled, SKIE cancels the Kotlin collection behind it. The other way round, "if the Flow is canceled from Kotlin, SKIE automatically cancels the Swift task that collects the Flow" (<a href="https://skie.touchlab.co/features/flows">Flows</a>). That's everything <code>StateFlowWatcher</code> and <code>Watch</code> did by hand.</p>
+  <p class="callout ts"><span class="label">From TypeScript</span>SKIE is a code-generation step built into the compiler, a bit like GraphQL Codegen writing typed TypeScript from a schema on every build. The Kotlin you write doesn't change: only what the other language sees does. <code>for await (const s of stream)</code> in JS is <code>for await s in stream</code> in Swift.</p>
+
+  <h2>2. Install it, and pin Kotlin</h2>
+  <p>SKIE is a Gradle plugin. You declare it once in the root build file, with its version, and apply it in the shared module. On m03's Kotlin 2.4.21, that fails before anything compiles:</p>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · SKIE supports a fixed list of Kotlin versions</span>
+    With SKIE 0.10.15 (the version this course uses) added to the m03 project, every Gradle command failed while configuring <code>:shared</code>:
+<pre><code>Error: SKIE 0.10.15 does not support Kotlin 2.4.21.
+  Supported versions are: [2.0.0, 2.0.10, …, 2.4.0, 2.4.10, 2.4.20].
+  Check if you have the most recent version of SKIE and if so, please wait for the SKIE developers to add support for this Kotlin version.
+  New Kotlin versions are usually supported within a few days after they are released.
+  …
+  To proceed with the compilation, please remove or explicitly disable SKIE by adding 'skie { isEnabled = false }' to your Gradle configuration.</code></pre>
+    A compiler plugin hooks into the compiler's internals, which can change in any Kotlin release, so each SKIE release lists the exact Kotlin versions it supports. From m04 on, the course uses <strong>Kotlin 2.4.20</strong>. The rule for the team's app: <strong>check SKIE's supported versions before you bump Kotlin</strong>, and move the two together. If you're ever blocked, the message tells you the way out: <code>skie { isEnabled = false }</code> builds without SKIE (and without anything it generates, so the Swift code that uses it stops compiling).
+  </div>
+  <p>So the root build file changes in two ways: every Kotlin plugin goes from 2.4.21 to 2.4.20, and SKIE is declared. Your Android track decides which Kotlin plugins the file has:</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt">
+    <figcaption class="path">build.gradle.kts (root)</figcaption>
+<pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+<mark>    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false</mark>
+<mark>    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false</mark>
+<mark>    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20" apply false</mark>
+<mark>    id("co.touchlab.skie") version "0.10.15" apply false</mark>
+}</code></pre>
+  </figure>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt">
+    <figcaption class="path">build.gradle.kts (root)</figcaption>
+<pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+<mark>    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false</mark>
+<mark>    id("co.touchlab.skie") version "0.10.15" apply false</mark>
+}</code></pre>
+  </figure>
+  </div>
+  </div>
+  <figure class="excerpt">
+    <figcaption class="path">shared/build.gradle.kts</figcaption>
+<pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+<mark>    id("co.touchlab.skie")</mark>
+}
+<span class="elide">⋯  kotlin { … }, as in m03</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Every Kotlin plugin moves together.</strong> The Compose compiler and serialization plugins ship with Kotlin and carry its version number, so they go to 2.4.20 with it.</li>
+    <li><strong><code>apply false</code> in the root, a bare <code>id</code> in the module</strong>: the root file declares the plugin and its version for the whole build without applying it there, and <code>shared</code> applies it, taking the version from the root. That's the same split every other plugin in the project already uses. <code>androidApp</code> doesn't apply SKIE: it only touches the iOS framework.</li>
+    <li><strong>The first build after the change is slower</strong>: Gradle downloads the SKIE plugin, and Kotlin/Native downloads its 2.4.20 toolchain if it isn't installed yet (Lesson 05's build path).</li>
+  </ol>
+  <p><strong>Then delete the bridge:</strong> <code>shared/src/iosMain/…/StateFlowWatcher.kt</code> on both iOS tracks, and <code>iosApp/iosApp/DeviceListObserver.swift</code> on SwiftUI. <code>ViewModelResolver.kt</code> and <code>ViewModelOwner.swift</code> stay, because SKIE converts types and doesn't own anything: clearing ViewModels is still your job on iOS (Lesson 08, section 5).</p>
+  <p><strong>Expected build noise.</strong> With SKIE applied, every Gradle build also prints eight or nine lines of the form <code>Configuration '…' was resolved during configuration time</code>. In the Xcode build they name <code>skieSubPlugin</code>, <code>skieCompilerPlugin</code> and others; the Android build's name Kotlin and Android configurations, but they still come from SKIE (the same build on Kotlin 2.4.20 without SKIE prints none). When the framework is rebuilt, the Xcode build also prints <code>SLF4J: Failed to load class "org.slf4j.impl.StaticLoggerBinder"</code>. None of these come from our code, and they aren't compiler warnings. The course's "no warnings" rule is about <code>w:</code> and <code>warning:</code> lines from our Kotlin and Swift.</p>
+  <p><strong>Analytics.</strong> Each iOS framework build also runs a <code>skieUploadAnalytics…</code> task. SKIE collects build statistics that its documentation calls "non-identifying" (versions, durations, hardware, project structure, git statistics, and its own settings) and uploads them to Touchlab (<a href="https://skie.touchlab.co/Analytics">SKIE Analytics</a>). If your team's policy forbids that, <code>skie { analytics { enabled.set(false) } }</code> in <code>shared/build.gradle.kts</code> turns off both collecting and uploading. The course leaves the default on.</p>
+
+  <h2>3. The iOS screens: <code>for await</code> and <code>onEnum</code></h2>
+  <p>Lesson 08 split the iOS work into two jobs: <strong>own</strong> the ViewModel, and <strong>observe</strong> its state. SKIE replaces only the observing half. The diagram is Lesson 08's, after the change:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 640 292" role="img" aria-labelledby="l09-obs-title">
+      <title id="l09-obs-title">The two iOS jobs in m04. Owning, top row, unchanged from Lesson 08: the screen holds a ViewModelOwner, which holds a ViewModelStore, which holds the DeviceListViewModel; the owner's deinit clears them. Observing, bottom row: uiState is now a typed AsyncSequence. A Swift Task iterates it with for await: on SwiftUI the view's task modifier, on UIKit a Task stored by the view controller. Each state goes to the screen: SwiftUI assigns it to a State property, UIKit calls render. When the screen disappears, the task is cancelled, the loop ends, and SKIE cancels the Kotlin collection. The ViewModel and its scan are not stopped by that.</title>
+      <defs><marker id="l09-obs-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text x="14" y="22" font-weight="600">Own: unchanged from Lesson 08</text>
+      <g data-part="ios">
+        <rect class="box" x="14" y="34" width="140" height="40" rx="6"/>
+        <text class="title small" x="24" y="58">the screen</text>
+        <rect class="box" x="178" y="34" width="172" height="40" rx="6"/>
+        <text class="title small" x="188" y="52">ViewModelOwner</text>
+        <text class="mono small" x="188" y="67">deinit: store.clear()</text>
+      </g>
+      <rect class="box" x="374" y="34" width="110" height="40" rx="6"/>
+      <text class="small" x="384" y="58">ViewModelStore</text>
+      <g data-part="inbound">
+        <rect class="box" x="508" y="34" width="118" height="40" rx="6"/>
+        <text class="title small" x="518" y="58">ViewModel</text>
+      </g>
+      <path class="edge" d="M156,54 L176,54" marker-end="url(#l09-obs-arrow)"/>
+      <path class="edge" d="M352,54 L372,54" marker-end="url(#l09-obs-arrow)"/>
+      <path class="edge" d="M486,54 L506,54" marker-end="url(#l09-obs-arrow)"/>
+      <text x="14" y="112" font-weight="600">Observe: a Swift task iterates the flow</text>
+      <g data-part="inbound">
+        <rect class="box" x="14" y="126" width="140" height="64" rx="6"/>
+        <text class="mono small" x="24" y="148">uiState</text>
+        <text class="small muted" x="24" y="164">typed AsyncSequence,</text>
+        <text class="small muted" x="24" y="178">thanks to SKIE</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="178" y="126" width="196" height="64" rx="6"/>
+        <text class="mono small" x="188" y="146">for await state in uiState</text>
+        <text class="small muted" x="188" y="164">SwiftUI: inside .task { }</text>
+        <text class="small muted" x="188" y="178">UIKit: inside a stored Task</text>
+        <rect class="box" x="398" y="120" width="228" height="32" rx="6"/>
+        <text class="small" x="408" y="140">SwiftUI: self.state = newState</text>
+        <rect class="box" x="398" y="164" width="228" height="32" rx="6"/>
+        <text class="small" x="408" y="184">UIKit: render(state)</text>
+      </g>
+      <path class="edge" d="M156,158 L176,158" marker-end="url(#l09-obs-arrow)"/>
+      <path class="edge" d="M376,150 L396,138" marker-end="url(#l09-obs-arrow)"/>
+      <path class="edge" d="M376,166 L396,178" marker-end="url(#l09-obs-arrow)"/>
+      <path class="edge dashed" d="M276,192 L276,214 L84,214 L84,194" marker-end="url(#l09-obs-arrow)"/>
+      <text class="small muted" x="96" y="232">Screen disappears: the task is cancelled, the loop ends, and SKIE cancels the</text>
+      <text class="small muted" x="96" y="246">Kotlin collection. The ViewModel and its scan keep going: only the owner's</text>
+      <text class="small muted" x="96" y="260">deinit stops them.</text>
+      <text class="small muted" x="14" y="280">Gone since Lesson 08: StateFlowWatcher, Watch, and on SwiftUI the DeviceListObserver.</text>
+    </svg>
+    <figcaption>Owning stays hand-written; observing is now plain Swift concurrency over a sequence SKIE generated.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="inbound">Shared ViewModel</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListView.swift</figcaption>
+<pre><code><span class="elide">⋯  imports, and a comment: the stateful half of the screen</span>
+struct DeviceListView: View {
+<mark>    @State private var owner = ViewModelOwner()</mark>
+    @State private var filter = ""
+<mark>    @State private var state: DeviceListUiState?</mark>
+
+    var body: some View {
+<mark>        let viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)</mark>
+<mark>        let state = self.state ?? viewModel.uiState.value</mark>
+        DeviceListContent(
+<span class="elide">⋯  filter, isScanning, devices(in: state.scan), onScan: as in m03</span>
+        )
+        .alert(
+<span class="elide">⋯  "Scan failed", bound to state.errorMessage: as in m03</span>
+        )
+<mark>        .task {</mark>
+<mark>            for await newState in viewModel.uiState {</mark>
+<mark>                self.state = newState</mark>
+            }
+        }
+    }
+<span class="elide">⋯  devices(in:), in the next excerpt</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>@State private var owner = ViewModelOwner()</code></strong>: the screen now holds the owner itself, and <code>DeviceListObserver</code> is gone. Creating an owner is cheap (an empty store), which is what Apple asks of a <code>@State</code> default. That fixes the shortcut Lesson 08 pointed out, where the observer's <code>init</code> created the ViewModel and started watching.</li>
+    <li><strong><code>owner.viewModel(…)</code> in <code>body</code></strong> runs on every render, and always returns the same instance: the store creates the ViewModel on the first call and hands it back after that (Lesson 08, section 5). One ViewModel per screen, created on the first render, cleared when the owner goes.</li>
+    <li><strong><code>.task { for await newState in viewModel.uiState { … } }</code></strong>: with SKIE, <code>uiState</code> is an <code>AsyncSequence</code> of <code>DeviceListUiState</code>, so the loop needs no cast. SwiftUI starts the task when the view appears and cancels it after the view disappears (<a href="https://developer.apple.com/documentation/swiftui/view/task(priority:_:)">task(priority:_:)</a>). Cancelling it ends the loop, which cancels the Kotlin collection. That's SwiftUI's <code>collectAsStateWithLifecycle</code>.</li>
+    <li><strong><code>.task</code> runs again when you come back</strong> from the detail screen (<a href="07-declarative-ui-lists.html">Lesson 07</a>'s gotcha). Here that's harmless, because the task only <em>observes</em>. The scan lives in the ViewModel, and a new loop gets the latest state first.</li>
+    <li><strong><code>self.state ?? viewModel.uiState.value</code></strong>: until the loop delivers its first value, <code>body</code> reads the flow's current value, which SKIE now types as <code>DeviceListUiState</code>. A <code>StateFlow</code> always has one. The <code>@State</code> property is what makes SwiftUI re-render: each assignment in the loop updates the view.</li>
+    <li>Compiled in Swift 6 mode with <strong>no warnings</strong>. The <code>Sendable</code> errors from Lesson 08's gotcha don't appear with SKIE's types.</li>
+  </ol>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListViewController.swift</figcaption>
+<pre><code><span class="elide">⋯  imports</span>
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+<mark>    private var observation: Task&lt;Void, Never&gt;?</mark>
+<span class="elide">⋯  views and the data source, as in m03</span>
+<span class="elide">⋯  viewDidLoad(): layout and the Scan action as in m03, then render(viewModel.uiState.value)</span>
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+<mark>        observation = Task {</mark>
+<mark>            for await state in viewModel.uiState {</mark>
+<mark>                render(state)</mark>
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+<mark>        observation?.cancel()</mark>
+        observation = nil
+    }
+<span class="elide">⋯  render(_:), in the next excerpt</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>observation = Task { for await state in viewModel.uiState { render(state) } }</code></strong> replaces the watch. A <code>UIViewController</code> is <code>@MainActor</code>, and a <code>Task</code> inherits its caller's actor (<a href="07-declarative-ui-lists.html">Lesson 07</a>, section 3), so <code>render</code> runs on the main thread.</li>
+    <li><strong>Cancel in <code>viewDidDisappear</code></strong>: cancelling the task ends the loop and the Kotlin collection, as <code>watch?.cancel()</code> did in m03. While the detail screen is pushed, nothing renders into hidden views; the ViewModel keeps scanning, and when the list reappears, the new loop gets the latest state first.</li>
+    <li><strong>The <code>Task</code> captures <code>self</code> strongly</strong>, unlike m03's <code>[weak self]</code> callback. That's fine here, because <code>viewDidDisappear</code> always cancels it, which ends the loop and releases <code>self</code>. Without that cancel, the loop would keep the view controller alive, and its ViewModel would never be cleared. <code>observation?.cancel()</code> before each new <code>Task</code> makes sure an old loop is never left running.</li>
+    <li><strong><code>render(viewModel.uiState.value)</code></strong> at the end of <code>viewDidLoad</code>: SKIE types <code>value</code>, so the first frame needs no watcher either.</li>
+  </ol>
+  </div>
+  </div>
+
+  <p>The second half of the change is the sealed state. Swift used to see <code>ScanState</code> as a protocol, so m03 cast with <code>as?</code> and had a fallback for "none of these". With SKIE, <code>onEnum(of:)</code> turns a <code>ScanState</code> into a Swift enum, and a <code>switch</code> over it has to name every case:</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListView.swift</figcaption>
+<pre><code><span class="elide">⋯  DeviceListView's properties and body</span>
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+<mark>        switch onEnum(of: scan) {</mark>
+<mark>        case .idle: nil</mark>
+<mark>        case .scanning(let scanning): scanning.found</mark>
+<mark>        case .finished(let finished): finished.found</mark>
+        }
+    }
+}
+<span class="elide">⋯  DeviceListContent, ScanStatus and DeviceRow: unchanged from m03</span></code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListViewController.swift</figcaption>
+<pre><code><span class="elide">⋯  properties and view lifecycle</span>
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+<mark>        let devices: [Device]? = switch onEnum(of: state.scan) {</mark>
+<mark>        case .idle: nil</mark>
+<mark>        case .scanning(let scanning): scanning.found</mark>
+<mark>        case .finished(let finished): finished.found</mark>
+        }
+<span class="elide">⋯  the rest of render(_:), renderError(_:) and the table delegate: unchanged from m03</span></code></pre>
+  </figure>
+  </div>
+  </div>
+  <p>Here is what SKIE generated for <code>ScanState</code>. You never edit this file, and it isn't in your source tree: it's rebuilt with the framework.</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/build/skie/…/swift/generated/DeviceMonitor__shared/DeviceMonitor__shared.ScanState.swift</figcaption>
+<pre><code><span class="elide">⋯  a "Generated by Touchlab SKIE 0.10.15" comment and an import</span>
+extension Shared.Skie.DeviceMonitor__shared.ScanState {
+    @frozen
+<mark>    public enum __Sealed : Swift.Hashable {</mark>
+        case finished(Shared.ScanStateFinished)
+        case idle(Shared.ScanStateIdle)
+        case scanning(Shared.ScanStateScanning)
+    }
+}
+
+<mark>public func onEnum&lt;__Sealed : Shared.ScanState&gt;(of sealed: __Sealed) -&gt; Shared.Skie.DeviceMonitor__shared.ScanState.__Sealed {</mark>
+<mark>    if let sealed = sealed as? Shared.ScanStateFinished {</mark>
+        return Shared.Skie.DeviceMonitor__shared.ScanState.__Sealed.finished(sealed)
+    } else if let sealed = sealed as? Shared.ScanStateIdle {
+        return Shared.Skie.DeviceMonitor__shared.ScanState.__Sealed.idle(sealed)
+    } else if let sealed = sealed as? Shared.ScanStateScanning {
+        return Shared.Skie.DeviceMonitor__shared.ScanState.__Sealed.scanning(sealed)
+    } else {
+<mark>        fatalError("Unknown subtype \(sealed). This error should not happen under normal circumstances since SirClass: Shared.ScanState is sealed.")</mark>
+    }
+}
+<span class="elide">⋯  a second onEnum(of:) for an optional ScanState</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The casts didn't disappear; they moved into generated code.</strong> <code>onEnum(of:)</code> is the same <code>as?</code> chain m03 wrote by hand, generated from the Kotlin sealed interface on every build. So it always lists exactly the subclasses Kotlin declares.</li>
+    <li><strong>The enum is what makes your <code>switch</code> checked.</strong> It has one case per subclass, each carrying the typed Kotlin object (<code>case .scanning(let scanning)</code> binds a <code>ScanStateScanning</code>, so <code>scanning.found</code> works). Add a fourth Kotlin case and the enum gains a fourth case on the next build, so every <code>switch</code> without it stops compiling. m03's <code>as?</code> chain returned <code>nil</code> for the new case and said nothing.</li>
+    <li><strong><code>fatalError</code></strong> covers a subclass that isn't in the list. As the message says, that can't happen for a sealed type, because the list is generated from it.</li>
+    <li><code>isScanning</code> still uses <code>is ScanStateScanning</code>: a yes/no question needs no switch, and the class names from <code>Shared.h</code> still work.</li>
+  </ol>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>Both do the same thing in their own lifecycle: start a <code>for await</code> over <code>uiState</code> when the screen appears, cancel it when it disappears. SwiftUI's <code>.task</code> cancels for you, and UIKit stores the <code>Task</code> and cancels it in <code>viewDidDisappear</code>. Both tracks lost the 23-line Kotlin watcher, SwiftUI also lost its 29-line observer, and both switched from casts to an exhaustive <code>switch</code>.</p>
+
+  <h2>4. Where Kotlin↔Swift is heading</h2>
+  <p>JetBrains is building <strong>Swift export</strong>: Kotlin compiled to a Swift API directly, instead of through an Objective-C header. It exports flows "as Swift's <code>AsyncSequence</code>" and maps sealed hierarchies to Swift enums. Today it's in Alpha: "still incomplete, so breaking changes are expected" (<a href="https://kotlinlang.org/docs/native-swift-export.html">Swift export</a>). When it matures, it should give you what SKIE gives today without a third-party compiler plugin, and with it the version pinning goes away. Until then, the course uses SKIE.</p>
+  <p>Other options you'll meet in KMP codebases: <a href="https://github.com/rickclephas/KMP-NativeCoroutines">KMP-NativeCoroutines</a> (annotations that generate Swift wrappers for flows and suspend functions) and <a href="https://github.com/rickclephas/KMP-ObservableViewModel">KMP-ObservableViewModel</a>, which JetBrains' <a href="https://kotlinlang.org/docs/multiplatform/compose-viewmodel.html">Compose Multiplatform ViewModel page</a> recommends for using shared ViewModels from SwiftUI. Between them they cover the same two jobs as Lesson 08: owning and observing.</p>
+
+  <h2>5. What actually happens</h2>
+  <p>We built m04 (Kotlin 2.4.20, SKIE 0.10.15, Lifecycle 2.11.0, coroutines 1.11.0, AGP 9.4.1, Xcode 26.2) and ran it on the Android 16 emulator and the iOS 26.2 simulator. Both apps behave exactly as m03: rows arrive one by one under "Scanning…", the status reads "Devices found: 5" at 3 s, the filter <code>fail</code> shows the "Scan failed" dialog, and leaving the iOS list screen clears its ViewModel. The screenshots in <a href="08-shared-viewmodels.html">Lesson 08</a>, section 6, are what you should see.</p>
+  <p><strong>m04 is a natural stop.</strong> It's done when both apps build and behave as in m03. Commit it before the next lesson, which starts from this state.</p>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · <code>Shared.h</code> looks unchanged</span>
+    Looking for SKIE's types in <code>Shared.h</code>, you'll find <code>uiState</code> declared exactly as before: <code>id&lt;SharedKotlinx_coroutines_coreStateFlow&gt;</code>. SKIE adds its own classes to the header (<code>SkieKotlinStateFlow</code> and friends), but the typed property is in <code>Shared.framework/Headers/Shared.apinotes</code>, a file the Swift compiler reads next to the header, where <code>uiState</code>'s type is <code>SharedSkieKotlinStateFlow&lt;SharedDeviceListUiState *&gt;</code>. The generated Swift (<code>onEnum</code>, <code>SkieSwiftStateFlow</code>) is under <code>shared/build/skie/…/swift/generated/</code>. When Swift and the header disagree, look there.
+  </div>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to show you, in your build, the <code>uiState</code> entry in <code>Shared.apinotes</code> and the generated <code>SkieSwiftStateFlow</code> class, and to point at the line that makes it an <code>AsyncSequence</code>. Then ask: "What would break, and where, if we bumped Kotlin to 2.4.21 tomorrow?"
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">What does SKIE turn a Kotlin <code>StateFlow&lt;T&gt;</code> into?</p>
+    <div class="opts">
+      <button class="opt">a Combine publisher of T values</button>
+      <button class="opt" data-correct>a typed Swift AsyncSequence of T</button>
+      <button class="opt">an @Observable Swift class holding T</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>SkieSwiftStateFlow&lt;T&gt;</code> conforms to <code>AsyncSequence</code>, with a typed <code>value</code>. You iterate it with <code>for await</code>, inside <code>.task</code> or a stored <code>Task</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The team bumps Kotlin to a version released yesterday. What's the likely first failure?</p>
+    <div class="opts">
+      <button class="opt" data-correct>Gradle configuration fails on the SKIE plugin</button>
+      <button class="opt">Swift code that iterates flows stops compiling</button>
+      <button class="opt">the Android app crashes when it starts up</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SKIE checks the Kotlin version when Gradle configures <code>:shared</code>, and refuses a version it doesn't list, before anything compiles. That's on every Gradle command, so the Android build stops too.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">With SKIE in place, which file does iOS still need?</p>
+    <div class="opts">
+      <button class="opt">StateFlowWatcher, to collect on main</button>
+      <button class="opt">DeviceListObserver, to mirror the state</button>
+      <button class="opt" data-correct>ViewModelOwner, to clear the ViewModel</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SKIE converts types; it doesn't own anything. Clearing ViewModels is still your job on iOS.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">You add a fourth case to Kotlin's <code>ScanState</code>. What happens to m04's Swift <code>switch onEnum(of:)</code>?</p>
+    <div class="opts">
+      <button class="opt">it compiles, and the new case falls to nil</button>
+      <button class="opt" data-correct>it stops compiling until it handles the case</button>
+      <button class="opt">it crashes in onEnum's fatalError at runtime</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SKIE regenerates the enum with a fourth case, and a Swift <code>switch</code> must be exhaustive. Falling to <code>nil</code> silently is what m03's <code>as?</code> chain did. <code>onEnum</code>'s <code>fatalError</code> can't fire, because its list is generated from the sealed type.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The SwiftUI list disappears behind the detail screen. What stops?</p>
+    <div class="opts">
+      <button class="opt" data-correct>the for await loop and its Kotlin collection</button>
+      <button class="opt">the scan, because the ViewModel is cleared</button>
+      <button class="opt">nothing: the .task keeps running underneath</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">SwiftUI cancels the <code>.task</code>, which ends the loop, and SKIE cancels the Kotlin collection. The ViewModel lives on in its owner, so the scan carries on, and the next <code>.task</code> gets the latest state.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">SKIE's Swift is compiled into <code>Shared.framework</code>. When you build in Xcode, what produces the framework? (Lesson 05)</p>
+    <div class="opts">
+      <button class="opt">Xcode compiles the Kotlin sources itself</button>
+      <button class="opt">a framework you build once and commit</button>
+      <button class="opt" data-correct>a build script that runs Gradle, before the Swift</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The target's first build phase runs <code>./gradlew :shared:embedAndSignAppleFrameworkForXcode</code>, which builds the framework (and, with SKIE applied, its generated Swift) before Xcode compiles your Swift.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why must the scan never start in the list's <code>.task</code>? (Lesson 07)</p>
+    <div class="opts">
+      <button class="opt" data-correct>.task runs again each time the list reappears</button>
+      <button class="opt">.task runs on a background thread</button>
+      <button class="opt">.task can't call into Kotlin code</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Coming back from the detail screen runs <code>.task</code> again. Observing in it is harmless, because a new loop just reads the latest state. Starting work there would scan again on every return.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m04 build)</span>
+    <ol>
+      <li><strong>Let the compilers find the screens.</strong> Add a fourth case, <code>data class Stopped(val found: List&lt;Device&gt;) : ScanState</code>, and build both apps without changing anything else. List every error, with file and line, on each platform. Then check out your m03 commit (where Swift used <code>as?</code>) and repeat: what does each compiler say now, and what would the user see during a <code>Stopped</code> state? Go back to m04 and remove the case.</li>
+      <li><strong>A Stop button.</strong> Add <code>fun stopScan()</code> to the ViewModel: it cancels the scan, and the screen ends up showing what was found so far. Before writing it, predict whether the <code>_uiState.update { … Finished … }</code> line after <code>withTimeoutOrNull</code> runs when the job is cancelled, and check your prediction. Then make the Scan button read "Stop" while scanning (a derived label) on both of your tracks.</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run both apps yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 09 (Kotlin↔Swift with SKIE): build milestone m04, iOS observing the shared ViewModel
+through SKIE, on top of m03.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m03 project in demo/ (Lesson 08). Use exactly the file contents shown in the
+lesson's "Full files" section for my tracks, including package lines and imports. All paths
+are relative to demo/. Touch no file that isn't listed here.
+
+1. Gradle (all tracks):
+     build.gradle.kts (root): replaced. Every Kotlin plugin goes from 2.4.21 to 2.4.20, and
+       id("co.touchlab.skie") version "0.10.15" apply false is added. Use the file for my
+       Android track (Compose and XML differ).
+     shared/build.gradle.kts: replaced (adds id("co.touchlab.skie") to plugins).
+
+2. Delete the hand-written bridge:
+     shared/src/iosMain/kotlin/com/example/devicemonitor/StateFlowWatcher.kt (all tracks)
+     iosApp/iosApp/DeviceListObserver.swift (SwiftUI only)
+   Keep ViewModelResolver.kt and ViewModelOwner.swift.
+
+3. iOS screens:
+     SwiftUI: iosApp/iosApp/DeviceListView.swift: replaced.
+     UIKit: iosApp/iosApp/DeviceListViewController.swift: replaced.
+   Every Android source and every other iOS file stays as in m03. After deleting files, run
+   `xcodegen generate` in iosApp/ so the target's file list is refreshed.
+
+4. Build both apps.
+   Android, from demo/:
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Run: `adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk`, then
+     `adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity`.
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`, then
+     `xcrun simctl launch booted com.example.devicemonitor`.
+   The first build after the change downloads the SKIE plugin and, if it isn't installed yet,
+   the Kotlin/Native 2.4.20 toolchain.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- Both builds succeed with no compiler warnings from our own Kotlin or Swift code, including
+  the Kotlin/Native link step that runs inside the Xcode build (don't use -q to check warnings;
+  read the build output). Not from our code, and expected: SKIE's eight or nine Gradle lines
+  "Configuration '…' was resolved during configuration time" in each build, and the SLF4J
+  "Failed to load class" lines whenever the framework is rebuilt (lesson section 2); Gradle's "Deprecated Gradle features …
+  Gradle 10" line, "Unable to strip the following libraries" from the Android build, Xcode's
+  "appintentsmetadataprocessor … warning: Metadata extraction skipped", and xcodebuild's
+  "WARNING: Using the first of multiple matching destinations" (it can appear even with
+  id=&lt;UDID&gt;).
+- No reference to the bridge is left: grep the project for StateFlowWatcher, Watch( and
+  DeviceListObserver (outside build/ folders) and find none.
+- The pin: temporarily set the root file's Kotlin multiplatform plugin back to 2.4.21, run
+  ./gradlew help, and see it fail with "SKIE 0.10.15 does not support Kotlin 2.4.21".
+  Restore 2.4.20 and check ./gradlew help succeeds.
+- Launch: as m03 (the title "Device Monitor", a "Device name filter" field, a full-width Scan
+  button, "Tap Scan to look for devices." and an empty list).
+- Tap Scan: the button is disabled, a spinner + "Scanning…" show in the normal (not red)
+  colour, and rows appear one at a time (~0.3 s apart) in SampleDevices order. After ~3 s the
+  status reads "Devices found: 5" and the button is enabled again.
+- Filter "sens" + Scan: one row (Tire Pressure Sensor). Filter "zzz" + Scan: "Scanning…" for
+  ~3 s, then the red "No devices found. Try another filter."
+- Filter "fail" + Scan: a "Scan failed" dialog/alert with "Bluetooth adapter not responding
+  (simulated)."; OK closes it, and the status reads "Tap Scan to look for devices."
+- Rows open the detail screen; Back returns to the list with the results still shown. iOS: open
+  a device during a scan, wait 3 s, come back: the list shows the finished scan.
+- Android, driving the emulator: tap the filter field and use `adb shell input text`; find
+  coordinates with `adb shell uiautomator dump`. A dump takes about 2 s, so judge mid-scan
+  states (rows arriving, "Scanning…") from `adb exec-out screencap -p` screenshots instead.
+  Android code didn't change, so the m03 rotation checks are optional.
+- iOS timing: an XCUITest query also takes about 0.3 s, so judge the rows arriving one at a
+  time from a sequence of screenshots (XCUIScreen.main.screenshot() in a loop), not by polling.
+- iOS: confirm the ViewModel is cleared with its screen. Temporarily add printlns to the
+  ViewModel: in an init block, in an onCleared() override, and in the collect block, each
+  printing this@DeviceListViewModel.hashCode() (a bare hashCode() inside launch is the
+  coroutine's). During a scan, replace the list screen with a new one, for example from a
+  temporary toolbar or navigation-bar button: SwiftUI: give DeviceListView() in ContentView an
+  .id(counter) and increment a @State counter; UIKit: set view.window?.rootViewController =
+  UINavigationController(rootViewController: DeviceListViewController()). Check the console:
+  the old ViewModel prints one "cleared", and finds no device after its cleared line. (The new
+  ViewModel's init may print before the old one's "cleared": in our run, the old owner was
+  released after the new view was built.) Remove the temporary code and rebuild. (Kotlin's println goes to the app's stdout. To capture it,
+  launch with `xcrun simctl launch --stdout=&lt;file&gt; --stderr=&lt;file&gt; booted
+  com.example.devicemonitor`; an XCUITest can then drive that running app with app.activate()
+  instead of relaunching it.)
+- iOS: if you can drive the simulator (xcrun simctl has no tap command; idb or a throwaway
+  XCUITest that launches the installed app by bundle ID can. Don't script the Simulator window
+  with System Events: its clicks and keystrokes are unreliable), run the Scan, filter, "fail"
+  and row-tap checks above. In automation, the status text ends in the single character "…",
+  not three dots. If you can't, say so and list which iOS checks you didn't run.
+Then walk me through each changed file line by line, tied to the lesson's walkthrough numbers,
+and show me, from the iOS simulator framework build
+(shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/; run
+./gradlew :shared:linkDebugFrameworkIosSimulatorArm64 if that folder doesn't exist): uiState's
+line in Shared.h, its entry in Shared.apinotes, and the generated ScanState Swift file under
+shared/build/skie/. Do NOT do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/shared-viewmodel-cheatsheet.html">Cheatsheet: shared ViewModels across four tracks</a>: owning and observing per track, and what Swift sees with and without SKIE.</li>
+    <li>SKIE: <a href="https://skie.touchlab.co/features/flows">Flows</a> (primary source), <a href="https://skie.touchlab.co/features/sealed">Sealed classes</a>, <a href="https://skie.touchlab.co/Analytics">Analytics</a>, and the <a href="https://github.com/touchlab/SKIE/releases">release notes</a>, where each release lists the Kotlin versions it supports.</li>
+    <li>Kotlin↔Swift: <a href="https://kotlinlang.org/docs/native-objc-interop.html">Swift/Objective-C interop</a>, <a href="https://kotlinlang.org/docs/native-swift-export.html">Swift export (Alpha)</a>.</li>
+    <li>Apple: <a href="https://developer.apple.com/documentation/swiftui/view/task(priority:_:)">task(priority:_:)</a>, <a href="https://developer.apple.com/documentation/swift/asyncsequence">AsyncSequence</a>.</li>
+    <li><a href="../reference/glossary.html">Course glossary</a>: new terms from this lesson are marked (09).</li>
+    <li>Wisdom: the <a href="https://surveys.jetbrains.com/s3/kotlin-slack-sign-up">Kotlin Slack</a>, channel #multiplatform, and <a href="https://reddit.com/r/Kotlin">r/Kotlin</a>. Search for "SKIE Kotlin version" to see how other teams schedule Kotlin upgrades around their compiler plugins.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson changes, complete. Open one to check your work. Two files are deleted: <code>shared/src/iosMain/kotlin/com/example/devicemonitor/StateFlowWatcher.kt</code> on every track, and <code>iosApp/iosApp/DeviceListObserver.swift</code> on SwiftUI. Everything else stays as in m03, including every Android source. Build files carry no colour; iOS files are in the iOS colour.</p>
+    <details class="full-file" data-track="compose">
+      <summary>build.gradle.kts</summary>
+<pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20" apply false
+    id("co.touchlab.skie") version "0.10.15" apply false
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml">
+      <summary>build.gradle.kts</summary>
+<pre><code>plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false
+    id("co.touchlab.skie") version "0.10.15" apply false
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/build.gradle.kts</summary>
+<pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+    id("co.touchlab.skie")
+}
+
+kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+        compileSdk = 37
+        minSdk = 26
+    }
+
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target -&gt;
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            binaryOption("bundleId", "com.example.devicemonitor.shared")
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @State private var owner = ViewModelOwner()
+    @State private var filter = ""
+    @State private var state: DeviceListUiState?
+
+    var body: some View {
+        let viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+        let state = self.state ?? viewModel.uiState.value
+        DeviceListContent(
+            filter: $filter,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+    }
+
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        switch onEnum(of: scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Button(action: onScan) {
+                Text("Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isScanning)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(id: device.id)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListViewController.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel(factory: DeviceListViewModel.companion.Factory)
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let filterField = UITextField()
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = SampleDevices.shared.find(id: deviceId) {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            viewModel.startScan(filter: filterField.text ?? "")
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let stack = UIStackView(arrangedSubviews: [filterField, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(viewModel.uiState.value)
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+        let devices: [Device]? = switch onEnum(of: state.scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+        scanButton.isEnabled = !isScanning
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath) else { return }
+        navigationController?.pushViewController(DeviceDetailViewController(deviceId: deviceId), animated: true)
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="08-shared-viewmodels.html">← 08 Shared ViewModels</a>
+    <a href="06-clean-architecture-di-testing.html">Next: 10 The hexagon →</a>
+  </nav>
+</main>
+</body>
+</html>
