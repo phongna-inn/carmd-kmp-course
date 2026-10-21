@@ -87,7 +87,7 @@
   <ol class="walk">
     <li><strong>Service</strong>: "a collection of characteristics", for example a heart-rate service.</li>
     <li><strong>Characteristic</strong>: it "contains a single value and 0-n descriptors that describe the characteristic's value." <strong>Descriptors</strong> describe that value, for example "a human-readable description, an acceptable range for a characteristic's value, or a unit of measure".</li>
-    <li><strong>UUID</strong>: every attribute "is uniquely identified by a Universally Unique Identifier (UUID), which is a standardized 128-bit format" (all three: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">BLE overview</a>). The Bluetooth SIG publishes commonly used UUIDs, "many of which are 16- or 32-bits for convenience". A short one stands for a full UUID built on the Bluetooth base UUID, <code>00000000-0000-1000-8000-00805F9B34FB</code>: "Core Bluetooth pre-fills the rest of the 128-bit UUID with the Bluetooth base UUID" (<a href="https://developer.apple.com/documentation/corebluetooth/cbuuid">CBUUID</a>; Android's <code>BluetoothUuid.BASE_UUID</code> is the same value).</li>
+    <li><strong>UUID</strong>: every attribute "is uniquely identified by a Universally Unique Identifier (UUID), which is a standardized 128-bit format" (all three: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">BLE overview</a>). The Bluetooth SIG publishes commonly used UUIDs, "many of which are 16- or 32-bits for convenience". A short one stands for a full UUID built on the Bluetooth base UUID, <code>00000000-0000-1000-8000-00805F9B34FB</code>: "Core Bluetooth pre-fills the rest of the 128-bit UUID with the Bluetooth base UUID" (<a href="https://developer.apple.com/documentation/corebluetooth/cbuuid">CBUUID</a>). Android's public SDK has no constant for the base UUID, so on Android you write the full 128-bit form.</li>
   </ol>
   <p>A characteristic's <strong>properties</strong> say what a central may do with its value. Apple's descriptions, from CoreBluetooth's <code>CBCharacteristic.h</code> header and the <a href="https://developer.apple.com/documentation/corebluetooth/cbcharacteristicproperties">CBCharacteristicProperties</a> docs:</p>
   <div class="table-wrap">
@@ -243,7 +243,7 @@
       <path class="edge dashed" d="M560,262 L548,156" marker-end="url(#l13-hex-arrow)"/>
       <path class="edge dashed" d="M400,262 L520,156" marker-end="url(#l13-hex-arrow)"/>
     </svg>
-    <figcaption>Solid arrows are calls; dashed arrows into a port mean "implements". The numbers are the service's order.</figcaption>
+    <figcaption>Solid arrows are calls; dashed arrows into a port mean "implements" (each test fake implements its own port: <code>FakeBleScanner</code> the <code>BleScanner</code>, <code>FakePermissionChecker</code> the <code>PermissionChecker</code>). The numbers are the service's order.</figcaption>
   </figure>
   <ul class="legend">
     <li data-part="core">App core</li>
@@ -339,7 +339,7 @@
   <ol class="walk">
     <li><strong>Registered in the flow, unregistered in <code>awaitClose</code></strong>: the receiver lives exactly as long as the scan. Android: "always unregister your broadcast receiver" (<a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts">Broadcasts overview</a>).</li>
     <li><strong><code>RECEIVER_EXPORTED</code></strong>: "Some system broadcasts come from highly privileged apps, such as Bluetooth and telephony … To receive all system broadcasts, including broadcasts from highly privileged apps, flag your receiver with <code>RECEIVER_EXPORTED</code>" (same page).</li>
-    <li><strong>Why the <code>isEnabled</code> check before <code>stopScan</code>?</strong> In Android's source, <code>stopScan</code> starts with <code>BluetoothLeUtils.checkAdapterStateOn</code>, which throws <code>IllegalStateException("BT Adapter is not turned ON")</code>. Once Bluetooth is off, there's no scan left to stop.</li>
+    <li><strong>Why the <code>isEnabled</code> check before <code>stopScan</code>?</strong> In Android's source, <code>stopScan</code> starts with <code>BluetoothLeUtils.checkAdapterStateOn</code>, which throws <code>IllegalStateException("BT Adapter is not turned ON")</code>. When Bluetooth goes fully off, Android's scan service shuts down and drops every app's scan (in Android's source, <code>ScanController.stop</code> clears its scanners), so there's nothing left to stop. Some phones keep a BLE-only mode running for location's "Bluetooth scanning" when the user turns Bluetooth off; whether a scan survives that mode isn't checked yet, and the device checks cover it.</li>
   </ol>
   <div class="callout gotcha">
     <span class="label">Gotcha · Android ignores a scan started too often, silently</span>
@@ -506,7 +506,7 @@
   </figure>
   <ol class="walk">
     <li><strong><code>ScanningService(get(), get())</code></strong>: Koin fills each parameter by its type, <code>BleScanner</code> and <code>PermissionChecker</code>.</li>
-    <li><strong>Lesson 11 promised the swap would be "one line".</strong> It turned into a moved binding plus a parameter, because the adapters must be built outside shared code. What the promise was about still holds: no service, port, ViewModel or screen changed to swap the radio.</li>
+    <li><strong>Lesson 11 promised the swap would be "one line".</strong> It turned into a moved binding plus a parameter, because the adapters must be built outside shared code. What the promise was about mostly holds: the ViewModel still talks only to <code>DeviceScanning</code>, and it didn't change to swap the radio. The port and the service did grow, for rules a real radio brings (sections 3 and 4), and UIKit's list turned out to depend on the fake radio's sample devices (section 8).</li>
     <li><strong>Swift's header</strong> now declares <code>doInitKoin(permissionChecker:bleScanner:)</code>, still with no Koin type in it.</li>
   </ol>
   <figure class="excerpt" data-part="android">
@@ -629,7 +629,7 @@
 <mark>        b.scanButton.text = if (isScanning) "Stop" else "Scan"</mark>
 <mark>        b.scanButton.isEnabled = isScanning || state.bluetooth == PermissionStatus.Granted</mark></code></pre>
   </figure>
-  <p>The click listener reads the current state when tapped, as the permission button already did. The layout doesn't change.</p>
+  <p>The click listener is set once, in <code>onCreateView</code>, so it reads the ViewModel's current state when tapped. (The permission button works the other way: every <code>render()</code>, through <code>renderPermission</code>, gives it a new listener holding the status just drawn.) The layout doesn't change.</p>
   </div>
   </div>
   <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Compose picks the click handler and the label from <code>isScanning</code> each time it recomposes. The XML Fragment sets the label in <code>render()</code> and, since its listener is set once in <code>onCreateView</code>, asks the ViewModel's current state at the moment of the tap.</p>
@@ -713,7 +713,7 @@
   </figure>
   <ol class="walk">
     <li><strong>The permission fake comes from Lesson 12</strong>, used here as the OS for a different service. The class's setup grants the permission, so the m07 tests keep their meaning.</li>
-    <li><strong><code>scansStarted</code></strong> proves the radio was never started, the point of the rule. Checking only the error message would pass even if the service scanned first and threw later.</li>
+    <li><strong><code>scansStarted</code></strong> proves the radio was never started, the point of the rule. Checking only the error message couldn't tell a service that never started the radio from one that started it and then threw.</li>
     <li><strong>The ViewModel gets <code>stopEndsTheScanAndKeepsWhatWasFound</code></strong>: one device found, then Stop, and the state is <code>Finished</code> with that device at virtual time 0, so the timeout played no part. <code>TestDeviceScanning</code> gains an <code>isScanning</code> flag like the fake radio's, so the test can also check that the collection was cancelled.</li>
     <li><strong>The graph test</strong> passes <code>platformModule(FakePermissionChecker(), FakeBleScanner())</code>.</li>
   </ol>
@@ -728,7 +728,7 @@
     <tr><td>the same, Scan, then Stop a few seconds later</td><td>Scan again at once; <code>dumpsys</code> counted the scan as stopped</td></tr>
     <tr><td>Bluetooth off (<code>adb shell cmd bluetooth_manager disable</code>), then Scan</td><td>"Scan failed: Bluetooth is off. Turn it on, then scan again."</td></tr>
     <tr><td>Scan, then Bluetooth off a second later</td><td>"Scan failed: Bluetooth was turned off."</td></tr>
-    <tr><td>Android API 30 emulator, Compose and XML</td><td>two <code>gDevice-beacon</code> rows (−100 and −105 dBm), "Devices found: 2"; filter "beacon" finds them, "xyz" finds none</td></tr>
+    <tr><td>Android API 30 emulator, Compose and XML</td><td>two <code>gDevice-beacon</code> rows (their dBm values changed from run to run), "Devices found: 2"; filter "beacon" finds them, "xyz" finds none</td></tr>
     <tr><td>iOS 26.2 Simulator, SwiftUI and UIKit: Scan</td><td>"Scan failed: This phone has no Bluetooth LE radio." After OK: "Tap Scan to look for devices.", Scan enabled</td></tr>
     <tr><td>Simulator with <code>SimulatedBleScanner</code> passed to <code>initKoin</code>, both iOS tracks</td><td>rows with names on both tracks; Stop ends the scan and the rows stay</td></tr>
     <tr><td>Simulator, SwiftUI, with a throwaway copy of <code>IosBleScanner</code> whose <code>startScan</code> fed <code>ScanFeed</code> from a timer instead of the radio (two named devices and a nameless one, over and over)</td><td>two rows, each once; Stop logged the Swift <code>stopScan</code>; a later <code>feed.failed("Bluetooth was turned off.")</code> showed that alert and also logged <code>stopScan</code>. So the Swift → Kotlin path works end to end; only the radio itself needs the iPhone</td></tr>

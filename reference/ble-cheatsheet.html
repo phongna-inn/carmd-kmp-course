@@ -21,7 +21,7 @@
     <tr><td>GATT client / server</td><td>after connecting: the client (phone) sends requests, the server (peripheral) fulfils them</td><td>14</td></tr>
     <tr><td>service</td><td>a collection of characteristics, identified by a UUID</td><td>15</td></tr>
     <tr><td>characteristic</td><td>one value, its properties, 0–n descriptors; identified by a UUID</td><td>15</td></tr>
-    <tr><td>UUID</td><td>128-bit; standard ones have a 16-bit short form on the base UUID <code>00000000-0000-1000-8000-00805F9B34FB</code></td><td>13, 15</td></tr>
+    <tr><td>UUID</td><td>128-bit; many standard ones have a 16- or 32-bit short form, filled out on the base UUID <code>00000000-0000-1000-8000-00805F9B34FB</code></td><td>13, 15</td></tr>
     <tr><td>read · write</td><td>the central reads or writes the value; write-without-response gets no response</td><td>15 (read)</td></tr>
     <tr><td>notify · indicate</td><td>the peripheral pushes new values; an indication is confirmed by the central, a notification isn't</td><td>16 (notify)</td></tr>
     <tr><td>connection state</td><td>disconnected · connecting · connected · disconnecting, on both platforms</td><td>14</td></tr>
@@ -41,7 +41,7 @@
     <tr><td>name</td><td><code>result.scanRecord?.deviceName</code> (no CONNECT permission needed)</td><td><code>advertisementData[CBAdvertisementDataLocalNameKey]</code></td></tr>
     <tr><td>id</td><td><code>result.device.address</code>, "00:11:22:AA:BB:CC"</td><td><code>peripheral.identifier</code>, a UUID the system assigns</td></tr>
     <tr><td>same device again?</td><td>yes (callback type <code>ALL_MATCHES</code>, the default)</td><td>once per scan by default</td></tr>
-    <tr><td>stop</td><td><code>stopScan(callback)</code>; throws while Bluetooth is off</td><td><code>stopScan()</code></td></tr>
+    <tr><td>stop</td><td><code>stopScan(callback)</code>; can throw <code>IllegalStateException</code> once Bluetooth is off, so check <code>adapter.isEnabled</code> first</td><td><code>stopScan()</code></td></tr>
     <tr><td>errors</td><td><code>onScanFailed(SCAN_FAILED_*)</code></td><td>no scan-error callback</td></tr>
     <tr><td>Bluetooth turned off mid-scan</td><td>nothing reaches the callback: listen for <code>ACTION_STATE_CHANGED</code> (receiver <code>RECEIVER_EXPORTED</code>)</td><td><code>centralManagerDidUpdateState</code> with a state below <code>.poweredOn</code>: "scanning has stopped"</td></tr>
   </table>
@@ -55,7 +55,9 @@ override fun scan(): Flow&lt;Device&gt; = callbackFlow {
         override fun onScanFailed(code: Int) { close(ScanException("…$code")) }
     }
     scanner.startScan(null, settings, callback)
-    awaitClose { scanner.stopScan(callback) }      // mandatory: runs on cancel
+    awaitClose {                                   // mandatory: runs on cancel
+        if (adapter.isEnabled) scanner.stopScan(callback)   // stopScan throws once BT is off
+    }
 }
 
 // iOS: Swift can't build a Flow (SKIE converts Flow → AsyncSequence only),
