@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lessons 13–15</p>
+  <p class="kicker">Reference · from Lessons 13–16</p>
   <h1>BLE</h1>
-  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a> (scan), <a href="../lessons/14-ble-connect.html">Lesson 14</a> (connect) and <a href="../lessons/15-ble-discovery-and-read.html">Lesson 15</a> (discovery and read). Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators. Lesson 16 adds notify.</p>
+  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a> (scan), <a href="../lessons/14-ble-connect.html">Lesson 14</a> (connect), <a href="../lessons/15-ble-discovery-and-read.html">Lesson 15</a> (discovery and read) and <a href="../lessons/16-ble-notify-disconnect-errors.html">Lesson 16</a> (notify, disconnect, errors). Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators.</p>
 
   <h2>Words</h2>
   <div class="table-wrap">
@@ -25,7 +25,8 @@
     <tr><td>read · write</td><td>the central reads or writes the value; write-without-response gets no response</td><td>15 (read)</td></tr>
     <tr><td>properties field</td><td>one bit per property, the same numbers on Android (<code>PROPERTY_*</code>) and iOS (<code>CBCharacteristicProperties</code>): read <code>0x02</code>, write without response <code>0x04</code>, write <code>0x08</code>, notify <code>0x10</code>, indicate <code>0x20</code>. The app core's <code>propertiesOf(bits)</code></td><td>15</td></tr>
     <tr><td>discovery</td><td>asking a connected device for its services and their characteristics; per connection</td><td>15</td></tr>
-    <tr><td>notify · indicate</td><td>the peripheral pushes new values; an indication is confirmed by the central, a notification isn't</td><td>16 (notify)</td></tr>
+    <tr><td>notify · indicate</td><td>the peripheral pushes new values; an indication is confirmed by the central, a notification isn't. The app subscribes to either the same way (<code>Characteristic.notifies</code>)</td><td>16</td></tr>
+    <tr><td>CCCD</td><td>the Client Characteristic Configuration descriptor, <code>0x2902</code>: the device's switch for a characteristic's notifications. Write <code>01 00</code> (notify), <code>02 00</code> (indicate) or <code>00 00</code> (off)</td><td>16</td></tr>
     <tr><td>connection state</td><td>disconnected · connecting · connected · disconnecting, on both platforms. The app core's <code>ConnectionState</code> keeps three: <code>Disconnected</code>, <code>Connecting(device)</code>, <code>Connected(device)</code></td><td>14</td></tr>
   </table>
   </div>
@@ -157,6 +158,52 @@ if (CharacteristicProperty.Read !in c.properties) throw ConnectionException("…
 val bytes = requests.withLock { connection.read(c) }
 return ValueDecoder.decode(c.uuid, bytes)</code></pre>
 
+  <h2>Notifications, side by side</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>Android (<code>AndroidBleConnection</code>)</th><th>iOS (<code>IosBleConnection</code>, Swift half)</th></tr>
+    <tr><td>switch on</td><td><code>gatt.setCharacteristicNotification(c, true)</code> (inside the phone), then write the CCCD: <code>writeDescriptor(cccd, ENABLE_NOTIFICATION_VALUE)</code> from API 33, before that <code>cccd.value = …; writeDescriptor(cccd)</code></td><td><code>peripheral.setNotifyValue(true, for: c)</code>: CoreBluetooth writes the CCCD; notify wins if both are allowed</td></tr>
+    <tr><td>switch answered</td><td><code>onDescriptorWrite(gatt, descriptor, status)</code></td><td><code>peripheral(_:didUpdateNotificationStateFor:error:)</code></td></tr>
+    <tr><td>a value arrives</td><td><code>onCharacteristicChanged(gatt, c, value)</code> from API 33; before, <code>onCharacteristicChanged(gatt, c)</code> with <code>c.value</code>: override both</td><td><code>peripheral(_:didUpdateValueFor:error:)</code>, the same callback as a read's answer: the waiting read takes the first value for its characteristic</td></tr>
+    <tr><td>switch off</td><td><code>setCharacteristicNotification(c, false)</code>, then write <code>DISABLE_NOTIFICATION_VALUE</code></td><td><code>setNotifyValue(false, for: c)</code></td></tr>
+    <tr><td>one at a time?</td><td>yes: a descriptor write sets the same busy flag as a read</td><td>the port's rule (one request at a time) applies here too</td></tr>
+  </table>
+  </div>
+
+  <h2>A subscription as a Flow</h2>
+  <pre><code>// Port: switches are requests, values are a stream (hot: collect first, then subscribe)
+suspend fun subscribe(characteristic: Characteristic)
+suspend fun unsubscribe(characteristic: Characteristic)
+fun notifications(characteristic: Characteristic): Flow&lt;ByteArray&gt;
+// adapters: a MutableSharedFlow, tryEmit from the callback (thread-safe, doesn't suspend)
+
+// Service: collecting subscribes, cancelling unsubscribes, the link's end ends it
+override fun subscribe(c: Characteristic): Flow&lt;String&gt; = channelFlow {
+    val values = launch(start = CoroutineStart.UNDISPATCHED) {      // listening before asking
+        connection.notifications(c).collect { send(ValueDecoder.decode(c.uuid, it)) }
+    }
+    try {
+        requests.withLock { connection.subscribe(c) }
+        current.join()                                               // the link's Job
+    } catch (e: CancellationException) {                             // the collector went away
+        if (current.isActive) withContext(NonCancellable) { stopNotifications(c) }
+        throw e
+    }
+    values.cancel()                                                  // a SharedFlow never completes
+}</code></pre>
+
+  <h2>How a connection ends</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Cause</th><th><code>connect()</code></th><th>What else happens</th></tr>
+    <tr><td>Disconnect, or the caller's scope cancelled</td><td>returns normally</td><td rowspan="4">the same <code>finally</code>: state <code>Disconnected</code>; the link's <code>Job</code> completes, so every subscription ends; the adapter closes the radio's link and fails any request still waiting</td></tr>
+    <tr><td>the link dropped</td><td>throws the adapter's "was lost"</td></tr>
+    <tr><td>a discovery failed on a live link</td><td>throws it (the service set <code>endedBy</code>, then cancelled the link)</td></tr>
+    <tr><td>timeout, or the attempt failed</td><td>throws</td></tr>
+  </table>
+  </div>
+  <p>The reason for an ended connection is shown once, from <code>connect()</code>: the ViewModel ignores the failures of requests the end caused.</p>
+
   <h2>Bytes</h2>
   <div class="table-wrap">
   <table>
@@ -183,6 +230,8 @@ return ValueDecoder.decode(c.uuid, bytes)</code></pre>
     <tr><td>discover only when connected; read only what has Read; one request at a time; a failed discovery ends the connection</td><td><code>SessionService</code> (app core)</td></tr>
     <tr><td>what the bytes mean; UUID spelling; property bits</td><td><code>ValueDecoder</code>, <code>fullUuid</code>, <code>propertiesOf</code> (app core), tested on JVM and iOS</td></tr>
     <tr><td>discover when the link is up; where an answer is shown</td><td><code>DeviceDetailViewModel</code> (inbound adapter)</td></tr>
+    <tr><td>subscribe only to what notifies; switch requests one at a time; every subscription ends with its link; one report per ended connection</td><td><code>SessionService</code> (app core)</td></tr>
+    <tr><td>one collection per subscribed characteristic; Unsubscribe cancels it</td><td><code>DeviceDetailViewModel</code> (inbound adapter)</td></tr>
     <tr><td>which radio the app uses</td><td><code>platformModule</code>, filled by <code>initKoin(permissionChecker, bleScanner, bleConnection)</code></td></tr>
   </table>
   </div>
@@ -204,6 +253,11 @@ return ValueDecoder.decode(c.uuid, bytes)</code></pre>
     <li><strong>A signed <code>Byte</code>.</strong> Without <code>and 0xFF</code>, 200 reads as −56.</li>
     <li><strong>Byte order.</strong> GATT values are little endian unless the characteristic says otherwise.</li>
     <li><strong>A request still waiting when the adapter closes the link</strong> never gets its callback (Android's <code>close()</code> unregisters it): fail the request in the same close.</li>
+    <li><strong>Notifications need both switches (Android).</strong> <code>setCharacteristicNotification</code> alone asks the device for nothing; the CCCD write alone isn't passed to the app. Wait for <code>onDescriptorWrite</code> before the next request.</li>
+    <li><strong>A hot flow keeps nothing for later.</strong> A value emitted into a <code>SharedFlow</code> with no subscriber and no replay is lost: start collecting before switching notifications on.</li>
+    <li><strong>Suspending cleanup in a cancelled coroutine</strong> throws <code>CancellationException</code> at the first real suspension: wrap it in <code>withContext(NonCancellable)</code>.</li>
+    <li><strong>A read and a notification look the same on iOS.</strong> Both arrive in <code>didUpdateValueFor</code>; a value that answers a waiting read doesn't also reach the subscription.</li>
+    <li><strong>Views rebuilt on every value swallow taps</strong> (XML Views, UIKit): the pressed button is gone by the release. Rebuild rows only when they change; update values in place.</li>
   </ul>
 </main>
 </body>
