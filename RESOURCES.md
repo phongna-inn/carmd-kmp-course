@@ -36,11 +36,19 @@
   Official Navigation component docs — NavHostFragment, NavController, nav graph, destinations, actions. Use for: why only the start destination shows by default, and how navigate() reaches other destinations.
 
 - [Android Developers: Request runtime permissions](https://developer.android.com/training/permissions/requesting)
-  Official guide to checkSelfPermission, the Activity Result API (RequestPermission/RequestMultiplePermissions), and handling denial. Use for: Week 2 Day 1 permission exercise (Android side).
+  Official guide to checkSelfPermission, `shouldShowRequestPermissionRationale`, the Activity Result API (RequestPermission/RequestMultiplePermissions), and handling denial ("don't link to system settings in an effort to convince the user"). It doesn't say when the rationale call returns false, or what dismissing the dialog does: Lesson 12 records what the emulators showed. Use for: Lesson 12 (primary source, Android side).
 - [Apple Developer: Requesting authorization to capture and save media](https://developer.apple.com/documentation/avfoundation/requesting-authorization-to-capture-and-save-media)
   Official guide to camera/photo library authorization on iOS. Use for: Week 2 Day 1 permission exercise (iOS camera side).
-- [Apple Developer: CBManagerAuthorization](https://developer.apple.com/documentation/corebluetooth/cbmanagerauthorization)
-  Official reference for Bluetooth's authorization states (notDetermined/allowedAlways/restricted/denied). Use for: Week 2 Day 1 permission exercise (iOS Bluetooth side).
+- [Apple Developer: CBManagerAuthorization](https://developer.apple.com/documentation/corebluetooth/cbmanagerauthorization) and [CBManager.authorization](https://developer.apple.com/documentation/corebluetooth/cbmanager/authorization-swift.type.property)
+  Official reference for Bluetooth's authorization states (notDetermined/allowedAlways/restricted/denied); the class property can be read before creating a manager and never prompts. The iOS Simulator always reports allowedAlways. Use for: Lesson 12 (primary source, iOS side), Lesson 13.
+- [Android Developers: Bluetooth permissions](https://developer.android.com/develop/connectivity/bluetooth/bt-permissions) and [Android 11 permission updates](https://developer.android.com/about/versions/11/privacy/permissions)
+  BLUETOOTH_SCAN/CONNECT as "Nearby devices" runtime permissions on Android 12+, `maxSdkVersion="30"` for the legacy ones, ACCESS_FINE_LOCATION on Android 11 and lower, `neverForLocation` (filters some beacons); two refusals mean "don't ask again", flagged USER_SET/USER_FIXED. Use for: Lesson 12, Lesson 13 (the manifest the real scanner needs).
+- [Android Developers: Get a result from an activity](https://developer.android.com/training/basics/intents/result) and [Compose: requesting runtime permissions](https://developer.android.com/develop/ui/compose/libraries)
+  `registerForActivityResult` before the Fragment/Activity is created, unconditionally, every time; `rememberLauncherForActivityResult` in Compose. Use for: Lesson 12 (why the screen lends the adapter its launcher).
+- [Apple Developer: Requesting access to protected resources](https://developer.apple.com/documentation/uikit/requesting-access-to-protected-resources) and [Core Bluetooth](https://developer.apple.com/documentation/corebluetooth)
+  The prompt comes on first use and never again; always re-check, because the person can change it in Settings; a missing NSBluetoothAlwaysUsageDescription crashes the app. Use for: Lesson 12.
+- [SKIE: Suspend functions](https://skie.touchlab.co/features/suspend) and [SE-0423: Dynamic actor isolation](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0423-dynamic-actor-isolation.md)
+  A Swift class implementing a Kotlin `suspend fun` implements the `__`-prefixed original (SKIE keeps the plain name for its async wrapper); `@preconcurrency` conformances let a `@MainActor` class satisfy a Kotlin protocol, checked at run time. Use for: Lesson 12 (the first Swift outbound adapter), Lesson 13.
 
 - [Kotlin: Data classes](https://kotlinlang.org/docs/data-classes.html), [Sealed classes and interfaces](https://kotlinlang.org/docs/sealed-classes.html), [Lambdas](https://kotlinlang.org/docs/lambdas.html), [Extensions](https://kotlinlang.org/docs/extensions.html)
   Official Kotlin reference pages. Use for: Lesson 01.
