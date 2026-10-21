@@ -103,19 +103,19 @@
   Alternatives to SKIE + a hand-written owner; JetBrains' page recommends KMP-ObservableViewModel for SwiftUI. Use for: Lesson 09, section 4, reading other KMP codebases.
 
 - [Android: Guide to app architecture](https://developer.android.com/topic/architecture) and [Domain layer](https://developer.android.com/topic/architecture/domain-layer)
-  Separation of concerns, UI/data/optional domain layers, "Manage dependencies between components" (DI vs service locator); use cases: `VerbNounUseCase`, `operator fun invoke`, no mutable data, main-safe. Note the guide's domain depends on data; the course inverts that for ports (adapters live per platform). Use for: Lesson 06 (primary source).
+  Separation of concerns, UI/data/optional domain layers, "Manage dependencies between components" (DI vs service locator); use cases: `VerbNounUseCase`, `operator fun invoke`, no mutable data, main-safe. Note the guide's domain depends on data; in the course's hexagon the app core owns the ports and the adapters depend on it. Use for: reading Clean-style Android code (Lesson 10's sidebar maps its words to the hexagon).
 - [Alistair Cockburn: Hexagonal architecture (Ports and Adapters)](https://alistair.cockburn.us/hexagonal-architecture/)
   The original article: a port as "a purposeful conversation", one adapter per external device, test harnesses as adapters, primary/secondary actors and driving/driven adapters, why the drawing is a hexagon. Use for: Lesson 10 (primary source).
 - [Android: Dependency injection](https://developer.android.com/training/dependency-injection) and [Manual dependency injection](https://developer.android.com/training/dependency-injection/manual)
   Constructor vs field injection, DI vs service locator, the `AppContainer` pattern and its costs as an app grows. Use for: Lesson 10 (DI by hand), Lesson 11 (what Koin adds).
 - [Koin](https://insert-koin.io/): [definitions](https://insert-koin.io/docs/reference/koin-core/definitions/), [ViewModel](https://insert-koin.io/docs/reference/koin-core/viewmodel/), [KoinComponent](https://insert-koin.io/docs/reference/koin-core/koin-component/), [Compose](https://insert-koin.io/docs/reference/koin-compose/compose/), [Android ViewModel](https://insert-koin.io/docs/reference/koin-android/viewmodel/), [KMP](https://insert-koin.io/docs/reference/koin-mp/kmp/)
-  `single`/`factory`/`viewModelOf`, `koinViewModel()` (koin-compose-viewmodel), `by viewModel()` (koin-android), KoinComponent only at the edges. The docs say little about iOS ViewModels; the course's Koin-backed `ViewModelProvider.Factory` comes from reading Koin 4.2.2's sources (`KoinViewModelFactory`, `resolveViewModel`). Use for: Lesson 06 Part B, Lessons 07–08 (platform modules).
+  `single`/`factory`/`viewModelOf`, `koinViewModel()` (koin-compose-viewmodel), `by viewModel()` (koin-android), KoinComponent only at the edges. The docs say little about iOS ViewModels; the course's Koin-backed `ViewModelProvider.Factory` comes from reading Koin 4.2.2's sources (`KoinViewModelFactory`, `resolveViewModel`). Use for: Lesson 11, and the later lessons that bind real adapters (Lesson 13 on).
 - [Android: Test Kotlin coroutines](https://developer.android.com/kotlin/coroutines/test) and [Test doubles](https://developer.android.com/training/testing/fundamentals/test-doubles)
-  `runTest` and virtual time, `StandardTestDispatcher` vs `UnconfinedTestDispatcher`, `Dispatchers.setMain` (in setup, not a property); fakes preferred over mocks. Use for: Lesson 06 A5, Lesson 10 (state machine tests).
+  `runTest` and virtual time, `StandardTestDispatcher` vs `UnconfinedTestDispatcher`, `Dispatchers.setMain` (in setup, not a property); fakes preferred over mocks. Use for: Lesson 11, Lesson 16 (the session service's connection-state tests).
 - [Turbine](https://github.com/cashapp/turbine)
-  `flow.test { awaitItem() }`, 3 s wall-clock timeout, unconsumed events fail the test. Use for: Lesson 06, Lesson 10.
+  `flow.test { awaitItem() }`, 3 s wall-clock timeout, unconsumed events fail the test. Use for: Lesson 11, Lesson 16.
 - [Kotlin: Test your multiplatform app](https://kotlinlang.org/docs/multiplatform/multiplatform-run-tests.html) and [Android-KMP plugin: host and device tests](https://developer.android.com/kotlin/multiplatform/plugin)
-  `commonTest` + `kotlin.test` on JVM (JUnit 4) and iOS (Kotlin/Native runner), `allTests`; the Android-KMP plugin disables host tests until `withHostTest {}`. Use for: Lesson 06 A5.
+  `commonTest` + `kotlin.test` on JVM (JUnit 4) and iOS (Kotlin/Native runner), `allTests`; the Android-KMP plugin disables host tests until `withHostTest {}`. Use for: Lesson 11.
 
 ## Wisdom (Communities)
 

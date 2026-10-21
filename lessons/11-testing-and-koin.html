@@ -1,0 +1,1913 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>11 — Testing the app core + Koin</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 11 · Week 3 · Day 11 · Native Device Monitor course</p>
+  <h1>Testing the App Core + Koin</h1>
+  <div class="meta">
+    <span class="tag">~2.5 h · +0.25 h per extra UI track</span>
+    <span class="tag">Milestone: m06 Koin wiring, green tests on JVM + iOS</span>
+    <span class="tag">Prereq: <a href="10-the-hexagon.html">10</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> Lesson 10 promised that ports make the app core testable, and today you collect. A test drives the scanning service through its inbound port, <code>DeviceScanning</code>, exactly as the ViewModel does, with a <strong>fake</strong> radio behind the outbound port that the test controls. The same tests run on the JVM and on the iOS runtime, in milliseconds, with no device and no Bluetooth. Then you replace <code>AppContainer</code> with <strong>Koin</strong>, a DI container that runs on every KMP target. It binds each inbound port to its service and each outbound port to its adapter, so in Lesson 13 swapping in the real radios is one line. Koin checks those bindings only at run time, so one more test checks the whole graph. That's milestone <strong>m06</strong>.
+  </div>
+
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/kotlin/coroutines/test">Testing Kotlin coroutines on Android</a>. Read it before section 4: every rule it gives for <code>runTest</code> and the <code>Main</code> dispatcher applies to <code>commonTest</code> too. For Koin, its <a href="https://insert-koin.io/docs/reference/koin-core/definitions/">Definitions</a> page, before section 6.</p>
+  <p><span class="tag">Tracks</span> Sections 1–5 are all in <code>shared/</code>, the same on every track. Koin changes a few lines per track: where Koin starts and how the screen asks for its ViewModel (sections 7 and 8). The app looks and behaves exactly as m05. Each excerpt shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m05</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m05</th><th>m06</th></tr>
+    <tr><td>tests</td><td>none</td><td>9 per platform in <code>commonTest</code>: 5 for the scanning service, 3 for the ViewModel, 1 for the Koin graph; run on the JVM and on the iOS simulator</td></tr>
+    <tr><td>the composition root</td><td><code>di/AppContainer.kt</code>, wired by hand</td><td><code>di/AppModule.kt</code>, a Koin module, plus <code>initKoin()</code></td></tr>
+    <tr><td>where Koin starts</td><td>(no Koin)</td><td>Android: a new <code>Application</code> class; SwiftUI: <code>App.init</code>; UIKit: <code>AppDelegate</code></td></tr>
+    <tr><td>how a screen gets its ViewModel</td><td><code>AppContainer.deviceListViewModelFactory</code></td><td><code>koinViewModel()</code> · <code>by viewModel()</code> · <code>owner.viewModel()</code> (iOS, with a Koin-backed factory)</td></tr>
+    <tr><td>files</td><td colspan="2">shared: build file, <code>AppModule.kt</code> replaces <code>AppContainer.kt</code>, <code>ViewModelResolver.kt</code>, five new test files; Android: build file, manifest, a new <code>DeviceMonitorApplication.kt</code>, the list screen; iOS: <code>ViewModelOwner.swift</code>, the app entry point, the list screen</td></tr>
+  </table>
+  </div>
+
+  <h2>1. Where a test plugs in</h2>
+  <p>Lesson 10 named two kinds of inbound adapter: the shared ViewModels, and the tests. A test is just another caller of an inbound port. It calls <code>DeviceScanning.scan(…)</code> as the ViewModel does, so it tests what the app <em>offers</em>, not how the service is written inside. Behind the outbound port it plugs in a <strong>fake</strong>: an outbound adapter written for tests, which the test controls. Android's testing guide defines a fake as "A test double that has a "working" implementation of the class, but it is implemented in a way that makes it good for tests but unsuitable for production", and adds: "Fakes don't require a mocking framework and are lightweight. They are <strong>preferred</strong>." (<a href="https://developer.android.com/training/testing/fundamentals/test-doubles">Use test doubles</a>). A <em>test double</em> is any object that stands in for a real one in a test.</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 385" role="img" aria-labelledby="l11-seam-title">
+      <title id="l11-seam-title">Where each test plugs in. Top row, the service test: ScanningServiceTest, an inbound adapter in commonTest, calls the inbound port DeviceScanning on the app core's edge. Inside the app core, ScanningService implements DeviceScanning and calls the outbound port BleScanner. FakeBleScanner, a fake in commonTest, implements BleScanner, and the test controls it directly with hear and failure: the test plays the radio. The real service runs; only the radio is replaced. Bottom row, the ViewModel test: DeviceListViewModelTest calls the real DeviceListViewModel, which calls the inbound port DeviceScanning. TestDeviceScanning, a test implementation of the inbound port, stands in for the whole app core, and the test controls it with find and failure. Solid arrows are calls; dashed arrows mean implements.</title>
+      <defs><marker id="l11-seam-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="10" y="20" font-weight="600">Service test: real service, fake radio</text>
+      <g data-part="inbound">
+        <rect class="box" x="10" y="62" width="150" height="70" rx="6"/>
+        <text class="mono small" x="20" y="84">ScanningService</text>
+        <text class="mono small" x="20" y="99">Test</text>
+        <text class="small muted" x="20" y="120">inbound adapter</text>
+      </g>
+      <g data-part="core">
+        <polygon class="box" points="185,105 222,34 538,34 575,105 538,176 222,176"/>
+        <text class="title" x="380" y="56" text-anchor="middle">App core</text>
+        <rect class="box" x="326" y="83" width="108" height="44" rx="6"/>
+        <text class="mono small" x="334" y="101">Scanning</text>
+        <text class="mono small" x="334" y="116">Service</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="196" y="83" width="112" height="44" rx="6"/>
+        <text class="mono small" x="204" y="101">DeviceScanning</text>
+        <text class="small muted" x="204" y="118">inbound port</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="452" y="83" width="108" height="44" rx="6"/>
+        <text class="mono small" x="460" y="101">BleScanner</text>
+        <text class="small muted" x="460" y="118">outbound port</text>
+        <rect class="box" x="600" y="62" width="150" height="70" rx="6"/>
+        <text class="mono small" x="610" y="84">FakeBleScanner</text>
+        <text class="small muted" x="610" y="102">fake, in commonTest</text>
+        <text class="small muted" x="610" y="120">replaces the radio</text>
+      </g>
+      <path class="edge" d="M160,105 L194,105" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge dashed" d="M326,105 L310,105" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge" d="M434,105 L450,105" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge dashed" d="M600,105 L562,105" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge" d="M85,132 L85,196 L675,196 L675,134" marker-end="url(#l11-seam-arrow)"/>
+      <text class="small" x="230" y="214">hear(…) · failure: the test plays the radio</text>
+
+      <text class="small" x="10" y="248" font-weight="600">ViewModel test: real ViewModel, the app core replaced</text>
+      <g data-part="inbound">
+        <rect class="box" x="10" y="262" width="150" height="60" rx="6"/>
+        <text class="mono small" x="20" y="284">DeviceListViewModel</text>
+        <text class="mono small" x="20" y="299">Test</text>
+        <rect class="box" x="200" y="262" width="150" height="60" rx="6"/>
+        <text class="mono small" x="210" y="284">DeviceListViewModel</text>
+        <text class="small muted" x="210" y="304">inbound adapter</text>
+        <rect class="box" x="400" y="270" width="120" height="44" rx="6"/>
+        <text class="mono small" x="408" y="288">DeviceScanning</text>
+        <text class="small muted" x="408" y="305">inbound port</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="600" y="262" width="150" height="60" rx="6"/>
+        <text class="mono small" x="610" y="284">TestDeviceScanning</text>
+        <text class="small muted" x="610" y="304">replaces the app core</text>
+      </g>
+      <path class="edge" d="M160,292 L198,292" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge" d="M350,292 L398,292" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge dashed" d="M600,292 L522,292" marker-end="url(#l11-seam-arrow)"/>
+      <path class="edge" d="M85,322 L85,350 L675,350 L675,324" marker-end="url(#l11-seam-arrow)"/>
+      <text class="small" x="290" y="368">find(…) · failure: the test decides what a scan finds</text>
+    </svg>
+    <figcaption>Each test replaces only what's outside the code it tests, and reaches it through a port. Solid arrows are calls; dashed arrows mean "implements".</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound (port and adapter)</li>
+    <li data-part="outbound">Outbound (port and adapter)</li>
+  </ul>
+  <ol class="walk">
+    <li><strong>The service test</strong> keeps the real <code>ScanningService</code> and replaces only the radio. It tests the app's rule, "each device once, names that contain the filter", which is the part you'd hate to break.</li>
+    <li><strong>The ViewModel test</strong> keeps the real ViewModel and replaces the whole app core with <code>TestDeviceScanning</code>, a test implementation of the inbound port. The course calls it that, not a fake: a fake stands in for the outside world behind an outbound port, and this one stands in for the inside. It means the ViewModel test fails only when the ViewModel is wrong, never because of the service's rule.</li>
+    <li><strong>No mocking library.</strong> Both doubles are ordinary classes that implement a port, a dozen lines each, written in <code>commonTest</code>, so they never ship in either app.</li>
+  </ol>
+
+  <h2>2. Set up <code>commonTest</code></h2>
+  <p>Tests in <code>commonTest</code> are written once and run on every target. Kotlin's docs: "For the <code>android</code> option, tests are run using JUnit 4", and for <code>iosSimulatorArm64</code>, the compiler "creates a test binary that is executed by Kotlin/Native's own test runner" (<a href="https://kotlinlang.org/docs/multiplatform/multiplatform-run-tests.html">Test your multiplatform app</a>). The shared build file gets one line and three test dependencies:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/build.gradle.kts</figcaption>
+<pre><code>kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+<span class="elide">⋯  compileSdk, minSdk: as in m05</span>
+<mark>        withHostTest {}</mark>
+    }
+<span class="elide">⋯  the iOS framework: as in m05</span>
+    sourceSets {
+        commonMain.dependencies {
+<span class="elide">⋯  lifecycle-viewmodel, coroutines: as in m05; Koin, section 7</span>
+        }
+        commonTest.dependencies {
+<mark>            implementation(kotlin("test"))</mark>
+<mark>            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")</mark>
+<mark>            implementation("app.cash.turbine:turbine:1.2.1")</mark>
+        }
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>withHostTest {}</code></strong> turns on Android's host (JVM) tests: "By default, the new plugin disables Android host-side (unit) and device-side (instrumented) tests" (<a href="https://developer.android.com/kotlin/multiplatform/plugin">Android-KMP plugin</a>). See the gotcha below for what happens without it.</li>
+    <li><strong><code>kotlin("test")</code></strong> gives you <code>@Test</code>, <code>@BeforeTest</code> and <code>assertEquals</code>, mapped to JUnit on the JVM and to the Kotlin/Native runner on iOS.</li>
+    <li><strong><code>kotlinx-coroutines-test</code></strong> (the same version as coroutines) brings <code>runTest</code>, test dispatchers and virtual time. <strong>Turbine</strong> is "a small testing library for kotlinx.coroutines <code>Flow</code>" (<a href="https://github.com/cashapp/turbine">Turbine</a>). All three are <code>commonTest</code> dependencies, so they stay out of the apps.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · green, but half the tests never ran</span>
+    We removed <code>withHostTest {}</code> and ran <code>./gradlew :shared:allTests</code>. It printed <code>BUILD SUCCESSFUL</code>, and the only test task it ran was <code>iosSimulatorArm64Test</code>. The Android task didn't exist (<code>task 'testAndroidHostTest' not found</code> when asked for by name). The only hint was one line near the top of the output: <code>WARNING: The 'commonTest' source directory exists, but android host tests are not enabled.</code> A green build tells you that nothing failed, not that anything ran. Check the task list or the reports once, so you know both platforms really run.
+  </div>
+
+  <h2>3. The fake radio</h2>
+  <p>The fake implements the outbound port, and the test plays the radio:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeBleScanner.kt</figcaption>
+<pre><code>package com.example.devicemonitor.doubles
+<span class="elide">⋯  imports: core.Device, core.ScanException, core.outbound.BleScanner, Channel, Flow helpers</span>
+// Fake: an outbound adapter written for tests, behind the BleScanner port. The test plays
+// the radio: it decides what is heard and when, and whether the radio fails.
+<mark>class FakeBleScanner : BleScanner {</mark>
+<mark>    private val heard = Channel&lt;Device&gt;(Channel.UNLIMITED)</mark>
+    var failure: ScanException? = null
+    var isScanning = false
+        private set
+
+    override fun scan(): Flow&lt;Device&gt; = flow {
+<mark>        failure?.let { throw it }</mark>
+        isScanning = true
+        try {
+<mark>            emitAll(heard.receiveAsFlow())</mark>
+        } finally {
+            isScanning = false
+        }
+    }
+
+<mark>    fun hear(vararg devices: Device) {</mark>
+        devices.forEach { heard.trySend(it) }
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>hear(…)</code> puts devices into a <code>Channel</code></strong>, and the scan flow hands them to whoever collects, in order. <code>UNLIMITED</code> means <code>trySend</code> never waits and never drops, so a device heard before the collector is ready isn't lost.</li>
+    <li><strong>The flow never completes on its own</strong>, like a real radio's: <code>emitAll</code> keeps waiting for the next device until the collector cancels. That's the <code>BleScanner</code> contract from Lesson 10.</li>
+    <li><strong><code>failure</code></strong> makes the next scan throw. This is where m04's <code>"fail"</code> filter went: an error is something a radio does, so the fake radio does it on command.</li>
+    <li><strong><code>isScanning</code></strong> is <code>true</code> while a scan runs. The <code>finally</code> block runs when the collector cancels, so a test can check that cancelling a scan really stops the radio.</li>
+    <li>It lives in package <code>doubles</code> under <code>commonTest</code>, next to <code>TestDeviceScanning</code> (section 5).</li>
+  </ol>
+
+  <h2>4. Test the service through its inbound port</h2>
+  <p>The test builds the service with the fake, and from then on sees only the port:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/core/ScanningServiceTest.kt</figcaption>
+<pre><code>class ScanningServiceTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val heart = Device(id = "02", name = "Heart Rate Monitor", rssi = -61)
+    private val scale = Device(id = "03", name = "Smart Scale", rssi = -85)
+
+    private val radio = FakeBleScanner()
+
+    // The test drives the app core the way the ViewModel does: through the inbound port.
+<mark>    private val scanning: DeviceScanning = ScanningService(radio)</mark>
+
+    @Test
+    fun reportsEachDeviceOnceAsSoonAsItIsHeard() = runTest {
+<mark>        scanning.scan(nameFilter = "").test {</mark>
+<mark>            radio.hear(obd, heart, obd)</mark>
+            assertEquals(obd, awaitItem())
+            assertEquals(heart, awaitItem())
+
+<mark>            radio.hear(scale, heart)</mark>
+            assertEquals(scale, awaitItem())
+        }
+    }
+<span class="elide">⋯  four more tests, below</span>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>private val scanning: DeviceScanning</code></strong>: the declared type is the inbound port. The one line that names <code>ScanningService</code> builds it; every test after that is written against what the app offers. If you later split the service in two, the tests don't change.</li>
+    <li><strong><code>runTest</code></strong> runs a suspending test body on a test dispatcher with a <strong>virtual clock</strong>: it "will automatically skip any delays" (<a href="https://developer.android.com/kotlin/coroutines/test">Testing coroutines</a>).</li>
+    <li><strong><code>flow.test { … }</code></strong> (Turbine) collects the flow while the block runs. <code>awaitItem()</code> suspends until the next device arrives. Turbine applies "a wall clock time timeout that ignores <code>runTest</code>'s virtual clock time", three seconds by default, so a device that never comes fails the test instead of hanging it.</li>
+    <li><strong>The end of the block checks what you didn't say.</strong> "When the validation block is complete, <code>test</code> cancels the coroutine and calls <code>ensureAllEventsConsumed()</code>". So if the service reported <code>obd</code> twice, the extra item would fail the test even though no line asks about it. Cancelling is also how the scan ends: the flow never completes, just like a real scan.</li>
+    <li><strong>Test names describe behaviour</strong>, so a failure reads like a broken rule: "reportsEachDeviceOnceAsSoonAsItIsHeard FAILED".</li>
+  </ol>
+  <p>The other four tests each guard one promise from the port's comment:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/core/ScanningServiceTest.kt</figcaption>
+<pre><code><mark>    fun keepsOnlyNamesContainingTheFilterIgnoringCaseAndSpaces() = runTest {</mark>
+        scanning.scan(nameFilter = "  MONITOR ").test {
+            radio.hear(obd, heart, scale)
+            assertEquals(heart, awaitItem())
+        }
+    }
+<span class="elide">⋯  eachScanStartsWithNothingSeen: two scans in a row, each hears obd and reports it</span>
+<mark>    fun scansUntilTheCollectorCancelsThenStopsTheRadio() = runTest {</mark>
+        val collector = launch { scanning.scan(nameFilter = "").collect {} }
+<mark>        testScheduler.advanceTimeBy(1.hours) // an hour of virtual time, with nothing heard</mark>
+        assertTrue(radio.isScanning)
+
+<mark>        collector.cancelAndJoin()</mark>
+        assertFalse(radio.isScanning)
+    }
+
+<mark>    fun aRadioFailureReachesTheCaller() = runTest {</mark>
+        radio.failure = ScanException("Bluetooth is off")
+        scanning.scan(nameFilter = "").test {
+<mark>            val error = awaitError()</mark>
+            assertIs&lt;ScanException&gt;(error)
+            assertEquals("Bluetooth is off", error.message)
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The filter test</strong> passes spaces and capitals. Only <code>heart</code> comes out, and Turbine's end-of-block check proves nothing else did.</li>
+    <li><strong><code>eachScanStartsWithNothingSeen</code></strong> runs two scans on the same service. It's Lesson 10's retrieval check turned into code: if <code>seen</code> were a property, the second scan would report nothing.</li>
+    <li><strong>An hour in no time.</strong> <code>advanceTimeBy</code> "Advances virtual time by the given amount and runs any coroutines scheduled to run before that point in virtual time". An hour of radio silence passes instantly, and the scan is still running: the service never stops a scan on its own. Then cancelling the collector runs the fake's <code>finally</code>, so the radio stops. That's "cancelling the collector stops it", proven.</li>
+    <li><strong><code>awaitError()</code></strong> suspends until the flow fails, and returns the exception. The radio's <code>ScanException</code> passes through the service unchanged, which is what the ViewModel's <code>catch</code> relies on.</li>
+  </ol>
+
+  <h2>5. Test the ViewModel against the inbound port</h2>
+  <p>The ViewModel test needs something that implements <code>DeviceScanning</code> and does what the test says:</p>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/TestDeviceScanning.kt</figcaption>
+<pre><code><span class="elide">⋯  package com.example.devicemonitor.doubles and imports</span>
+// Test implementation of the DeviceScanning inbound port. It stands in for the whole app
+// core, so a ViewModel test tests the ViewModel only. The test decides what a scan finds.
+<mark>class TestDeviceScanning : DeviceScanning {</mark>
+    private val found = Channel&lt;Device&gt;(Channel.UNLIMITED)
+    var failure: ScanException? = null
+<mark>    val filters = mutableListOf&lt;String&gt;() // one entry per scan started</mark>
+
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+        filters += nameFilter
+        failure?.let { throw it }
+        emitAll(found.receiveAsFlow())
+    }
+
+<mark>    fun find(vararg devices: Device) {</mark>
+        devices.forEach { found.trySend(it) }
+    }
+}</code></pre>
+  </figure>
+  <p>It looks like the fake radio, but it speaks the inbound port: whatever <code>find(…)</code> gets is already filtered and already unique, because that's what <code>DeviceScanning</code> promises. <code>filters</code> records each scan the ViewModel started and the filter it passed. Now the test:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModelTest.kt</figcaption>
+<pre><code><mark>@OptIn(ExperimentalCoroutinesApi::class) // setMain, resetMain, currentTime</mark>
+class DeviceListViewModelTest {
+<span class="elide">⋯  obd, heart</span>
+<mark>    private val scanning = TestDeviceScanning()</mark>
+    private lateinit var viewModel: DeviceListViewModel
+
+    @BeforeTest
+    fun setUp() {
+        // viewModelScope runs on Dispatchers.Main. In a test, Main becomes a test
+        // dispatcher whose clock runTest controls, so delays and timeouts take no real time.
+<mark>        Dispatchers.setMain(StandardTestDispatcher())</mark>
+<mark>        viewModel = DeviceListViewModel(scanning)</mark>
+    }
+
+    @AfterTest
+    fun tearDown() {
+<mark>        Dispatchers.resetMain()</mark>
+    }
+<span class="elide">⋯  three tests, below</span>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>Dispatchers.setMain(StandardTestDispatcher())</code></strong>. <code>viewModelScope</code> runs on <code>Dispatchers.Main</code>, and on a local JVM "the <code>Main</code> dispatcher that wraps the Android UI thread will be unavailable". Android's rule: "The <code>Main</code> dispatcher should be replaced by a <code>TestDispatcher</code> in local unit tests" (<a href="https://developer.android.com/kotlin/coroutines/test">Testing coroutines</a>). <code>resetMain()</code> in <code>@AfterTest</code> puts it back.</li>
+    <li><strong>In <code>@BeforeTest</code>, not in a property.</strong> "If you create a <code>TestDispatcher</code> as a property of a test class, it won’t take its scheduler from the <code>Main</code> dispatcher, as the <code>Main</code> dispatcher is only replaced before each test method is executed."</li>
+    <li><strong>One clock for everything.</strong> "If the <code>Main</code> dispatcher has been replaced with a <code>TestDispatcher</code>, any newly-created <code>TestDispatchers</code> will automatically use the scheduler from the <code>Main</code> dispatcher, including the <code>StandardTestDispatcher</code> created by <code>runTest</code>". So the ViewModel's coroutine, its <code>withTimeoutOrNull(3.seconds)</code> and the test body share one virtual clock.</li>
+    <li><strong><code>@OptIn</code></strong>: <code>setMain</code>, <code>resetMain</code> and <code>currentTime</code> are marked experimental. Without the opt-in, each use prints a <code>w: This declaration needs opt-in</code> warning, which breaks the course's no-warnings rule. So the class opts in once, with a comment saying why.</li>
+  </ol>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModelTest.kt</figcaption>
+<pre><code>    @Test
+    fun showsDevicesAsTheyArriveThenFinishesAtTheTimeout() = runTest {
+        viewModel.uiState.test {
+            assertEquals(ScanState.Idle, awaitItem().scan)
+
+<mark>            viewModel.startScan(filter = "")</mark>
+            assertEquals(ScanState.Scanning(emptyList()), awaitItem().scan)
+
+<mark>            scanning.find(obd)</mark>
+            assertEquals(ScanState.Scanning(listOf(obd)), awaitItem().scan)
+
+            scanning.find(heart)
+            assertEquals(ScanState.Scanning(listOf(obd, heart)), awaitItem().scan)
+
+            // Nothing else is found: 3 s of virtual time pass, and the timeout ends the scan.
+<mark>            assertEquals(ScanState.Finished(listOf(obd, heart)), awaitItem().scan)</mark>
+<mark>            assertEquals(DeviceListViewModel.SCAN_TIMEOUT.inWholeMilliseconds, testScheduler.currentTime)</mark>
+        }
+    }
+</code></pre>
+  </figure>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModelTest.kt</figcaption>
+<pre><code><span class="elide">⋯  aFailedScanBecomesAMessageUntilItIsShown: failure set, Idle + "Bluetooth is off", then errorShown() clears it</span>
+    @Test
+    fun ignoresStartScanWhileAScanIsRunning() = runTest {
+<mark>        viewModel.startScan(filter = "obd")</mark>
+        testScheduler.runCurrent()
+<mark>        viewModel.startScan(filter = "heart")</mark>
+        testScheduler.runCurrent()
+
+<mark>        assertEquals(listOf("obd"), scanning.filters)</mark>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Read the first test as a story</strong>: idle; tap Scan; the app core finds <code>obd</code> (one row), then <code>heart</code> (two rows); then nothing, until the timeout turns <code>Scanning</code> into <code>Finished</code>.</li>
+    <li><strong>The timeout fires at once.</strong> When every coroutine is waiting, the scheduler moves the virtual clock straight to the next timer, the 3-second timeout. The last line proves it fired at exactly 3000 ms of virtual time. The diagram below shows the jump.</li>
+    <li><strong><code>testScheduler.runCurrent()</code></strong> "Runs coroutines that are scheduled at the current virtual time", without moving the clock. After the first <code>startScan</code> the scan job is running, so the second call must be ignored: <code>filters</code> holds only <code>"obd"</code>. It also shows the ViewModel passes the filter on as typed. Trimming is the service's rule, tested in section 4.</li>
+    <li><strong>The error test</strong> is Lesson 08's "errors are state" rule: a failed scan becomes <code>Idle</code> plus a message, and <code>errorShown()</code> clears it. It uses <code>skipItems(1)</code> to skip states it isn't about.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 175" role="img" aria-labelledby="l11-clock-title">
+      <title id="l11-clock-title">The first ViewModel test on the virtual clock. At 0 milliseconds of virtual time come the states Idle, Scanning with no devices, Scanning with obd, and Scanning with obd and heart. Then every coroutine is waiting, so the test scheduler jumps the clock straight to the next timer, the scan timeout at 3000 milliseconds, where the state becomes Finished with obd and heart. The whole test takes a few milliseconds of real time.</title>
+      <defs><marker id="l11-clock-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="20" y="20" font-weight="600">virtual time</text>
+      <line class="axis" x1="60" y1="110" x2="720" y2="110"/>
+      <text class="small muted" x="52" y="132">0 ms</text>
+      <text class="small muted" x="690" y="132">3000 ms</text>
+      <circle class="dot" cx="70" cy="110" r="6"/>
+      <circle class="dot" cx="70" cy="92" r="6"/>
+      <circle class="dot" cx="70" cy="74" r="6"/>
+      <circle class="dot" cx="70" cy="56" r="6"/>
+      <text class="mono small" x="84" y="114">Idle</text>
+      <text class="mono small" x="84" y="96">Scanning([])</text>
+      <text class="mono small" x="84" y="78">Scanning([obd])</text>
+      <text class="mono small" x="84" y="60">Scanning([obd, heart])</text>
+      <circle class="dot" cx="710" cy="110" r="6"/>
+      <text class="mono small" x="696" y="104" text-anchor="end">Finished([obd, heart])</text>
+      <path class="edge dashed" d="M250,48 Q560,0 708,100" marker-end="url(#l11-clock-arrow)"/>
+      <text class="small" x="330" y="22">nothing can run: the clock jumps to the timeout</text>
+      <text class="small muted" x="20" y="162">Real time for the whole test: a few milliseconds. Turbine's own 3-second timeout counts real time, so it never fires here.</text>
+    </svg>
+    <figcaption>Everything happens at 0 ms until nothing can run; then the scheduler jumps to the next timer.</figcaption>
+  </figure>
+
+  <h3>Run them everywhere</h3>
+<pre><code>./gradlew :shared:allTests</code></pre>
+  <p>That runs <code>testAndroidHostTest</code> (JVM) and <code>iosSimulatorArm64Test</code> (the Kotlin/Native test binary, which needs Xcode's simulator runtime). Reports are under <code>shared/build/reports/tests/</code>, and the raw results, one XML file per test class, under <code>shared/build/test-results/</code>. To run one platform, call its task by name. Never add <code>-q</code> when you check for warnings: it hides the <code>w:</code> lines.</p>
+  <p>We ran it, then broke the production code on purpose, one change at a time, to see whether the tests notice:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Change to the production code</th><th>Test that failed, on the JVM and iOS alike</th></tr>
+    <tr><td>none</td><td>none: 9 of 9 passed on each platform, in well under a second</td></tr>
+    <tr><td>in <code>ScanningService</code>, move <code>seen</code> out of <code>flow { }</code> into a property</td><td><code>eachScanStartsWithNothingSeen</code>: "No value produced in 3s"</td></tr>
+    <tr><td>in <code>startScan</code>, delete <code>if (scanJob?.isActive == true) return</code></td><td><code>ignoresStartScanWhileAScanIsRunning</code>: expected <code>[obd]</code>, actual <code>[obd, heart]</code></td></tr>
+    <tr><td>three more changes, kept for the unaided exercise</td><td>you'll find out</td></tr>
+  </table>
+  </div>
+  <p>This is a manual version of <strong>mutation testing</strong>: if you can break a rule and every test stays green, nothing protects that rule. The "No value produced in 3s" line is Turbine's wall-clock timeout, the one place where a failing test does take real seconds.</p>
+
+  <h2>6. What a DI container adds</h2>
+  <p><code>AppContainer</code> is fine for one screen. Android's <a href="https://developer.android.com/training/dependency-injection/manual">Manual dependency injection</a> page lists what goes wrong as the app grows: "You have to manage <code>AppContainer</code> yourself, creating instances for all dependencies by hand", "There is still a lot of boilerplate code", and you manage each container's scope and lifecycle yourself: "Doing this incorrectly can lead to subtle bugs and memory leaks in your app." A <strong>DI container</strong> does that bookkeeping: you declare once what each type is and how to build it, and the container works out the order. Android's own choice is Hilt, which is Android-only. <a href="https://insert-koin.io/">Koin</a> runs on every KMP target, so the shared code uses it. Koin has three kinds of definition that matter today:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Definition</th><th>Gives you</th><th>Ours</th></tr>
+    <tr><td><code>single</code></td><td>"One instance, kept for the lifetime of the Koin container"</td><td>the <code>BleScanner</code> (one radio for the app) and the <code>DeviceScanning</code> service</td></tr>
+    <tr><td><code>factory</code></td><td>"A new instance each time it is requested"</td><td>none yet</td></tr>
+    <tr><td><code>viewModel</code></td><td>"a new instance on each request, like a <code>factory</code>", kept by the platform's <code>ViewModelStore</code></td><td><code>DeviceListViewModel</code></td></tr>
+  </table>
+  </div>
+  <p class="source">Quotes: Koin <a href="https://insert-koin.io/docs/reference/koin-core/definitions/">Definitions</a> and <a href="https://insert-koin.io/docs/reference/koin-core/viewmodel/">ViewModel</a>.</p>
+  <p><strong>Injection, not lookup.</strong> Android contrasts DI with a <strong>service locator</strong>: "With the service locator pattern, classes have control and ask for objects to be injected; with dependency injection, the app has control and proactively injects the required objects." A lookup also hides what a class needs: "Dependencies are encoded in the class implementation, not in the API surface" (<a href="https://developer.android.com/training/dependency-injection">Dependency injection in Android</a>). Koin can do both. <code>KoinComponent</code> with <code>get()</code> is a lookup, and Koin's docs say "Keep <code>KoinComponent</code> at the edges", for "a class that Koin does not create" (<a href="https://insert-koin.io/docs/reference/koin-core/koin-component/">KoinComponent</a>). The course's rule: <strong>constructors everywhere, lookups only at the platform edge.</strong> The app core, the ViewModels and the adapters never import Koin, and the tests in sections 4–5 never use it: they call constructors.</p>
+
+  <h2>7. The Koin module, and where Koin starts</h2>
+  <p>Add two Koin libraries to the shared code's <code>commonMain</code>, next to the m05 ones: <code>implementation("io.insert-koin:koin-core:4.2.2")</code>, the container and its DSL, and <code>implementation("io.insert-koin:koin-core-viewmodel:4.2.2")</code>, which adds <code>viewModelOf</code> for the multiplatform <code>ViewModel</code>. Then delete <code>di/AppContainer.kt</code>, and add the composition root as a Koin module:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</figcaption>
+<pre><code>package com.example.devicemonitor.di
+<span class="elide">⋯  imports: the ViewModel, SimulatedBleScanner, ScanningService, both ports, Koin's startKoin, viewModelOf, module</span>
+// The composition root, as a Koin module: which service implements each inbound port,
+// which adapter implements each outbound port, and how to build each ViewModel.
+<mark>internal val appModule = module {</mark>
+<mark>    single&lt;BleScanner&gt; { SimulatedBleScanner() }</mark>
+<mark>    single&lt;DeviceScanning&gt; { ScanningService(get()) }</mark>
+<mark>    viewModelOf(::DeviceListViewModel)</mark>
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+<mark>fun initKoin() {</mark>
+    startKoin {
+        modules(appModule)
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Read each line as a binding</strong>, as in <code>AppContainer</code>. <code>single&lt;BleScanner&gt; { SimulatedBleScanner() }</code>: "the outbound port <code>BleScanner</code> means this adapter, one for the app". Lesson 13 changes this line.</li>
+    <li><strong><code>single&lt;DeviceScanning&gt; { ScanningService(get()) }</code></strong>: "the inbound port means this service". <code>get()</code> asks Koin for whatever the constructor parameter needs, here a <code>BleScanner</code>. Because the type argument is the port, anyone can ask Koin for a <code>DeviceScanning</code>, but nobody can ask it for a <code>ScanningService</code>: the class stays hidden behind its port. One shared service is safe for the same reason as in Lesson 10: it keeps no state between scans.</li>
+    <li><strong><code>viewModelOf(::DeviceListViewModel)</code></strong> takes a constructor reference and fills each parameter with <code>get()</code>, here the <code>DeviceScanning</code> port. You no longer write the order: Koin works it out.</li>
+    <li><strong><code>internal val appModule</code></strong>. With a public module, the iOS header grew from 2,332 to 3,364 lines, 197 of them naming <code>Koin_core…</code> classes, because Kotlin exports every public type a public declaration mentions. Swift only needs to <em>start</em> Koin. <code>internal</code> keeps the module visible to tests in the same Gradle module and out of Swift's header. That's also why <code>implementation</code> is enough: no Koin type is in the shared code's public API.</li>
+    <li><strong><code>initKoin()</code></strong> is the one entry point both platforms call. Its signature has no Koin type in it. Koin can start only once per process: "A second call throws <code>KoinApplicationAlreadyStartedException</code>" (<a href="https://insert-koin.io/docs/reference/koin-core/starting-koin">Starting Koin</a>).</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 335" role="img" aria-labelledby="l11-graph-title">
+      <title id="l11-graph-title">The Koin graph at m06. On the left, the platform start points: on Android, DeviceMonitorApplication.onCreate; on iOS, the SwiftUI App's init or the UIKit AppDelegate's didFinishLaunching. Both call initKoin, which starts Koin with appModule. Inside appModule, three definitions: single BleScanner, built as SimulatedBleScanner, the outbound binding; single DeviceScanning, built as ScanningService with get, which asks Koin for the BleScanner; and viewModelOf DeviceListViewModel, whose constructor parameter Koin fills with get, which asks for DeviceScanning. On the right, the screens that ask for the ViewModel: koinViewModel on Compose, by viewModel on XML, and on iOS the ViewModelOwner with its Koin-backed factory. The screen's ViewModelStore keeps the ViewModel. Below, AppModuleTest asks a private Koin instance built from the same appModule for every ViewModel, so a missing binding fails a test instead of the app.</title>
+      <defs><marker id="l11-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="10" y="18" font-weight="600">starts Koin, once</text>
+      <g data-part="android">
+        <rect class="box" x="10" y="28" width="160" height="50" rx="6"/>
+        <text class="title small" x="20" y="47">Android</text>
+        <text class="mono small" x="20" y="66">Application.onCreate</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="10" y="92" width="160" height="50" rx="6"/>
+        <text class="title small" x="20" y="111">iOS</text>
+        <text class="mono small" x="20" y="130">App.init · AppDelegate</text>
+      </g>
+      <rect class="box" x="190" y="62" width="82" height="46" rx="6"/>
+      <text class="mono small" x="198" y="82">initKoin()</text>
+      <text class="small muted" x="198" y="98">startKoin</text>
+      <path class="edge" d="M170,60 L188,76" marker-end="url(#l11-graph-arrow)"/>
+      <path class="edge" d="M170,110 L188,96" marker-end="url(#l11-graph-arrow)"/>
+      <path class="edge" d="M272,85 L290,85" marker-end="url(#l11-graph-arrow)"/>
+      <rect class="box" x="292" y="20" width="300" height="214" rx="6"/>
+      <text class="mono small" x="302" y="38">appModule · di/AppModule.kt</text>
+      <g data-part="outbound">
+        <rect class="box" x="306" y="50" width="272" height="44" rx="6"/>
+        <text class="mono small" x="316" y="68">single&lt;BleScanner&gt;</text>
+        <text class="mono small" x="316" y="84">  { SimulatedBleScanner() }</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="306" y="116" width="272" height="44" rx="6"/>
+        <text class="mono small" x="316" y="134">single&lt;DeviceScanning&gt;</text>
+        <text class="mono small" x="316" y="150">  { ScanningService(get()) }</text>
+        <rect class="box" x="306" y="182" width="272" height="44" rx="6"/>
+        <text class="mono small" x="316" y="200">viewModelOf(</text>
+        <text class="mono small" x="316" y="216">  ::DeviceListViewModel)</text>
+      </g>
+      <path class="edge" d="M540,182 L540,162" marker-end="url(#l11-graph-arrow)"/>
+      <text class="mono small" x="546" y="176">get()</text>
+      <path class="edge" d="M540,116 L540,96" marker-end="url(#l11-graph-arrow)"/>
+      <text class="mono small" x="546" y="110">get()</text>
+      <text class="small" x="610" y="18" font-weight="600">asks for the ViewModel</text>
+      <g data-part="android">
+        <rect class="box" x="610" y="28" width="140" height="44" rx="6"/>
+        <text class="title small" x="618" y="46">Compose</text>
+        <text class="mono small" x="618" y="63">koinViewModel()</text>
+        <rect class="box" x="610" y="80" width="140" height="44" rx="6"/>
+        <text class="title small" x="618" y="98">XML</text>
+        <text class="mono small" x="618" y="115">by viewModel()</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="610" y="132" width="140" height="58" rx="6"/>
+        <text class="title small" x="618" y="150">iOS</text>
+        <text class="mono small" x="618" y="166">ViewModelOwner</text>
+        <text class="small muted" x="618" y="182">Koin-backed factory</text>
+      </g>
+      <path class="edge" d="M610,52 L580,198" marker-end="url(#l11-graph-arrow)"/>
+      <path class="edge" d="M610,104 L580,202" marker-end="url(#l11-graph-arrow)"/>
+      <path class="edge" d="M610,170 L580,206" marker-end="url(#l11-graph-arrow)"/>
+      <text class="small muted" x="610" y="212">the screen's ViewModelStore</text>
+      <text class="small muted" x="610" y="226">keeps what Koin builds</text>
+      <g data-part="inbound">
+        <rect class="box" x="292" y="262" width="300" height="44" rx="6"/>
+        <text class="mono small" x="302" y="280">AppModuleTest</text>
+        <text class="small muted" x="302" y="297">a private Koin from appModule: get every ViewModel</text>
+      </g>
+      <path class="edge" d="M442,262 L442,236" marker-end="url(#l11-graph-arrow)"/>
+      <text class="small muted" x="10" y="326">Each get() is resolved at run time. A missing line still compiles, and fails the first time something asks for that type.</text>
+    </svg>
+    <figcaption>m06's composition root: three bindings, two start points, three ways to ask, and one test that asks the same question the screens do.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="inbound">Inbound (port binding, ViewModel, test)</li>
+    <li data-part="outbound">Outbound (port binding)</li>
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <p><strong>Start Koin once, when the app starts.</strong> Koin must be running before the first screen asks for a ViewModel, and it must start exactly once, which rules out screens. Koin's docs: "Start Koin where your platform starts: the <code>Application</code> class on Android, the shared <code>initKoin()</code> function in a KMP project", and do it there "when code outside Compose (a <code>Service</code>, a <code>WorkManager</code> worker, iOS Swift code) also needs Koin" (<a href="https://insert-koin.io/docs/reference/koin-compose/compose/">Koin for Compose</a>). Lesson 18's background worker will. Both Android tracks get a new class and one manifest attribute:</p>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · AndroidManifest.xml</figcaption>
+<pre><code>// Runs once per process, before any Activity: the place to start Koin.
+<mark>class DeviceMonitorApplication : Application() {</mark>
+    override fun onCreate() {
+        super.onCreate()
+<mark>        initKoin()</mark>
+    }
+}
+<span class="elide">⋯  androidApp/src/main/AndroidManifest.xml, one attribute added:</span>
+    &lt;application
+<mark>        android:name=".DeviceMonitorApplication"</mark>
+<span class="elide">⋯  label, theme and the MainActivity entry: as in m05</span></code></pre>
+  </figure>
+  <p><strong><code>android:name</code></strong> tells the system which <code>Application</code> class to create. Leave it out, and the class compiles but never runs. We tried: the app crashed at launch with <code>IllegalStateException: KoinApplication has not been started</code>.</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/iOSApp.swift</figcaption>
+<pre><code>import SwiftUI
+<mark>import Shared</mark>
+
+@main
+struct iOSApp: App {
+<mark>    init() {</mark>
+<mark>        AppModuleKt.doInitKoin()</mark>
+    }
+<span class="elide">⋯  body: as in m05</span></code></pre>
+  </figure>
+  <p><code>init()</code> on the <code>App</code> runs once, before the first scene is built: SwiftUI's place for <code>Application.onCreate</code>. Without <code>import Shared</code>, which m05's file didn't need, Swift can't find <code>AppModuleKt</code>.</p>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/AppDelegate.swift</figcaption>
+<pre><code>import UIKit
+<mark>import Shared</mark>
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+<mark>    func application(_ application: UIApplication,</mark>
+<mark>                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {</mark>
+<mark>        AppModuleKt.doInitKoin()</mark>
+        return true
+    }
+<span class="elide">⋯  configurationForConnecting: as in m05</span></code></pre>
+  </figure>
+  <p><code>didFinishLaunchingWithOptions</code> runs once per launch, before any scene connects, so Koin is up before <code>SceneDelegate</code> creates the first view controller (Lesson 04's app-level lifecycle).</p>
+  </div>
+  </div>
+  <p><strong>Why <code>doInitKoin</code>?</strong> Top-level Kotlin functions become class methods on a class named after the file (<code>AppModule.kt</code> → <code>AppModuleKt</code>), as in Lesson 05. Objective-C treats names that start with <code>init</code> as initializers, so the Kotlin compiler adds a <code>do</code> prefix. You can see it in the generated header: <code>+ (void)doInitKoin __attribute__((swift_name("doInitKoin()")));</code>.</p>
+
+  <h2>8. Ask Koin for the ViewModel</h2>
+  <p>Each screen asks Koin instead of <code>AppContainer</code>. The ViewModel store still keeps the ViewModel and still clears it; only the factory changes.</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</figcaption>
+<pre><code><span class="elide">⋯  package, androidx imports, the shared types' imports: as in m05, minus …viewmodel.compose.viewModel and …di.AppContainer</span>
+<mark>import org.koin.compose.viewmodel.koinViewModel</mark>
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+@Composable
+fun DeviceListScreen(
+    onDeviceClick: (Device) -&gt; Unit,
+<mark>    viewModel: DeviceListViewModel = koinViewModel(),</mark>
+) {
+<span class="elide">⋯  the rest of the file: unchanged from m05</span></code></pre>
+  </figure>
+  <p><code>koinViewModel()</code> does what <code>viewModel(factory = …)</code> did: it finds the nearest <code>ViewModelStoreOwner</code>, the navigation entry, and asks its store for the ViewModel, with a factory that asks Koin. The type comes from the parameter's declared type. In <code>androidApp/build.gradle.kts</code>, <code>implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")</code> is replaced by <code>implementation("io.insert-koin:koin-compose-viewmodel:4.2.2")</code>: the app no longer calls <code>viewModel(…)</code> itself, and Koin's library brings <code>lifecycle-viewmodel-compose</code> with it.</p>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: as in m05, minus androidx.fragment.app.viewModels and …di.AppContainer</span>
+import kotlinx.coroutines.launch
+<mark>import org.koin.androidx.viewmodel.ext.android.viewModel</mark>
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+<mark>    private val viewModel: DeviceListViewModel by viewModel()</mark>
+<span class="elide">⋯  the rest of the file: unchanged from m05</span></code></pre>
+  </figure>
+  <p><code>by viewModel()</code> (singular, Koin's) replaces AndroidX's <code>by viewModels { … }</code> (plural): the same owner (this Fragment), the same lifetime, the same creation on first access; only the factory changes. Mind the one letter: the plural is AndroidX's, which falls back to the default factory. In <code>androidApp/build.gradle.kts</code>, add <code>implementation("io.insert-koin:koin-android:4.2.2")</code> at the end of <code>dependencies { }</code>. <code>fragment-ktx</code> is no longer used directly, but <code>koin-android</code> depends on it anyway, so the course keeps the explicit line.</p>
+  </div>
+  </div>
+  <p>iOS has no Koin integration with <code>ViewModelStore</code>, and doesn't need one: Lesson 08's resolver already takes any factory. Now it uses one that asks Koin, and Swift stops passing a factory at all:</p>
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/ViewModelResolver.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: as in m05, plus CreationExtras and org.koin.core.component.KoinComponent</span>
+@OptIn(BetaInteropApi::class)
+@Throws(IllegalArgumentException::class)
+<mark>fun ViewModelStore.resolveViewModel(modelClass: ObjCClass): ViewModel {</mark>
+<span class="elide">⋯  vmClass from modelClass: as in m05</span>
+<mark>    return ViewModelProvider.create(this, KoinViewModelFactory)[vmClass]</mark>
+}
+
+// The store calls this the first time it needs a ViewModel; Koin builds it from appModule.
+<mark>private object KoinViewModelFactory : ViewModelProvider.Factory, KoinComponent {</mark>
+    override fun &lt;T : ViewModel&gt; create(modelClass: KClass&lt;T&gt;, extras: CreationExtras): T =
+<mark>        getKoin().get(modelClass)</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The <code>factory</code> parameter is gone.</strong> Swift no longer chooses how a ViewModel is built: it asks for a class, and the composition root decides.</li>
+    <li><strong><code>KoinViewModelFactory</code> is a <code>KoinComponent</code></strong>: a lookup, at the edge, in a class Koin doesn't create (section 6's rule). The store calls <code>create</code> only the first time it needs that ViewModel, so the store still owns its lifetime, and <code>ViewModelOwner</code>'s <code>deinit</code> still clears it.</li>
+    <li><strong>Why our own four lines?</strong> Koin's docs cover ViewModels on Android and in Compose, not a Swift-side <code>ViewModelStore</code>. <code>getKoin().get(modelClass)</code> is Koin's public API, and the route through the store is Lesson 08's, unchanged.</li>
+  </ol>
+  <p>In <code>iosApp/iosApp/ViewModelOwner.swift</code> (both iOS tracks), <code>viewModel</code> loses its parameter: <code>func viewModel&lt;VM: ViewModel&gt;() -&gt; VM</code> calls <code>store.resolveViewModel(modelClass: VM.self)</code>. Each screen's line gets shorter:</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListView.swift</figcaption>
+<pre><code>    var body: some View {
+<mark>        let viewModel: DeviceListViewModel = owner.viewModel()</mark>
+<span class="elide">⋯  the rest of the file: unchanged from m05</span></code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListViewController.swift</figcaption>
+<pre><code>    private let owner = ViewModelOwner()
+<mark>    private lazy var viewModel: DeviceListViewModel = owner.viewModel()</mark>
+<span class="elide">⋯  the rest of the file: unchanged from m05</span></code></pre>
+  </figure>
+  </div>
+  </div>
+  <p>Swift infers <code>VM</code> from the declared type, the same trick as <code>koinViewModel()</code>. With <code>AppContainer</code> gone, Koin is imported in exactly three kinds of place: <code>di/</code> (main and test), <code>ViewModelResolver.kt</code>, and on Android the one screen that asks for the ViewModel. Those are the edges.</p>
+
+  <h2>9. Test the graph, because the compiler no longer does</h2>
+  <p>Here is the price of a container. With <code>AppContainer</code>, a missing dependency was a compile error. With Koin, the module is a list of recipes read at run time. We deleted the <code>single&lt;BleScanner&gt;</code> line, and the Android app <strong>compiled without a warning</strong>, then crashed the moment the list screen appeared:</p>
+<pre><code>FATAL EXCEPTION: main
+…
+Caused by: …InstanceCreationException: Could not create instance for '[Factory: '…adapter.inbound.DeviceListViewModel']'
+Caused by: …InstanceCreationException: Could not create instance for '[Singleton: '…core.inbound.DeviceScanning']'
+Caused by: …NoDefinitionFoundException: No definition found for type '…core.outbound.BleScanner' on scope '['_root_']'.</code></pre>
+  <p>Read the chain from the bottom up: the missing piece, then each thing that needed it. Notice that Koin names the binding by its port, <code>DeviceScanning</code>, not by the service. One test asks for every ViewModel, so this failure shows up in <code>allTests</code> instead of on a phone:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</figcaption>
+<pre><code>class AppModuleTest {
+    // Koin checks the graph only when something asks for an instance, at run time. This
+    // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
+    @Test
+    fun buildsEveryViewModel() {
+<mark>        val koin = koinApplication { modules(appModule) }.koin</mark>
+
+<mark>        assertNotNull(koin.get&lt;DeviceListViewModel&gt;())</mark>
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>koinApplication { … }</code></strong> "creates a container that is not registered in <code>GlobalContext</code>" (<a href="https://insert-koin.io/docs/reference/koin-core/starting-koin">Starting Koin</a>), unlike <code>startKoin</code>. Tests don't leak into each other, and the once-per-process rule doesn't bite.</li>
+    <li><strong>It sees <code>appModule</code></strong> because <code>internal</code> means "the same Gradle module", and <code>commonTest</code> is compiled with <code>commonMain</code>'s module.</li>
+    <li><strong>Building the ViewModel is safe without <code>setMain</code></strong>: nothing touches <code>viewModelScope</code> until <code>startScan</code>.</li>
+    <li><strong>Keep it current.</strong> Every new screen adds one <code>get&lt;…ViewModel&gt;()</code> line here. With the binding deleted, this test fails with the same three-line chain as the crash, on the JVM and on iOS.</li>
+  </ol>
+  <p>The other eight tests don't use Koin: they call constructors with test doubles. That's the point of constructor injection: <strong>the container is for the app, not for the tests.</strong></p>
+
+  <h2>10. What actually happens</h2>
+  <p>We built m06 on all four tracks (Kotlin 2.4.20, Koin 4.2.2, coroutines 1.11.0, Turbine 1.2.1, AGP 9.4.1, Xcode 26.2). <code>allTests</code> passed 9 of 9 tests on the JVM and 9 of 9 on the iOS simulator. Both apps look and behave as m05: five rows about 0.3 s apart, "Devices found: 5" at 3 s, <code>sens</code> finds one row. The builds print no compiler warnings from our code, and the iOS header contains no Koin types.</p>
+  <p><strong>m06 is a natural stop.</strong> It's done when <code>allTests</code> runs both test tasks green, and both apps build and behave as m05. Commit it before the next lesson, which adds the first new capability through both port kinds: permissions.</p>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to walk you through one run of <code>showsDevicesAsTheyArriveThenFinishesAtTheTimeout</code> in time order: which coroutine runs at each step, what the virtual clock reads, and why each <code>awaitItem()</code> returns. Then ask it to trace your app from launch to the first frame of the list: which line starts Koin, which line asks for the ViewModel, which store keeps it, and when <code>SimulatedBleScanner</code> is created.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>ScanningServiceTest</code> declare <code>scanning</code> as <code>DeviceScanning</code> rather than <code>ScanningService</code>?</p>
+    <div class="opts">
+      <button class="opt">Kotlin can't call a class's methods from <code>commonTest</code></button>
+      <button class="opt" data-correct>the test drives the app core through its inbound port, as any inbound adapter does</button>
+      <button class="opt">so Koin can inject the service into the test</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The test checks what the app offers, through the same port the ViewModel uses, so it survives any rewrite of the service's insides. Koin plays no part in the service tests.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The ViewModel test waits for a 3-second timeout. Why does it take a few milliseconds?</p>
+    <div class="opts">
+      <button class="opt">Turbine shortens every timeout to a few ms</button>
+      <button class="opt">the test implementation never calls <code>delay</code></button>
+      <button class="opt" data-correct>virtual time jumps straight to the timeout</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>Main</code> is a test dispatcher, and <code>runTest</code> shares its scheduler. When every coroutine is waiting, the scheduler moves the clock to the next timer, the timeout at 3000 ms. Turbine's own timeout counts wall-clock time.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does the ViewModel test use <code>TestDeviceScanning</code> and not the real service with <code>FakeBleScanner</code>?</p>
+    <div class="opts">
+      <button class="opt" data-correct>so it fails only when the ViewModel is wrong, not when the scan rule is</button>
+      <button class="opt">because a ViewModel can't take a service in its constructor</button>
+      <button class="opt">because <code>FakeBleScanner</code> doesn't run on iOS</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The ViewModel depends only on the inbound port, so its test replaces everything behind that port. The scan rule has its own tests in <code>ScanningServiceTest</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">You delete a binding from <code>appModule</code>. When do you find out?</p>
+    <div class="opts">
+      <button class="opt">when Kotlin compiles <code>AppModule.kt</code></button>
+      <button class="opt">when Gradle syncs, before any compile</button>
+      <button class="opt" data-correct>when something first asks for a type that needs it</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Koin resolves at run time. That's why <code>AppModuleTest</code> exists: it moves the failure from the phone into <code>allTests</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why is <code>appModule</code> declared <code>internal</code>?</p>
+    <div class="opts">
+      <button class="opt">Koin refuses modules declared as public</button>
+      <button class="opt" data-correct>so Koin's types stay out of Swift's header</button>
+      <button class="opt">so the tests can't reach the real adapters</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A public <code>Module</code> drags Koin's classes into the exported header (about a thousand extra lines). Tests in the same Gradle module still see <code>internal</code> declarations.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">Koin now builds the ViewModel. On iOS, what still clears it? (Lesson 08)</p>
+    <div class="opts">
+      <button class="opt">Koin, when the SwiftUI view is removed</button>
+      <button class="opt" data-correct>the ViewModelOwner's store, in its deinit</button>
+      <button class="opt">SKIE, when the <code>for await</code> loop ends</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A <code>viewModel</code> definition creates a new instance per request. Keeping and clearing it is the store's job, and on iOS the owner's <code>deinit</code> calls <code>store.clear()</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Lesson 13 swaps <code>SimulatedBleScanner</code> for the real radios. Which file changes for the wiring? (Lesson 10)</p>
+    <div class="opts">
+      <button class="opt">ScanningService.kt, which calls the radio</button>
+      <button class="opt" data-correct>the composition root, now di/AppModule.kt</button>
+      <button class="opt">each screen that gets the ViewModel</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Which adapter implements <code>BleScanner</code> is a wiring decision, made only in the composition root. The service, the ViewModel and the screens know only ports.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m06 build)</span>
+    <ol>
+      <li><strong>Break it, predict, run.</strong> Make each change below on its own. <em>Before running</em>, write down which tests will fail, with which message, and whether the JVM and iOS differ. Then run <code>./gradlew :shared:allTests</code>, compare, and revert.
+        <ol type="a">
+          <li>In <code>ScanningService</code>, delete <code>&amp;&amp; seen.add(device.id)</code>.</li>
+          <li>In <code>ScanningService</code>, delete <code>.trim()</code>.</li>
+          <li>In <code>startScan</code>, pass <code>found</code> instead of <code>found.toList()</code> to <code>Scanning(…)</code> (Lesson 08). Read the failure message: which state did the test get instead, and why?</li>
+          <li>Change <code>catch (e: ScanException)</code> to <code>catch (e: Exception)</code>. Lesson 08 called this a real bug. Explain what you see, and what a test would have to do to catch it.</li>
+        </ol>
+      </li>
+      <li><strong>Write a test.</strong> Add <code>aScanThatFindsNothingFinishesEmpty</code> to <code>DeviceListViewModelTest</code>: start a scan, let the app core find nothing, and assert the scan ends as <code>Finished(emptyList())</code> at exactly 3000 ms of virtual time. Then add a service test for a rule of your own choosing, through <code>DeviceScanning</code>. Run both on both platforms.</li>
+      <li><strong>Swap the adapter, the Koin way.</strong> Write <code>BrokenBleScanner</code> in <code>adapter.outbound</code>: its scan waits 500 ms, then throws <code>ScanException("Bluetooth adapter not responding (simulated).")</code>. Bind it instead of the simulated one and run both apps: the "Scan failed" dialog should come back. Count the files you touched; if it's more than two, find out what leaked. Then delete <code>single&lt;DeviceScanning&gt; …</code> instead, and predict three things before checking: do both apps compile, which test fails with which bottom line, and what does each app do at launch? Revert both.</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run the tests and both apps yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson 11 (Testing the app core + Koin): build milestone m06, tests for the app core and the
+ViewModel, and Koin instead of hand wiring, on top of m05.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m05 project in demo/ (Lesson 10). Use exactly the file contents shown in the
+lesson's "Full files" section for my tracks, including package lines, imports and comments. All
+paths are relative to demo/. Touch no file that isn't listed here.
+
+1. Shared code, all tracks:
+     shared/build.gradle.kts: replaced (withHostTest {}, Koin in commonMain, commonTest deps).
+     shared/src/commonMain/kotlin/com/example/devicemonitor/di/: delete AppContainer.kt,
+       add AppModule.kt.
+     shared/src/iosMain/kotlin/com/example/devicemonitor/ViewModelResolver.kt: replaced.
+     add, under shared/src/commonTest/kotlin/com/example/devicemonitor/:
+       doubles/FakeBleScanner.kt, doubles/TestDeviceScanning.kt, core/ScanningServiceTest.kt,
+       adapter/inbound/DeviceListViewModelTest.kt, di/AppModuleTest.kt
+   Every other file in shared/ stays as in m05.
+
+2. Android, both tracks: add androidApp/src/main/java/com/example/devicemonitor/android/
+   DeviceMonitorApplication.kt; androidApp/src/main/AndroidManifest.xml: replaced (my track's).
+     Compose: androidApp/build.gradle.kts and DeviceListScreen.kt: replaced.
+     XML: androidApp/build.gradle.kts and DeviceListFragment.kt: replaced.
+   iOS, both tracks: iosApp/iosApp/ViewModelOwner.swift: replaced.
+     SwiftUI: iosApp/iosApp/iOSApp.swift and DeviceListView.swift: replaced.
+     UIKit: iosApp/iosApp/AppDelegate.swift and DeviceListViewController.swift: replaced.
+   No Swift file is added or removed, so the Xcode project needs no change. Every other
+   Android and iOS file stays as in m05.
+
+3. Test, then build both apps. From demo/:
+     ./gradlew :shared:allTests
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Run: `adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk`, then
+     `adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity`.
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`, then
+     `xcrun simctl launch booted com.example.devicemonitor`.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- ./gradlew :shared:allTests runs BOTH testAndroidHostTest and iosSimulatorArm64Test (show me
+  the task lines), and all 9 tests pass on each: 5 in ScanningServiceTest, 3 in
+  DeviceListViewModelTest, 1 in AppModuleTest. Show the counts from the XML files in
+  shared/build/test-results/.
+- All builds succeed with no compiler warnings (w: / warning:) from our own Kotlin or Swift
+  code, test code included (never use -q: it hides w: lines; read the output). Not from our
+  code, and expected: SKIE's "Configuration '…' was resolved during configuration time" lines
+  and the SLF4J "Failed to load class" lines (Lesson 09, section 2; SLF4J can appear only when
+  the framework is rebuilt, and may not appear at all); Gradle's "Deprecated Gradle features …
+  Gradle 10" line, "Unable to strip the following libraries" from the Android build (not
+  every build prints it), Xcode's "appintentsmetadataprocessor … warning: Metadata extraction
+  skipped", and xcodebuild's "WARNING: Using the first of multiple matching destinations"
+  (printed even with id=, because one simulator matches two architectures). Gradle may also
+  print "The Daemon will expire after the build after running out of JVM Metaspace"; the build
+  still succeeds, and the next command starts a fresh daemon. Xcode "note:" lines are not
+  warnings.
+- Mutation check: in shared/src/commonMain/kotlin/com/example/devicemonitor/core/
+  ScanningService.kt, move `val seen = mutableSetOf<String>()` out of flow { } to a
+  `private val` property of the class. allTests must fail exactly eachScanStartsWithNothingSeen
+  on both platforms. This file isn't in this lesson's Full files (it's m05's, unchanged), so copy
+  it aside before the change, or restore it with git afterwards (git diff on it must be empty).
+  Rerun: 9 of 9 again.
+- Koin stays at the edges: outside build/ folders,
+    grep -rln 'org.koin' --include='*.kt' --include='*.swift' --exclude-dir=build .
+  lists only shared/…/di/AppModule.kt, shared/…/commonTest/…/di/AppModuleTest.kt,
+  shared/src/iosMain/…/ViewModelResolver.kt, and the Android screen that gets the ViewModel
+  (DeviceListScreen.kt or DeviceListFragment.kt). Quote the --include patterns: zsh expands
+  them otherwise. Nothing is left of the hand wiring:
+    grep -rn 'AppContainer' --include='*.kt' --include='*.swift' --exclude-dir=build .
+  finds nothing. The exported header has no Koin types:
+    grep -c 'Koin_core' shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h
+  prints 0 (build that framework first with ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64
+  if it isn't there), and the same header declares doInitKoin.
+- Launch: as m05 (the title "Device Monitor", a "Device name filter" field, a full-width Scan
+  button, "Tap Scan to look for devices." and an empty list), with no crash. The XML button
+  shows "SCAN" in capitals (Material's style), so match that text when automating.
+- Tap Scan: the button is disabled, a spinner + "Scanning…" show, rows appear one at a time
+  (~0.3 s apart) in SampleDevices order, and after ~3 s the status reads "Devices found: 5" and
+  the button is enabled again. Filter "sens" + Scan: one row (Tire Pressure Sensor). Filter
+  "zzz" + Scan: the red "No devices found. Try another filter." Rows open the detail screen;
+  Back returns to the list with the results still shown.
+- Android: rotate DURING a scan: the scan carries on and ends with "Devices found: 5" (one
+  ViewModel survived the rotation, now built by Koin).
+- Android, driving the emulator: after launching, wait until a uiautomator dump shows the Scan
+  button before the first tap. Tap the filter field and use `adb shell input text`; find
+  coordinates with `adb shell uiautomator dump` (on Compose, the Scan node's bounds cover only
+  its text; tap their centre, not a corner). A dump takes about 2 s, so judge mid-scan
+  states from `adb exec-out screencap -p` screenshots (about 1 s each), or `adb shell
+  screenrecord` for rows arriving 0.3 s apart: pull the .mp4 and step through it, for example
+  as frames with `ffmpeg -i scan.mp4 -vf fps=10 frame%03d.png`.
+- iOS: if you can drive the simulator (xcrun simctl has no tap command; idb or a throwaway
+  XCUITest that launches the installed app by bundle ID can. Don't script the Simulator window
+  with System Events: its clicks and keystrokes are unreliable), run the Scan, filter and
+  row-tap checks above; an XCUITest query takes about 0.3 s, so judge rows arriving one at a
+  time from a sequence of screenshots. In automation, the status text ends in the single
+  character "…", not three dots. If you can't, say so and list which iOS checks you didn't run.
+Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
+numbers, and show me where each box of the lesson's Koin graph diagram is in the code. Do NOT
+do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li><a href="../reference/architecture-di-testing-cheatsheet.html">Cheatsheet: the hexagon, Koin and tests</a>: where code goes, the bindings, the per-track wiring, the test recipe.</li>
+    <li>Testing: Android's <a href="https://developer.android.com/kotlin/coroutines/test">Testing Kotlin coroutines on Android</a> (primary source) and <a href="https://developer.android.com/training/testing/fundamentals/test-doubles">Use test doubles</a>; <a href="https://github.com/cashapp/turbine">Turbine</a>'s README; Kotlin's <a href="https://kotlinlang.org/docs/multiplatform/multiplatform-run-tests.html">Test your multiplatform app</a>; the <a href="https://developer.android.com/kotlin/multiplatform/plugin">Android-KMP plugin</a>'s section on host and device tests.</li>
+    <li>DI: <a href="https://developer.android.com/training/dependency-injection">Dependency injection in Android</a> and <a href="https://developer.android.com/training/dependency-injection/manual">Manual dependency injection</a>; Koin's <a href="https://insert-koin.io/docs/reference/koin-core/definitions/">Definitions</a>, <a href="https://insert-koin.io/docs/reference/koin-core/viewmodel/">ViewModel</a>, <a href="https://insert-koin.io/docs/reference/koin-core/koin-component/">KoinComponent</a>, <a href="https://insert-koin.io/docs/reference/koin-core/starting-koin">Starting Koin</a> and <a href="https://insert-koin.io/docs/reference/koin-compose/compose/">Koin for Compose</a>.</li>
+    <li><a href="../reference/glossary.html">Course glossary</a>: the terms from this lesson are marked (11).</li>
+    <li>Wisdom: Koin's maintainers answer in the <a href="https://surveys.jetbrains.com/s3/kotlin-slack-sign-up">Kotlin Slack</a> channel #koin, and KMP questions go to #multiplatform. In <a href="https://reddit.com/r/androiddev">r/androiddev</a>, search "Koin vs Hilt" and "fakes vs mocks" to see the trade-offs teams argue about.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson adds or changes, complete. Open one to check your work. One file is deleted: <code>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppContainer.kt</code>. Everything else stays as in m05. Each file is in the colour of its part of the app; the build files and the composition root carry none. Where two tracks change a file with the same path, its title names the track.</p>
+    <details class="full-file">
+      <summary>shared/build.gradle.kts</summary>
+<pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+    id("co.touchlab.skie")
+}
+
+kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+        compileSdk = 37
+        minSdk = 26
+        withHostTest {}
+    }
+
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target -&gt;
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            binaryOption("bundleId", "com.example.devicemonitor.shared")
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("io.insert-koin:koin-core:4.2.2")
+            implementation("io.insert-koin:koin-core-viewmodel:4.2.2")
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+            implementation("app.cash.turbine:turbine:1.2.1")
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.outbound.SimulatedBleScanner
+import com.example.devicemonitor.core.ScanningService
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.outbound.BleScanner
+import org.koin.core.context.startKoin
+import org.koin.core.module.dsl.viewModelOf
+import org.koin.dsl.module
+
+// The composition root, as a Koin module: which service implements each inbound port,
+// which adapter implements each outbound port, and how to build each ViewModel.
+internal val appModule = module {
+    single&lt;BleScanner&gt; { SimulatedBleScanner() }
+    single&lt;DeviceScanning&gt; { ScanningService(get()) }
+    viewModelOf(::DeviceListViewModel)
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+fun initKoin() {
+    startKoin {
+        modules(appModule)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="ios">
+      <summary>shared/src/iosMain/kotlin/com/example/devicemonitor/ViewModelResolver.kt</summary>
+<pre><code>package com.example.devicemonitor
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewmodel.CreationExtras
+import kotlinx.cinterop.BetaInteropApi
+import kotlinx.cinterop.ObjCClass
+import kotlinx.cinterop.getOriginalKotlinClass
+import org.koin.core.component.KoinComponent
+import kotlin.reflect.KClass
+
+// Swift can't pass a KClass, only its Objective-C class. This turns it back into the
+// KClass that ViewModelProvider needs. Adapted from Android's KMP ViewModel guide.
+@OptIn(BetaInteropApi::class)
+@Throws(IllegalArgumentException::class)
+fun ViewModelStore.resolveViewModel(modelClass: ObjCClass): ViewModel {
+    @Suppress("UNCHECKED_CAST")
+    val vmClass = getOriginalKotlinClass(modelClass) as? KClass&lt;ViewModel&gt;
+    require(vmClass != null) { "The modelClass parameter must be a ViewModel type." }
+    return ViewModelProvider.create(this, KoinViewModelFactory)[vmClass]
+}
+
+// The store calls this the first time it needs a ViewModel; Koin builds it from appModule.
+private object KoinViewModelFactory : ViewModelProvider.Factory, KoinComponent {
+    override fun &lt;T : ViewModel&gt; create(modelClass: KClass&lt;T&gt;, extras: CreationExtras): T =
+        getKoin().get(modelClass)
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeBleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.outbound.BleScanner
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.receiveAsFlow
+
+// Fake: an outbound adapter written for tests, behind the BleScanner port. The test plays
+// the radio: it decides what is heard and when, and whether the radio fails.
+class FakeBleScanner : BleScanner {
+    private val heard = Channel&lt;Device&gt;(Channel.UNLIMITED)
+    var failure: ScanException? = null
+    var isScanning = false
+        private set
+
+    override fun scan(): Flow&lt;Device&gt; = flow {
+        failure?.let { throw it }
+        isScanning = true
+        try {
+            emitAll(heard.receiveAsFlow())
+        } finally {
+            isScanning = false
+        }
+    }
+
+    fun hear(vararg devices: Device) {
+        devices.forEach { heard.trySend(it) }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/TestDeviceScanning.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.receiveAsFlow
+
+// Test implementation of the DeviceScanning inbound port. It stands in for the whole app
+// core, so a ViewModel test tests the ViewModel only. The test decides what a scan finds.
+class TestDeviceScanning : DeviceScanning {
+    private val found = Channel&lt;Device&gt;(Channel.UNLIMITED)
+    var failure: ScanException? = null
+    val filters = mutableListOf&lt;String&gt;() // one entry per scan started
+
+    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
+        filters += nameFilter
+        failure?.let { throw it }
+        emitAll(found.receiveAsFlow())
+    }
+
+    fun find(vararg devices: Device) {
+        devices.forEach { found.trySend(it) }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/core/ScanningServiceTest.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import app.cash.turbine.test
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.doubles.FakeBleScanner
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertIs
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.hours
+
+class ScanningServiceTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val heart = Device(id = "02", name = "Heart Rate Monitor", rssi = -61)
+    private val scale = Device(id = "03", name = "Smart Scale", rssi = -85)
+
+    private val radio = FakeBleScanner()
+
+    // The test drives the app core the way the ViewModel does: through the inbound port.
+    private val scanning: DeviceScanning = ScanningService(radio)
+
+    @Test
+    fun reportsEachDeviceOnceAsSoonAsItIsHeard() = runTest {
+        scanning.scan(nameFilter = "").test {
+            radio.hear(obd, heart, obd)
+            assertEquals(obd, awaitItem())
+            assertEquals(heart, awaitItem())
+
+            radio.hear(scale, heart)
+            assertEquals(scale, awaitItem())
+        }
+    }
+
+    @Test
+    fun keepsOnlyNamesContainingTheFilterIgnoringCaseAndSpaces() = runTest {
+        scanning.scan(nameFilter = "  MONITOR ").test {
+            radio.hear(obd, heart, scale)
+            assertEquals(heart, awaitItem())
+        }
+    }
+
+    @Test
+    fun eachScanStartsWithNothingSeen() = runTest {
+        scanning.scan(nameFilter = "").test {
+            radio.hear(obd)
+            assertEquals(obd, awaitItem())
+        }
+        scanning.scan(nameFilter = "").test {
+            radio.hear(obd)
+            assertEquals(obd, awaitItem())
+        }
+    }
+
+    @Test
+    fun scansUntilTheCollectorCancelsThenStopsTheRadio() = runTest {
+        val collector = launch { scanning.scan(nameFilter = "").collect {} }
+
+        testScheduler.advanceTimeBy(1.hours) // an hour of virtual time, with nothing heard
+        assertTrue(radio.isScanning)
+
+        collector.cancelAndJoin()
+        assertFalse(radio.isScanning)
+    }
+
+    @Test
+    fun aRadioFailureReachesTheCaller() = runTest {
+        radio.failure = ScanException("Bluetooth is off")
+
+        scanning.scan(nameFilter = "").test {
+            val error = awaitError()
+            assertIs&lt;ScanException&gt;(error)
+            assertEquals("Bluetooth is off", error.message)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModelTest.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import app.cash.turbine.test
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.doubles.TestDeviceScanning
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNull
+
+@OptIn(ExperimentalCoroutinesApi::class) // setMain, resetMain, currentTime
+class DeviceListViewModelTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val heart = Device(id = "02", name = "Heart Rate Monitor", rssi = -61)
+
+    private val scanning = TestDeviceScanning()
+    private lateinit var viewModel: DeviceListViewModel
+
+    @BeforeTest
+    fun setUp() {
+        // viewModelScope runs on Dispatchers.Main. In a test, Main becomes a test
+        // dispatcher whose clock runTest controls, so delays and timeouts take no real time.
+        Dispatchers.setMain(StandardTestDispatcher())
+        viewModel = DeviceListViewModel(scanning)
+    }
+
+    @AfterTest
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun showsDevicesAsTheyArriveThenFinishesAtTheTimeout() = runTest {
+        viewModel.uiState.test {
+            assertEquals(ScanState.Idle, awaitItem().scan)
+
+            viewModel.startScan(filter = "")
+            assertEquals(ScanState.Scanning(emptyList()), awaitItem().scan)
+
+            scanning.find(obd)
+            assertEquals(ScanState.Scanning(listOf(obd)), awaitItem().scan)
+
+            scanning.find(heart)
+            assertEquals(ScanState.Scanning(listOf(obd, heart)), awaitItem().scan)
+
+            // Nothing else is found: 3 s of virtual time pass, and the timeout ends the scan.
+            assertEquals(ScanState.Finished(listOf(obd, heart)), awaitItem().scan)
+            assertEquals(DeviceListViewModel.SCAN_TIMEOUT.inWholeMilliseconds, testScheduler.currentTime)
+        }
+    }
+
+    @Test
+    fun aFailedScanBecomesAMessageUntilItIsShown() = runTest {
+        scanning.failure = ScanException("Bluetooth is off")
+
+        viewModel.uiState.test {
+            skipItems(1) // Idle
+            viewModel.startScan(filter = "")
+            skipItems(1) // Scanning(emptyList())
+
+            val failed = awaitItem()
+            assertEquals(ScanState.Idle, failed.scan)
+            assertEquals("Bluetooth is off", failed.errorMessage)
+
+            viewModel.errorShown()
+            assertNull(awaitItem().errorMessage)
+        }
+    }
+
+    @Test
+    fun ignoresStartScanWhileAScanIsRunning() = runTest {
+        viewModel.startScan(filter = "obd")
+        testScheduler.runCurrent()
+        viewModel.startScan(filter = "heart")
+        testScheduler.runCurrent()
+
+        assertEquals(listOf("obd"), scanning.filters)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import org.koin.dsl.koinApplication
+import kotlin.test.Test
+import kotlin.test.assertNotNull
+
+class AppModuleTest {
+    // Koin checks the graph only when something asks for an instance, at run time. This
+    // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
+    @Test
+    fun buildsEveryViewModel() {
+        val koin = koinApplication { modules(appModule) }.koin
+
+        assertNotNull(koin.get&lt;DeviceListViewModel&gt;())
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.app.Application
+import com.example.devicemonitor.di.initKoin
+
+// Runs once per process, before any Activity: the place to start Koin.
+class DeviceMonitorApplication : Application() {
+    override fun onCreate() {
+        super.onCreate()
+        initKoin()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose">
+      <summary>androidApp/build.gradle.kts · Compose track</summary>
+<pre><code>plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
+}
+
+android {
+    namespace = "com.example.devicemonitor.android"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.devicemonitor"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures { compose = true }
+}
+
+dependencies {
+    implementation(project(":shared"))
+    implementation(platform("androidx.compose:compose-bom:2026.09.00"))
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("io.insert-koin:koin-compose-viewmodel:4.2.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-core:1.12.0")
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/AndroidManifest.xml · Compose track</summary>
+<pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;application
+        android:name=".DeviceMonitorApplication"
+        android:label="Device Monitor"
+        android:theme="@android:style/Theme.Material.Light.NoActionBar"&gt;
+        &lt;activity android:name=".MainActivity" android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.core.Device
+import org.koin.compose.viewmodel.koinViewModel
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+@Composable
+fun DeviceListScreen(
+    onDeviceClick: (Device) -&gt; Unit,
+    viewModel: DeviceListViewModel = koinViewModel(),
+) {
+    var filter by rememberSaveable { mutableStateOf("") }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    DeviceListContent(
+        filter = filter,
+        onFilterChange = { filter = it },
+        isScanning = state.scan is ScanState.Scanning,
+        devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        },
+        onScan = { viewModel.startScan(filter) },
+        onDeviceClick = onDeviceClick,
+    )
+
+    state.errorMessage?.let { message -&gt;
+        AlertDialog(
+            onDismissRequest = viewModel::errorShown,
+            confirmButton = { TextButton(onClick = viewModel::errorShown) { Text("OK") } },
+            title = { Text("Scan failed") },
+            text = { Text(message) },
+        )
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+@Composable
+fun DeviceListContent(
+    filter: String,
+    onFilterChange: (String) -&gt; Unit,
+    isScanning: Boolean,
+    devices: List&lt;Device&gt;?,
+    onScan: () -&gt; Unit,
+    onDeviceClick: (Device) -&gt; Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Device Monitor", style = MaterialTheme.typography.headlineSmall)
+        OutlinedTextField(
+            value = filter,
+            onValueChange = onFilterChange,
+            label = { Text("Device name filter") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        Button(onClick = onScan, enabled = !isScanning, modifier = Modifier.fillMaxWidth()) {
+            Text("Scan")
+        }
+        ScanStatus(isScanning = isScanning, devices = devices)
+        LazyColumn(modifier = Modifier.weight(1f)) {
+            items(devices.orEmpty(), key = { it.id }) { device -&gt;
+                DeviceRow(device = device, onClick = { onDeviceClick(device) })
+                HorizontalDivider()
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScanStatus(isScanning: Boolean, devices: List&lt;Device&gt;?) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when {
+            isScanning -&gt; {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Scanning…")
+            }
+            devices == null -&gt; Text("Tap Scan to look for devices.")
+            devices.isEmpty() -&gt; Text(
+                "No devices found. Try another filter.",
+                color = MaterialTheme.colorScheme.error,
+            )
+            else -&gt; Text("Devices found: ${devices.size}")
+        }
+    }
+}
+
+@Composable
+private fun DeviceRow(device: Device, onClick: () -&gt; Unit) {
+    ListItem(
+        headlineContent = { Text(device.name) },
+        supportingContent = { Text(device.id) },
+        trailingContent = { Text("${device.rssi} dBm") },
+        modifier = Modifier.clickable(onClick = onClick),
+    )
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml">
+      <summary>androidApp/build.gradle.kts · XML track</summary>
+<pre><code>plugins {
+    id("com.android.application")
+}
+
+android {
+    namespace = "com.example.devicemonitor.android"
+    compileSdk = 37
+
+    defaultConfig {
+        applicationId = "com.example.devicemonitor"
+        minSdk = 26
+        targetSdk = 36
+        versionCode = 1
+        versionName = "1.0"
+    }
+
+    buildFeatures { viewBinding = true }
+}
+
+dependencies {
+    implementation(project(":shared"))
+    implementation("androidx.core:core-ktx:1.19.1")
+    implementation("androidx.appcompat:appcompat:1.8.0")
+    implementation("androidx.fragment:fragment-ktx:1.9.1")
+    implementation("androidx.constraintlayout:constraintlayout:2.2.2")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
+    implementation("androidx.navigation:navigation-fragment:2.10.2")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+    implementation("io.insert-koin:koin-android:4.2.2")
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/AndroidManifest.xml · XML track</summary>
+<pre><code>&lt;manifest xmlns:android="http://schemas.android.com/apk/res/android"&gt;
+    &lt;application
+        android:name=".DeviceMonitorApplication"
+        android:label="Device Monitor"
+        android:theme="@style/Theme.AppCompat.Light.NoActionBar"&gt;
+        &lt;activity android:name=".MainActivity" android:exported="true"&gt;
+            &lt;intent-filter&gt;
+                &lt;action android:name="android.intent.action.MAIN" /&gt;
+                &lt;category android:name="android.intent.category.LAUNCHER" /&gt;
+            &lt;/intent-filter&gt;
+        &lt;/activity&gt;
+    &lt;/application&gt;
+&lt;/manifest&gt;</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.DividerItemDecoration
+import com.example.devicemonitor.adapter.inbound.DeviceListUiState
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.android.databinding.FragmentDeviceListBinding
+import kotlinx.coroutines.launch
+import org.koin.androidx.viewmodel.ext.android.viewModel
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+    private val viewModel: DeviceListViewModel by viewModel()
+
+    private var binding: FragmentDeviceListBinding? = null
+    private var errorDialog: AlertDialog? = null
+    private val adapter = DeviceAdapter { device -&gt;
+        val nav = findNavController()
+        // A fast double tap delivers two clicks; only navigate from the list itself.
+        if (nav.currentDestination?.id == R.id.deviceList) {
+            nav.navigate(R.id.toDetail, Bundle().apply { putString("deviceId", device.id) })
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceListBinding.inflate(inflater, container, false)
+        binding = b
+        b.deviceList.adapter = adapter
+        b.deviceList.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
+        b.scanButton.setOnClickListener { viewModel.startScan(b.filterInput.text.toString()) }
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { render(it) }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        errorDialog?.dismiss() // a dismiss() doesn't call the cancel listener, so the error stays in state
+        errorDialog = null
+        binding?.deviceList?.adapter = null // the adapter outlives the view; don't let it keep the old list
+        binding = null
+    }
+
+    // The one place that touches views: every new state ends here. The EditText keeps its
+    // own text (and restores it after rotation), so render() never sets it.
+    private fun render(state: DeviceListUiState) {
+        val b = binding ?: return
+        val isScanning = state.scan is ScanState.Scanning
+        val devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        }
+        b.scanButton.isEnabled = !isScanning
+        b.progress.visibility = if (isScanning) View.VISIBLE else View.GONE
+        b.statusText.text = when {
+            isScanning -&gt; "Scanning…"
+            devices == null -&gt; "Tap Scan to look for devices."
+            devices.isEmpty() -&gt; "No devices found. Try another filter."
+            else -&gt; "Devices found: ${devices.size}"
+        }
+        b.statusText.setTextColor(if (devices?.isEmpty() == true &amp;&amp; !isScanning) Color.RED else Color.DKGRAY)
+        adapter.submitList(devices.orEmpty())
+        renderError(state.errorMessage)
+    }
+
+    private fun renderError(message: String?) {
+        if (message == null) {
+            errorDialog?.dismiss()
+            errorDialog = null
+        } else if (errorDialog == null) {
+            errorDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Scan failed")
+                .setMessage(message)
+                .setPositiveButton("OK") { _, _ -&gt; viewModel.errorShown() }
+                .setOnCancelListener { viewModel.errorShown() }
+                .show()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="ios">
+      <summary>iosApp/iosApp/ViewModelOwner.swift · both iOS tracks</summary>
+<pre><code>import Shared
+
+// iOS has no ViewModelStoreOwner, so this class plays that role. Keep it in a view's
+// @State (or a view controller's property). When it is deinitialised, clearing the store
+// cancels every viewModelScope in it and calls onCleared().
+final class ViewModelOwner {
+    private let store = ViewModelStore()
+
+    // Returns the store's instance of VM; Koin creates it on first use.
+    func viewModel&lt;VM: ViewModel&gt;() -&gt; VM {
+        do {
+            return try store.resolveViewModel(modelClass: VM.self) as! VM
+        } catch {
+            fatalError("Couldn't create \(VM.self): \(error)")
+        }
+    }
+
+    deinit {
+        store.clear()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/iOSApp.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+@main
+struct iOSApp: App {
+    init() {
+        AppModuleKt.doInitKoin()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @State private var owner = ViewModelOwner()
+    @State private var filter = ""
+    @State private var state: DeviceListUiState?
+
+    var body: some View {
+        let viewModel: DeviceListViewModel = owner.viewModel()
+        let state = self.state ?? viewModel.uiState.value
+        DeviceListContent(
+            filter: $filter,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+    }
+
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        switch onEnum(of: scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            Button(action: onScan) {
+                Text("Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isScanning)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(id: device.id)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/AppDelegate.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        AppModuleKt.doInitKoin()
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {
+        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListViewController.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel()
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let filterField = UITextField()
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = SampleDevices.shared.find(id: deviceId) {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            viewModel.startScan(filter: filterField.text ?? "")
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let stack = UIStackView(arrangedSubviews: [filterField, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(viewModel.uiState.value)
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+        let devices: [Device]? = switch onEnum(of: state.scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+        scanButton.isEnabled = !isScanning
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath) else { return }
+        navigationController?.pushViewController(DeviceDetailViewController(deviceId: deviceId), animated: true)
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="10-the-hexagon.html">← 10 The hexagon</a>
+    <span class="muted">Next: 12 Permissions</span>
+  </nav>
+</main>
+</body>
+</html>
