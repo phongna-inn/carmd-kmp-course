@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lesson 13</p>
+  <p class="kicker">Reference · from Lessons 13–14</p>
   <h1>BLE</h1>
-  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a>. Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators. Lessons 14–16 add connect, discovery, read and notify.</p>
+  <p class="source">Compressed from <a href="../lessons/13-ble-concepts-and-scan.html">Lesson 13</a> (scan) and <a href="../lessons/14-ble-connect.html">Lesson 14</a> (connect). Built and checked with Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2, Android API 36 and API 30 emulators. Lessons 15–16 add discovery, read and notify.</p>
 
   <h2>Words</h2>
   <div class="table-wrap">
@@ -24,7 +24,7 @@
     <tr><td>UUID</td><td>128-bit; many standard ones have a 16- or 32-bit short form, filled out on the base UUID <code>00000000-0000-1000-8000-00805F9B34FB</code></td><td>13, 15</td></tr>
     <tr><td>read · write</td><td>the central reads or writes the value; write-without-response gets no response</td><td>15 (read)</td></tr>
     <tr><td>notify · indicate</td><td>the peripheral pushes new values; an indication is confirmed by the central, a notification isn't</td><td>16 (notify)</td></tr>
-    <tr><td>connection state</td><td>disconnected · connecting · connected · disconnecting, on both platforms</td><td>14</td></tr>
+    <tr><td>connection state</td><td>disconnected · connecting · connected · disconnecting, on both platforms. The app core's <code>ConnectionState</code> keeps three: <code>Disconnected</code>, <code>Connecting(device)</code>, <code>Connected(device)</code></td><td>14</td></tr>
   </table>
   </div>
 
@@ -68,6 +68,56 @@ fun scanFlow(radio: IosRadio): Flow&lt;Device&gt; = callbackFlow {
 }
 // Swift: func scan() -&gt; SkieSwiftFlow&lt;Device&gt; { scanFlow(radio: self) }</code></pre>
 
+  <h2>Connecting, side by side</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>Android (<code>AndroidBleConnection</code>, Kotlin, <code>androidMain</code>)</th><th>iOS (<code>IosBleConnection</code>, Swift, iOS app)</th></tr>
+    <tr><td>the device object</td><td><code>adapter.getRemoteDevice(address)</code>: a <code>BluetoothDevice</code> for any valid address</td><td><code>manager.retrievePeripherals(withIdentifiers: [uuid])</code>; keep the <code>CBPeripheral</code> in a property</td></tr>
+    <tr><td>connect</td><td><code>device.connectGatt(context, false, callback, TRANSPORT_LE)</code>, returns a <code>BluetoothGatt</code> (or <code>null</code>); deprecated at API 37, kept for older phones</td><td><code>manager.connect(peripheral)</code>; the manager must be <code>.poweredOn</code></td></tr>
+    <tr><td>link up</td><td><code>onConnectionStateChange(gatt, GATT_SUCCESS, STATE_CONNECTED)</code>, on a background thread</td><td><code>centralManager(_:didConnect:)</code>, main queue with <code>queue: nil</code></td></tr>
+    <tr><td>attempt failed</td><td><code>onConnectionStateChange</code> with a status other than <code>GATT_SUCCESS</code> (133 on our emulator, after about 30 s)</td><td><code>centralManager(_:didFailToConnect:error:)</code>; attempts never time out on their own</td></tr>
+    <tr><td>link dropped</td><td><code>onConnectionStateChange(…, STATE_DISCONNECTED)</code> after being connected</td><td><code>centralManager(_:didDisconnectPeripheral:error:)</code> with a non-<code>nil</code> error</td></tr>
+    <tr><td>end it</td><td><code>gatt.disconnect()</code> then <code>gatt.close()</code>; after <code>close()</code> no more callbacks</td><td><code>cancelPeripheralConnection(peripheral)</code>, non-blocking; the later <code>didDisconnectPeripheral</code> has a <code>nil</code> error</td></tr>
+  </table>
+  </div>
+
+  <h2>A connection as a Flow</h2>
+  <pre><code>// Port: collecting connects, each value is the link's state, cancelling disconnects
+interface BleConnection { fun connect(device: Device): Flow&lt;ConnectionState&gt; }
+
+// Android adapter
+override fun connect(device: Device) = callbackFlow {
+    val callback = object : BluetoothGattCallback() {
+        override fun onConnectionStateChange(g: BluetoothGatt, status: Int, state: Int) {
+            if (status == GATT_SUCCESS &amp;&amp; state == STATE_CONNECTED) trySend(Connected(device))
+            else close(ConnectionException("…$status"))
+        }
+    }
+    send(Connecting(device))
+    val gatt = adapter.getRemoteDevice(device.id).connectGatt(context, false, callback, TRANSPORT_LE)
+    awaitClose { gatt.disconnect(); gatt.close() }   // every way out closes the client
+}
+
+// iOS: Kotlin builds the Flow (ConnectFlow.kt in iosMain), Swift feeds it
+fun connectFlow(link: IosLink, device: Device) = callbackFlow {
+    link.open(device, LinkFeed(this))                // Swift: feed.changed / feed.failed
+    awaitClose { link.close() }                      // Swift: cancelPeripheralConnection
+}
+
+// Service: the connection lasts as long as the caller's coroutine
+override suspend fun connect(device: Device) {
+    /* permission, one at a time */ state.value = Connecting(device)
+    try {
+        coroutineScope {
+            link = launch {                          // disconnect() = link?.cancel(): returns normally
+                val giveUp = launch { delay(10.seconds); throw ConnectionException("…") }
+                connection.connect(device).collect { state.value = it; if (it is Connected) giveUp.cancel() }
+            }
+        }
+    } finally { state.value = Disconnected }
+}
+// ViewModel: viewModelScope.launch { session.connect(device) }: survives rotation, ends when cleared</code></pre>
+
   <h2>Where things go</h2>
   <div class="table-wrap">
   <table>
@@ -75,7 +125,10 @@ fun scanFlow(radio: IosRadio): Flow&lt;Device&gt; = callbackFlow {
     <tr><td>permission → radio available → radio on → scan; skip nameless; filter; each id once</td><td><code>ScanningService</code> (app core)</td></tr>
     <tr><td>scan timeout (10 s), Stop</td><td><code>DeviceListViewModel</code> (inbound adapter): this screen's behaviour</td></tr>
     <tr><td>radio APIs, mapping results to <code>Device</code></td><td>outbound adapters</td></tr>
-    <tr><td>which radio the app uses</td><td><code>platformModule</code>, filled by <code>initKoin(permissionChecker, bleScanner)</code></td></tr>
+    <tr><td>connect: permission → one device at a time → 10 s to answer; the connection state</td><td><code>SessionService</code> (app core), a Koin <code>single</code></td></tr>
+    <tr><td>how long a connection lives</td><td>the caller's scope: <code>viewModelScope</code> in <code>DeviceDetailViewModel</code> (inbound adapter)</td></tr>
+    <tr><td><code>BluetoothGatt</code>, <code>CBPeripheral</code></td><td>the connection adapters, never a screen</td></tr>
+    <tr><td>which radio the app uses</td><td><code>platformModule</code>, filled by <code>initKoin(permissionChecker, bleScanner, bleConnection)</code></td></tr>
   </table>
   </div>
 
@@ -86,6 +139,11 @@ fun scanFlow(radio: IosRadio): Flow&lt;Device&gt; = callbackFlow {
     <li><strong>Android scan throttling.</strong> Too many scan starts in a short time and the next one silently returns nothing; logcat says "scanning too frequently". We hit it with six starts in about ten seconds.</li>
     <li><strong>Check the permission before the radio.</strong> On iOS, creating the manager is a first use of Bluetooth and can show the prompt.</li>
     <li><strong>Always time-limit a scan.</strong> "Never scan on a loop, and always set a time limit on your scan."</li>
+    <li><strong>A connection kept in the screen.</strong> A <code>BluetoothGatt</code> in an Activity or in Compose state is lost on rotation while Android keeps its client registered; a second Connect registers another. Keep it in the adapter, and run the connection in <code>viewModelScope</code>, not <code>rememberCoroutineScope()</code>.</li>
+    <li><strong>An unretained peripheral.</strong> CoreBluetooth cancels a pending connection when its <code>CBPeripheral</code> is deallocated.</li>
+    <li><strong>Disappear is not "gone".</strong> <code>onDisappear</code> / <code>viewDidDisappear</code> also run when a screen is pushed on top. End a connection when the ViewModel is cleared, not there.</li>
+    <li><strong>iOS connection attempts never time out.</strong> The app sets its own limit (10 s, in the service).</li>
+    <li><strong>Always <code>close()</code> a <code>BluetoothGatt</code></strong> when done: put it in <code>awaitClose</code>, so every path runs it.</li>
   </ul>
 </main>
 </body>

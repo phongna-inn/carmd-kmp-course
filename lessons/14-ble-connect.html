@@ -1,0 +1,3121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>14 — BLE: connect</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 14 · Week 3 · Day 14 · Native Device Monitor course</p>
+  <h1>BLE: connect</h1>
+  <div class="meta">
+    <span class="tag">~2 h · +0.25 h per extra UI track</span>
+    <span class="tag">Milestone: m09 connect, live connection state</span>
+    <span class="tag">Prereq: <a href="13-ble-concepts-and-scan.html">13</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="android"></div>
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> at m08 the list shows real devices, but tapping one opens a detail screen that says "Unknown device" and can do nothing. Today the detail screen gets the device you tapped and a Connect button. The app connects through a new inbound port, <code>DeviceSession</code>, whose session service keeps the rules (the permission, one device at a time, a time limit) and the connection state every screen shows. The radio work sits behind a new outbound port, <code>BleConnection</code>: Android's <code>connectGatt</code> in Kotlin, and CoreBluetooth's <code>connect(_:)</code> in Swift. Failures reach the screen as a message. And you meet the trap that loses connections in real apps: the connection kept in something that a rotation or a closing view throws away. That's milestone <strong>m09</strong>.
+  </div>
+
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/connect-gatt-server">Connect to a GATT server</a> before section 4. For iOS, Apple's <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager">CBCentralManager</a>, its connection methods, before section 5. Lesson 08's lifetimes diagram before section 7.</p>
+  <p><span class="tag">Tracks</span> The concepts, the ports, the service, both radios and the tests (sections 1–5 and 9) are the same on every track. The tracks differ in the detail screen (section 6), how the list hands it the device, and the app start (section 8). Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m08</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m08</th><th>m09</th></tr>
+    <tr><td>app core</td><td>scanning and permissions</td><td>plus <code>ConnectionState</code>, <code>ConnectionException</code>, the <code>DeviceSession</code> inbound port, the <code>BleConnection</code> outbound port and <code>SessionService</code></td></tr>
+    <tr><td>outbound adapters</td><td>the two scanners</td><td>plus <code>AndroidBleConnection</code> (Kotlin, <code>androidMain</code>), <code>IosBleConnection</code> (Swift, the iOS app) with <code>ConnectFlow.kt</code> in <code>iosMain</code>, and <code>SimulatedBleConnection</code> (unused, for running without a radio)</td></tr>
+    <tr><td>the detail screen</td><td>looks its id up in <code>SampleDevices</code>; "Unknown device" for a real one</td><td>gets the whole <code>Device</code> through navigation; a <code>DeviceDetailViewModel</code>, a status line, Connect / Disconnect, a "Connection failed" alert</td></tr>
+    <tr><td><code>SampleDevices</code></td><td>the simulated radio's devices, and <code>find(id)</code> for the detail screen</td><td>the devices only; nothing calls <code>find</code> any more, so it's gone</td></tr>
+    <tr><td>Koin start</td><td><code>initKoin(permissionChecker, bleScanner)</code></td><td><code>initKoin(permissionChecker, bleScanner, bleConnection)</code></td></tr>
+    <tr><td>tests</td><td>20 per platform</td><td>33 per platform: 8 for the session service, 5 for the detail ViewModel</td></tr>
+  </table>
+  </div>
+
+  <h2>1. What connecting means</h2>
+  <p>A scan only listens. To read or receive a device's data (Lessons 15–16), the phone has to connect: Android's guide says "To connect to a GATT server on a BLE device, use the <code>connectGatt()</code> method", and "The caller (the Android app) is the GATT client" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/connect-gatt-server">Connect to a GATT server</a>). On iOS, <code>CBCentralManager</code>'s <code>connect(_:options:)</code> "Initiates a connection to <i>peripheral</i>" (<code>CBCentralManager.h</code>). Today the app only opens and closes that link and shows where it stands.</p>
+  <p>Lesson 13 listed the four states both platforms name: disconnected, connecting, connected, disconnecting. The app core gets its own <code>ConnectionState</code>, in the app's terms, and it needs only three:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 270" role="img" aria-labelledby="l14-states-title">
+      <title id="l14-states-title">The connection states of the app core. Three boxes: Disconnected, Connecting with its device, Connected with its device. connect(device) moves Disconnected to Connecting. The radio reporting the link up moves Connecting to Connected. From Connecting or Connected, four things lead back to Disconnected: disconnect(), the caller's coroutine being cancelled, the radio reporting a failure or a dropped link, and, from Connecting only, the 10-second timeout. The first two end quietly; the last two end with a ConnectionException that the screen shows as Connection failed.</title>
+      <defs><marker id="l14-states-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="core">
+        <rect class="box" x="20" y="40" width="170" height="56" rx="8"/>
+        <text class="title" x="36" y="64">Disconnected</text>
+        <text class="small muted" x="36" y="84">no device</text>
+        <rect class="box" x="295" y="40" width="170" height="56" rx="8"/>
+        <text class="title" x="311" y="64">Connecting</text>
+        <text class="small muted" x="311" y="84">(device)</text>
+        <rect class="box" x="570" y="40" width="170" height="56" rx="8"/>
+        <text class="title" x="586" y="64">Connected</text>
+        <text class="small muted" x="586" y="84">(device)</text>
+      </g>
+      <path class="edge" d="M190,60 L293,60" marker-end="url(#l14-states-arrow)"/>
+      <text class="mono small" x="192" y="30">connect(device)</text>
+      <path class="edge" d="M465,60 L568,60" marker-end="url(#l14-states-arrow)"/>
+      <text class="small" x="470" y="30">radio: link up</text>
+      <path class="edge dashed" d="M380,96 L380,150 L105,150 L105,98" marker-end="url(#l14-states-arrow)"/>
+      <path class="edge dashed" d="M655,96 L655,170 L95,170 L95,98" marker-end="url(#l14-states-arrow)"/>
+      <text class="small" x="20" y="200">Back to Disconnected, quietly: disconnect(), or the caller's coroutine is cancelled</text>
+      <text class="small" x="20" y="220">Back to Disconnected with a ConnectionException ("Connection failed" on screen):</text>
+      <text class="small" x="20" y="240">the radio reports a failure or a dropped link, or (from Connecting) 10 s pass with no answer</text>
+    </svg>
+    <figcaption>The app's three states. Every way out leads to Disconnected; only the failures carry a message.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+  </ul>
+  <ol class="walk">
+    <li><strong>No disconnecting state.</strong> Once the app has asked to disconnect, it's done with the device and doesn't wait for the radio to confirm. The adapters free what they hold at once (sections 4 and 5).</li>
+    <li><strong>No failed state either.</strong> A failure is a moment, not a place to stay: the state goes back to Disconnected, and the reason travels as a <code>ConnectionException</code> to whoever called <code>connect</code>. The screen shows it with Lesson 08's pattern, <code>errorMessage</code> plus <code>errorShown()</code>, as the list does with <code>ScanException</code>.</li>
+    <li><strong>The device is in the state</strong>, so any screen can say what the app is connected to, not only the screen that connected.</li>
+  </ol>
+
+  <h2>2. Two new ports</h2>
+  <p>First the app's words: the state, and the error.</p>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/ConnectionState.kt</figcaption>
+<pre><code><span class="elide">⋯  package</span>
+// Where the app's connection to a device stands, in the app's terms. Each platform's adapter
+// turns its radio's callbacks into these.
+<mark>sealed interface ConnectionState {</mark>
+    data object Disconnected : ConnectionState
+    data class Connecting(val device: Device) : ConnectionState
+    data class Connected(val device: Device) : ConnectionState
+}</code></pre>
+  </figure>
+  <p><code>ConnectionException</code> is <code>ScanException</code>'s twin: one class, a message for the user, thrown by the service and the adapters. The outbound port has the shape you met in Lesson 13's <code>BleScanner.scan()</code>:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleConnection.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: ConnectionState, Device, Flow</span>
+// Outbound port: what the app needs from a Bluetooth radio to hold a link to one device, in the
+// app's own terms. One adapter per platform: Kotlin in androidMain, Swift in the iOS app.
+<mark>interface BleConnection {</mark>
+    // The link to device, as its state changes: Connecting, then Connected once it's up.
+<mark>    // Collecting starts the connection, and cancelling the collector ends it and frees what the</mark>
+    // radio held for it. Throws ConnectionException when the attempt fails or the link drops.
+<mark>    fun connect(device: Device): Flow&lt;ConnectionState&gt;</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>One call, three jobs.</strong> Collecting connects, each emitted value reports the link's state, and cancelling disconnects. Both adapters build it with <code>callbackFlow</code>, so <code>awaitClose</code> is where the radio's link is closed, whatever ended it.</li>
+    <li><strong>Why not <code>connect()</code>, <code>disconnect()</code> and a state flow, as the course plan's Appendix A.3 suggests?</strong> The plan calls its names a suggestion and the behaviour the requirement. With three separate calls, every adapter would have to keep state between them, and a forgotten <code>disconnect()</code> would leave a link open. Here, ending the collection always closes it: one rule, the one Lesson 13 used for the radio's scan.</li>
+  </ol>
+  <p>The inbound port is what the ViewModels see. It has the plan's three members:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceSession.kt</figcaption>
+<pre><code><span class="elide">⋯  package and imports: ConnectionState, Device, StateFlow</span>
+// Inbound port: what the app offers for talking to one device. Inbound adapters (the shared
+// ViewModels) call it, and SessionService implements it.
+<mark>interface DeviceSession {</mark>
+    // Where the connection stands now. Every screen that shows it reads this one state.
+<mark>    val connectionState: StateFlow&lt;ConnectionState&gt;</mark>
+
+    // Connects to device and holds the connection for as long as the call runs. Returns after
+    // disconnect(); cancelling the caller's coroutine also disconnects. Throws ConnectionException:
+    // no permission, another connection open, no answer, or the link failed or dropped.
+<mark>    suspend fun connect(device: Device)</mark>
+
+    // Ends the connection, or the attempt, that connect() is holding.
+<mark>    fun disconnect()</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>connectionState</code> is a <code>StateFlow</code></strong>: it always has a value, so a screen that opens later can read where things stand at once (Lesson 08).</li>
+    <li><strong><code>connect</code> suspends for the whole connection</strong>, not just until the link is up. Whoever calls it decides how long the connection may live: the coroutine it runs in. Section 7 shows why that matters more than anything else in this lesson.</li>
+    <li><strong>Three ways out of <code>connect</code></strong>: it returns after <code>disconnect()</code>, it throws <code>CancellationException</code> when its caller is cancelled, and it throws <code>ConnectionException</code> on a failure.</li>
+  </ol>
+
+  <h2>3. The session service</h2>
+  <p>The rules go in <code>SessionService</code>: the same on both platforms, and tested once on the JVM.</p>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/SessionService.kt</figcaption>
+<pre><code><span class="elide">⋯  class SessionService(connection: BleConnection, permissions: PermissionChecker) : DeviceSession</span>
+<mark>    private val state = MutableStateFlow&lt;ConnectionState&gt;(ConnectionState.Disconnected)</mark>
+    override val connectionState: StateFlow&lt;ConnectionState&gt; = state.asStateFlow()
+    private var link: Job? = null
+
+    override suspend fun connect(device: Device) {
+<mark>        if (permissions.check(Permission.Bluetooth) != PermissionStatus.Granted) {</mark>
+            throw ConnectionException("Connecting needs the Bluetooth permission.")
+        }
+<mark>        if (state.value != ConnectionState.Disconnected) {</mark>
+            throw ConnectionException("Another connection is open. Disconnect it first.")
+        }
+        state.value = ConnectionState.Connecting(device)
+<span class="elide">⋯  try { the link: below }</span>
+<mark>        } finally {</mark>
+            link = null
+<mark>            state.value = ConnectionState.Disconnected</mark>
+        }
+    }
+
+    // Cancelling the link ends its collection, and the adapter closes the radio's link.
+<mark>    override fun disconnect() {</mark>
+        link?.cancel()
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The service owns the state.</strong> Only the service writes it, and the adapters only report. Whatever ends the connection, <code>finally</code> leaves the state at Disconnected, so no screen can be left showing "connected" for a link that's gone.</li>
+    <li><strong>The permission first</strong>, as in <code>ScanningService</code>: Android's <code>connectGatt</code> is declared <code>@RequiresPermission(BLUETOOTH_CONNECT)</code> (Android's source), and Lesson 12's <code>Permission.Bluetooth</code> already covers <code>BLUETOOTH_CONNECT</code> on Android 12 and later.</li>
+    <li><strong>One device at a time</strong> is this app's rule. The screen also hides Connect while a connection is open, but that's presentation (Lesson 13's argument): the rule lives where every caller goes through it.</li>
+    <li><strong>The state is set to Connecting before the first suspension</strong>, so a second <code>connect</code> right behind the first already sees it.</li>
+  </ol>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/SessionService.kt</figcaption>
+<pre><code>        try {
+<mark>            coroutineScope {</mark>
+<mark>                link = launch {</mark>
+                    // iOS never gives up on a connection attempt, so the app does.
+<mark>                    val giveUp = launch {</mark>
+                        delay(CONNECT_TIMEOUT)
+<mark>                        throw ConnectionException("${device.name} didn't answer within 10 seconds.")</mark>
+                    }
+<mark>                    connection.connect(device).collect { linkState -&gt;</mark>
+                        state.value = linkState
+<mark>                        if (linkState is ConnectionState.Connected) giveUp.cancel()</mark>
+                    }
+                }
+            }
+        } finally {
+<span class="elide">⋯  as above; CONNECT_TIMEOUT = 10.seconds in the companion object</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>link</code> is a child coroutine</strong> inside <code>coroutineScope</code>, and <code>disconnect()</code> cancels it. A cancelled child doesn't fail its parent, so <code>coroutineScope</code> then returns normally and <code>connect</code> returns: a disconnect the app asked for isn't an error.</li>
+    <li><strong>A failure fails the scope.</strong> A <code>ConnectionException</code> from the adapter's flow, or from <code>giveUp</code>, cancels the link and leaves <code>coroutineScope</code>, and so <code>connect</code>, with that exception. Cancelling the collection runs the adapter's <code>awaitClose</code>: the radio's link closes on every path.</li>
+    <li><strong>Why a timeout?</strong> Apple: "Connection attempts never time out" (<code>CBCentralManager.h</code>, <code>connectPeripheral:options:</code>). Without the app's own limit, a device that's switched off would leave the iPhone screen on "connecting…" for good. On our API 30 emulator, Android's own attempt ended after about 30 seconds (section 7), so 10 seconds is the app's choice on both platforms. <code>giveUp</code> is cancelled once the link is up: the limit is for connecting, not for being connected.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="l14-hex-title">
+      <title id="l14-hex-title">Who talks to whom when the user taps Connect. The detail screen calls DeviceDetailViewModel, an inbound adapter, which calls the inbound port DeviceSession. SessionService in the app core implements it. It asks the outbound port PermissionChecker for the permission, then collects BleConnection.connect(device). Two outbound adapters implement BleConnection: AndroidBleConnection, Kotlin in androidMain over BluetoothGatt; and IosBleConnection, Swift in the iOS app over CBCentralManager, which gets its Flow from ConnectFlow.kt, Kotlin in iosMain. In the tests, FakeBleConnection and FakePermissionChecker stand in for the adapters.</title>
+      <defs><marker id="l14-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="android">
+        <rect class="box" x="10" y="30" width="130" height="50" rx="6"/>
+        <text class="title small" x="20" y="50">Android detail</text>
+        <text class="small muted" x="20" y="68">Compose · XML</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="10" y="100" width="130" height="50" rx="6"/>
+        <text class="title small" x="20" y="120">iOS detail</text>
+        <text class="small muted" x="20" y="138">SwiftUI · UIKit</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="170" y="62" width="130" height="56" rx="6"/>
+        <text class="mono small" x="180" y="84">DeviceDetail</text>
+        <text class="mono small" x="180" y="100">ViewModel</text>
+      </g>
+      <g data-part="core">
+        <polygon class="box" points="320,90 350,20 560,20 590,90 560,160 350,160"/>
+        <text class="title" x="455" y="40" text-anchor="middle">App core</text>
+        <rect class="box" x="400" y="62" width="110" height="44" rx="6"/>
+        <text class="mono small" x="408" y="80">Session</text>
+        <text class="mono small" x="408" y="96">Service</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="300" y="128" width="110" height="26" rx="6"/>
+        <text class="mono small" x="308" y="146">DeviceSession</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="574" y="40" width="130" height="26" rx="6"/>
+        <text class="mono small" x="580" y="58">PermissionChecker</text>
+        <rect class="box" x="480" y="128" width="106" height="26" rx="6"/>
+        <text class="mono small" x="486" y="146">BleConnection</text>
+        <rect class="box" x="520" y="196" width="230" height="50" rx="6"/>
+        <text class="mono small" x="530" y="216">AndroidBleConnection</text>
+        <text class="small muted" x="530" y="234">Kotlin, androidMain · BluetoothGatt</text>
+        <rect class="box" x="520" y="262" width="230" height="56" rx="6"/>
+        <text class="mono small" x="530" y="282">IosBleConnection</text>
+        <text class="small muted" x="530" y="300">Swift, iOS app · CBCentralManager</text>
+        <text class="small muted" x="530" y="314">+ ConnectFlow.kt, Kotlin in iosMain</text>
+        <rect class="box" x="300" y="262" width="190" height="56" rx="6"/>
+        <text class="mono small" x="310" y="282">FakeBleConnection</text>
+        <text class="mono small" x="310" y="298">FakePermissionChecker</text>
+        <text class="small muted" x="310" y="312">commonTest</text>
+      </g>
+      <path class="edge" d="M140,55 L168,80" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge" d="M140,125 L168,102" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge" d="M235,118 L300,140" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge dashed" d="M420,106 L390,126" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge" d="M510,72 L572,56" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge" d="M500,106 L525,126" marker-end="url(#l14-hex-arrow)"/>
+      <text class="small" x="596" y="96">1. permission?</text>
+      <text class="small" x="596" y="112">2. connect(device)</text>
+      <text class="small" x="596" y="128">collected</text>
+      <path class="edge dashed" d="M600,196 L560,156" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge dashed" d="M520,288 L508,288 L508,176 L533,157" marker-end="url(#l14-hex-arrow)"/>
+      <path class="edge dashed" d="M400,262 L493,157" marker-end="url(#l14-hex-arrow)"/>
+    </svg>
+    <figcaption>Solid arrows are calls; dashed arrows into a port mean "implements" (each fake implements its own port). The numbers are the service's order. Lesson 13's diagram has the same shape: one more capability, the same hexagon.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound (port and adapter)</li>
+    <li data-part="outbound">Outbound (port and adapter)</li>
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+
+  <h2>4. The Android link: <code>connectGatt</code></h2>
+  <p>Android's guide: <code>connectGatt</code> takes "a Context object, autoConnect (a boolean indicating whether to automatically connect to the BLE device as soon as it becomes available), and a reference to a BluetoothGattCallback", and "returns a BluetoothGatt instance, which you can then use to conduct GATT client operations" (<a href="https://developer.android.com/develop/connectivity/bluetooth/ble/connect-gatt-server">Connect to a GATT server</a>). Same pattern as the scanner: a callback object, turned into a <code>Flow</code> by <code>callbackFlow</code>.</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleConnection.kt</figcaption>
+<pre><code><span class="elide">⋯  the class, its BluetoothAdapter, and @SuppressLint("MissingPermission"): as in AndroidBleScanner</span>
+<mark>    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = callbackFlow {</mark>
+        val adapter = adapter
+<mark>        if (adapter == null || !adapter.isEnabled) {</mark>
+            throw ConnectionException("Bluetooth is off. Turn it on, then connect again.")
+        }
+        // Called on a background thread. trySend and close are safe from any thread.
+<mark>        val callback = object : BluetoothGattCallback() {</mark>
+            private var linked = false
+
+<mark>            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {</mark>
+                when {
+<mark>                    status == BluetoothGatt.GATT_SUCCESS &amp;&amp; newState == BluetoothProfile.STATE_CONNECTED -&gt; {</mark>
+                        linked = true
+<mark>                        trySend(ConnectionState.Connected(device))</mark>
+                    }
+<mark>                    linked -&gt; close(ConnectionException("The link to ${device.name} was lost (Android status $status)."))</mark>
+<mark>                    else -&gt; close(ConnectionException("The connection failed (Android status $status)."))</mark>
+                }
+            }
+        }
+<span class="elide">⋯  connectGatt and awaitClose: below</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>onConnectionStateChange</code></strong> is the "Callback indicating when GATT client has connected/disconnected to/from a remote GATT server". Its <code>status</code> is "<code>GATT_SUCCESS</code> if the operation succeeds", and <code>newState</code> "Can be one of <code>STATE_DISCONNECTED</code> or <code>STATE_CONNECTED</code>" (<code>BluetoothGattCallback</code>, Android's source). Only one combination means the link is up. Every other call ends the flow with an error.</li>
+    <li><strong><code>linked</code> tells the two errors apart</strong>: a failure before the link was up ("The connection failed"), or a drop after ("was lost"). The status is in the message, as the scanner put its error code there; Lesson 16 deals with drops properly.</li>
+    <li><strong>A background thread.</strong> With no <code>Handler</code>, "callbacks will happen on an un-specified background thread" (<code>BluetoothDevice.connectGatt</code>'s documentation in Android's source). In our API 30 run (section 7), the callback's log lines came from a thread other than the main one. That's fine here: <code>callbackFlow</code>'s <code>ProducerScope</code> "can be used from any context", and the service collects on the ViewModel's thread.</li>
+    <li><strong>Bluetooth off</strong> is checked here, as the scanner checks for a missing <code>bluetoothLeScanner</code>. The port has no <code>isEnabled()</code>: the adapter is the one that knows.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleConnection.kt</figcaption>
+<pre><code>        send(ConnectionState.Connecting(device))
+        // The id is the address the scan reported. false: connect directly, now. Android 17 (API 37)
+        // deprecates this connectGatt for a new one that older phones don't have.
+<mark>        @Suppress("DEPRECATION")</mark>
+<mark>        val gatt: BluetoothGatt = adapter.getRemoteDevice(device.id)</mark>
+<mark>            .connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)</mark>
+            ?: throw ConnectionException("Android couldn't start the connection.")
+
+<mark>        awaitClose {</mark>
+            // Whatever ended the link, close the GATT client, or Android keeps it registered.
+<mark>            gatt.disconnect()</mark>
+<mark>            gatt.close()</mark>
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>getRemoteDevice(device.id)</code></strong>: the id is the address from the scan. "A <code>BluetoothDevice</code> will always be returned for a valid hardware address, even if this adapter has never seen that device" (<code>BluetoothAdapter</code>, Android's source). Android's guide connects the same way, from an address.</li>
+    <li><strong><code>autoConnect = false</code></strong>: "Whether to directly connect to the remote device (false) or to automatically connect as soon as the remote device becomes available (true)". The user just tapped Connect, so the app connects now.</li>
+    <li><strong><code>TRANSPORT_LE</code></strong> is the "preferred transport for GATT connections to remote dual-mode devices": a device that speaks both Bluetooth Classic and BLE is reached over BLE.</li>
+    <li><strong><code>@Suppress("DEPRECATION")</code></strong>: the course compiles against API 37, where every <code>Context</code>-taking <code>connectGatt</code> is <code>@Deprecated</code> in favour of <code>connectGatt(BluetoothGattConnectionSettings, Executor, BluetoothGattCallback)</code> (API 37's <code>android.jar</code> and its stub sources). That one doesn't exist on API 36 or below, and the app runs from API 26, so the old call stays, with a comment saying why.</li>
+    <li><strong><code>?: throw</code></strong>: Kotlin sees Java's return type as <code>BluetoothGatt!</code>, and in Android's source <code>connectGatt</code> returns <code>null</code> when it can't reach the system's GATT service. The explicit type and the elvis turn that into a message instead of a crash later.</li>
+    <li><strong><code>disconnect()</code> then <code>close()</code></strong>: <code>disconnect</code> "Disconnects an established connection, or cancels a connection attempt currently in progress", and for <code>close</code>, "Application should call this method as early as possible after it is done with this GATT client" (<code>BluetoothGatt</code>, Android's source). The guide's own words: "One important step when dealing with Bluetooth connections is to close the connection when you are finished with it." <code>awaitClose</code> runs on every way out: <code>disconnect()</code>, the caller's cancellation, the timeout and the errors above.</li>
+  </ol>
+
+  <h2>5. The iOS link, in Swift</h2>
+  <p>The same problem as Lesson 13: the port returns a Kotlin <code>Flow</code>, and Swift can't build one. So the same answer: a few lines of Kotlin in <code>iosMain</code> build the <code>Flow</code>, and the Swift class feeds it.</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/ConnectFlow.kt</figcaption>
+<pre><code><span class="elide">⋯  package, imports, and a comment: Swift can't build a Kotlin Flow, so it asks for one here</span>
+<mark>fun connectFlow(link: IosLink, device: Device): Flow&lt;ConnectionState&gt; = callbackFlow {</mark>
+<mark>    link.open(device, LinkFeed(this))</mark>
+<mark>    awaitClose { link.close() }</mark>
+}
+
+// What the Swift connection implements for connectFlow: open and close the real link.
+<mark>interface IosLink {</mark>
+    fun open(device: Device, feed: LinkFeed)
+    fun close()
+}
+
+// Where the Swift connection reports: each state of the link, or the failure that ends it.
+<mark>class LinkFeed internal constructor(private val scope: ProducerScope&lt;ConnectionState&gt;) {</mark>
+    fun changed(state: ConnectionState) {
+        scope.trySend(state)
+    }
+
+    fun failed(message: String) {
+        scope.close(ConnectionException(message))
+    }
+}</code></pre>
+  </figure>
+  <p><code>ScanFlow.kt</code> with the names changed: <code>open</code> and <code>close</code> instead of <code>startScan</code> and <code>stopScan</code>, and a feed that reports states instead of devices. Like <code>IosRadio</code>, <code>IosLink</code> is not a port: it's the seam between the two halves of one adapter. The Swift half:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">iosApp/iosApp/IosBleConnection.swift</figcaption>
+<pre><code><span class="elide">⋯  imports: CoreBluetooth, Shared</span>
+@MainActor
+<mark>final class IosBleConnection: NSObject, @preconcurrency BleConnection, @preconcurrency IosLink,</mark>
+    @preconcurrency CBCentralManagerDelegate {
+<span class="elide">⋯  private var manager: CBCentralManager?</span>
+<mark>    private var peripheral: CBPeripheral?</mark>
+<span class="elide">⋯  private var device: Device?, private var feed: LinkFeed?, and a comment: Swift asks Kotlin for the Flow</span>
+<mark>    func connect(device: Device) -&gt; SkieSwiftFlow&lt;ConnectionState&gt; {</mark>
+<mark>        connectFlow(link: self, device: device)</mark>
+    }
+
+    // IosLink: connectFlow calls these when the Flow is collected and when it is cancelled.
+    func open(device: Device, feed: LinkFeed) {
+        self.device = device
+        self.feed = feed
+        let manager = self.manager ?? makeManager()
+<span class="elide">⋯  a comment: a new manager learns the radio's state a moment later; centralManagerDidUpdateState then calls start</span>
+<mark>        if manager.state != .unknown &amp;&amp; manager.state != .resetting { start(on: manager) }</mark>
+    }
+
+    func close() {
+<mark>        if let peripheral, manager?.state == .poweredOn { manager?.cancelPeripheralConnection(peripheral) }</mark>
+        peripheral = nil
+<span class="elide">⋯  device = nil, feed = nil</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Its own <code>CBCentralManager</code></strong>, created the first time the app connects, after the service has checked the permission (Lesson 13's order rule). <code>makeManager()</code> is the scanner's, with <code>CBCentralManagerOptionShowPowerAlertKey: false</code>.</li>
+    <li><strong><code>open</code> may have to wait</strong>: a new manager's state is <code>unknown</code> until <code>centralManagerDidUpdateState</code>. Lesson 13's scanner parked a continuation for that; this class has a simpler choice, because <code>open</code> doesn't return anything: it remembers the device and feed, and the delegate callback calls <code>start</code> (next excerpt).</li>
+    <li><strong><code>cancelPeripheralConnection</code></strong> "Cancels an active or pending connection to <i>peripheral</i>. Note that this is non-blocking" (<code>CBCentralManager.h</code>). The adapter doesn't wait for the confirmation either: once <code>close</code> has run, it forgets the peripheral.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">iosApp/iosApp/IosBleConnection.swift</figcaption>
+<pre><code>    private func start(on manager: CBCentralManager) {
+        guard let device, let feed, peripheral == nil else { return }
+<mark>        guard manager.state == .poweredOn else { return end(with: message(for: manager.state)) }</mark>
+        // The scanner found the device with its own manager; this one asks for it by identifier.
+        guard let id = UUID(uuidString: device.id),
+<mark>              let found = manager.retrievePeripherals(withIdentifiers: [id]).first else {</mark>
+            return end(with: "This iPhone doesn't know \(device.name) any more. Scan again.")
+        }
+<mark>        peripheral = found</mark>
+        feed.changed(state: ConnectionStateConnecting(device: device))
+<mark>        manager.connect(found)</mark>
+    }
+
+    // Called on the main queue (queue: nil) when the link is up.
+<mark>    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {</mark>
+        guard peripheral === self.peripheral, let device else { return }
+<mark>        feed?.changed(state: ConnectionStateConnected(device: device))</mark>
+    }
+<span class="elide">⋯  didFailToConnect: end(with: "The connection failed: …")</span>
+    // error is nil when the app asked for the disconnection, in close(): nothing is waiting then.
+<mark>    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,</mark>
+                        error: Error?) {
+<mark>        guard peripheral === self.peripheral, let error, let device else { return }</mark>
+        end(with: "The link to \(device.name) was lost: \(error.localizedDescription)")
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>retrievePeripherals(withIdentifiers:)</code></strong> "Attempts to retrieve the <code>CBPeripheral</code> object(s) with the corresponding <i>identifiers</i>" (<code>CBCentralManager.h</code>). The id the scanner put in <code>Device</code> is the peripheral's <code>identifier</code> UUID (Lesson 13), so the connection doesn't need the scanner's objects. Whether a second manager in the same app gets the peripheral the first one discovered is something only a phone can show: it's on the device-check list.</li>
+    <li><strong><code>peripheral = found</code> keeps it alive.</strong> "Pending attempts are cancelled automatically upon deallocation of <i>peripheral</i>" (<code>CBCentralManager.h</code>, <code>connectPeripheral:options:</code>). Without the property, <code>found</code> would be a local constant, released when <code>start</code> returns, and the attempt would end before it began. This is Lesson 13's "a discovered peripheral must be retained" again, now with a connection at stake.</li>
+    <li><strong>Three delegate calls report the outcome</strong>: <code>didConnect</code> "when a connection initiated by <code>connectPeripheral:options:</code> has succeeded"; <code>didFailToConnect</code> when it "has failed to complete"; and <code>didDisconnectPeripheral</code>, where "If the disconnection was not initiated by <code>cancelPeripheralConnection</code>, the cause will be detailed in the <i>error</i> parameter" (all <code>CBCentralManager.h</code>). So a <code>nil</code> error means the app's own <code>close()</code>, and nothing is waiting for it.</li>
+    <li><strong><code>===</code></strong> compares object identity: a late callback about a peripheral this adapter has already let go of changes nothing.</li>
+    <li><strong><code>end(with:)</code></strong> takes the feed, calls <code>close()</code>, then <code>feed.failed(message:)</code>, which closes the Kotlin flow with a <code>ConnectionException</code>. Kotlin's <code>awaitClose</code> then calls <code>close()</code> a second time, which does nothing. In <code>centralManagerDidUpdateState</code>, the adapter either calls <code>start</code> (an <code>open</code> was waiting for the state) or, with a link open and the state below <code>poweredOn</code>, ends it with "Bluetooth was turned off.".</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · the Simulator has no radio to connect with</span>
+    As in Lesson 13, the iOS Simulator's manager reports <code>unsupported</code>, so Connect ends at once with "This phone has no Bluetooth LE radio." (<code>message(for:)</code>). That's the real adapter working. To see a connection succeed without a phone, bind <code>SimulatedBleScanner</code> and <code>SimulatedBleConnection</code> instead (section 8 and the unaided exercise).
+  </div>
+
+  <h2>6. The detail screen</h2>
+  <p>The ViewModel is the second inbound adapter, and its whole job is to decide where the connection's coroutine runs:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceDetailViewModel.kt</figcaption>
+<pre><code><mark>class DeviceDetailViewModel(private val session: DeviceSession) : ViewModel() {</mark>
+    private val _uiState = MutableStateFlow(DeviceDetailUiState(connection = session.connectionState.value))
+    val uiState: StateFlow&lt;DeviceDetailUiState&gt; = _uiState.asStateFlow()
+<span class="elide">⋯  connectJob; init collects session.connectionState into _uiState</span>
+    // The connection runs in viewModelScope, so it lasts as long as this ViewModel: through a
+    // rotation, and until the screen is gone for good, when clearing the ViewModel cancels it.
+<mark>    fun connect(device: Device) {</mark>
+        if (connectJob?.isActive == true) return
+<mark>        connectJob = viewModelScope.launch {</mark>
+            try {
+<mark>                session.connect(device)</mark>
+            } catch (e: ConnectionException) {
+<mark>                _uiState.update { it.copy(errorMessage = e.message) }</mark>
+            }
+        }
+    }
+
+<mark>    fun disconnect() {</mark>
+        session.disconnect()
+    }
+<span class="elide">⋯  errorShown(): errorMessage = null</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>DeviceDetailUiState</code></strong> has two fields: <code>connection</code> (the session's state) and <code>errorMessage</code>. The device itself isn't in it: the screen got it from the list.</li>
+    <li><strong>No <code>onCleared()</code> override.</strong> Clearing a ViewModel cancels <code>viewModelScope</code> (Lesson 08), that cancels <code>session.connect</code>, and the service's link and the adapter's <code>awaitClose</code> follow. The test <code>theConnectionEndsWhenTheScreenIsGoneForGood</code> checks it.</li>
+    <li><strong>Only <code>ConnectionException</code> is caught.</strong> A <code>CancellationException</code> from a cleared ViewModel must go on up, so the coroutine ends as cancelled.</li>
+  </ol>
+  <p>The detail screen needs the whole <code>Device</code>, not just its id: at m08 it looked the id up in <code>SampleDevices</code>, and a real device came out as "Unknown device" (Lesson 13's gotcha). Now the list hands over the device, and the screen shows a status line and one button, Connect or Disconnect, like Scan and Stop.</p>
+  <div class="tracks">
+  <div data-track="compose">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApp.kt</figcaption>
+<pre><code>// The selected device travels in the route: the detail screen needs all of it to connect.
+@Serializable
+<mark>data class DeviceDetail(val id: String, val name: String, val rssi: Int)</mark>
+<span class="elide">⋯  in the NavHost:</span>
+                    onDeviceClick = { device -&gt;
+<mark>                        navController.navigate(DeviceDetail(device.id, device.name, device.rssi))</mark>
+                    },
+<span class="elide">⋯</span>
+            composable&lt;DeviceDetail&gt; { entry -&gt;
+                val route: DeviceDetail = entry.toRoute()
+                DeviceDetailScreen(
+<mark>                    device = Device(id = route.id, name = route.name, rssi = route.rssi),</mark>
+                    onBack = { navController.popBackStack() },
+                )
+            }</code></pre>
+  </figure>
+  <p>The route copies the device's three fields rather than holding a <code>Device</code>: a route class is <code>@Serializable</code>, and the app core doesn't depend on kotlinx.serialization.</p>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceDetailScreen.kt</figcaption>
+<pre><code>@Composable
+fun DeviceDetailScreen(
+    device: Device,
+    onBack: () -&gt; Unit,
+<mark>    viewModel: DeviceDetailViewModel = koinViewModel(),</mark>
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    DeviceDetailContent(
+        device = device,
+        connection = state.connection,
+<mark>        onConnect = { viewModel.connect(device) },</mark>
+        onDisconnect = viewModel::disconnect,
+        onBack = onBack,
+    )
+<span class="elide">⋯  state.errorMessage: an AlertDialog "Connection failed", as on the list</span>
+}
+<span class="elide">⋯  in DeviceDetailContent, under the device's name, ID and signal:</span>
+        val disconnected = connection is ConnectionState.Disconnected
+        Button(
+<mark>            onClick = if (disconnected) onConnect else onDisconnect,</mark>
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (disconnected) "Connect" else "Disconnect")
+        }</code></pre>
+  </figure>
+  <p><code>koinViewModel()</code> inside a <code>composable&lt;DeviceDetail&gt;</code> destination gets a ViewModel scoped to that back stack entry, as the list's is (Lesson 11). <code>ConnectionStatus</code> shows "Status: not connected", "Status: connecting…" with a small progress indicator, or "Status: connected".</p>
+  </div>
+  <div data-track="xml">
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</figcaption>
+<pre><code><span class="elide">⋯  in the adapter's click handler, from the list itself:</span>
+            // The selected device travels in the arguments: the detail screen needs all of it.
+            val args = Bundle().apply {
+                putString("deviceId", device.id)
+<mark>                putString("deviceName", device.name)</mark>
+<mark>                putInt("deviceRssi", device.rssi)</mark>
+            }
+            nav.navigate(R.id.toDetail, args)</code></pre>
+  </figure>
+  <p>The navigation graph declares the two new arguments under <code>deviceDetail</code>: <code>deviceName</code> as a <code>string</code> and <code>deviceRssi</code> as an <code>integer</code>.</p>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceDetailFragment.kt</figcaption>
+<pre><code><mark>    private val viewModel: DeviceDetailViewModel by viewModel()</mark>
+<span class="elide">⋯  in onCreateView, after building device from requireArguments():</span>
+        // One button: Connect while disconnected, Disconnect while connecting or connected.
+        b.connectButton.setOnClickListener {
+<mark>            if (viewModel.uiState.value.connection is ConnectionState.Disconnected) {</mark>
+<mark>                viewModel.connect(device)</mark>
+            } else {
+                viewModel.disconnect()
+            }
+        }
+<span class="elide">⋯  onViewCreated: repeatOnLifecycle(STARTED) collects uiState into render(), as on the list</span>
+<span class="elide">⋯  in render(), after the ProgressBar shows only while connecting:</span>
+<mark>        b.statusText.text = when (connection) {</mark>
+            ConnectionState.Disconnected -&gt; "Status: not connected"
+            is ConnectionState.Connecting -&gt; "Status: connecting…"
+            is ConnectionState.Connected -&gt; "Status: connected"
+        }
+<span class="elide">⋯  the status colour</span>
+<mark>        b.connectButton.text = if (connection is ConnectionState.Disconnected) "Connect" else "Disconnect"</mark></code></pre>
+  </figure>
+  <p><code>by viewModel()</code> scopes the ViewModel to the Fragment: it survives rotation and is cleared when the Fragment leaves the back stack for good (Lesson 11). The layout gains a row with a <code>ProgressBar</code> and <code>statusText</code>, and <code>connectButton</code>, above Back.</p>
+  </div>
+  </div>
+  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>Compose's route is a <code>@Serializable</code> class with the three fields; the XML graph declares them as arguments and the Fragment reads them from a <code>Bundle</code>. Either way the device crosses as plain values, and the screen rebuilds the <code>Device</code>. The ViewModel, its scope and what clears it are the same.</p>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/ContentView.swift</figcaption>
+<pre><code>                .navigationDestination(for: DeviceRoute.self) { route in
+<mark>                    DeviceDetailView(device: route.device)</mark>
+                }
+<span class="elide">⋯</span>
+// The selected device travels in the route: the detail screen needs all of it to connect.
+// A Kotlin class is an NSObject in Swift, so Device is Hashable through isEqual and hash.
+<mark>struct DeviceRoute: Hashable {</mark>
+<mark>    let device: Device</mark>
+}</code></pre>
+  </figure>
+  <p>In <code>Shared.h</code>, <code>SharedDevice</code> derives from <code>SharedBase : NSObject</code> and declares <code>isEqual:</code> and <code>hash</code>, the Kotlin data class's <code>equals</code> and <code>hashCode</code>. <code>NSObject</code> is <code>Hashable</code> in Swift through those two, so the struct gets <code>Hashable</code> for free. The list's <code>NavigationLink</code> now passes <code>DeviceRoute(device: device)</code>.</p>
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceDetailView.swift</figcaption>
+<pre><code>struct DeviceDetailView: View {
+    let device: Device
+<mark>    @State private var owner = ViewModelOwner()</mark>
+    @State private var state: DeviceDetailUiState?
+
+    var body: some View {
+<mark>        let viewModel: DeviceDetailViewModel = owner.viewModel()</mark>
+        let state = self.state ?? viewModel.uiState.value
+        DeviceDetailContent(
+            device: device,
+            connection: state.connection,
+<mark>            onConnect: { viewModel.connect(device: device) },</mark>
+            onDisconnect: { viewModel.disconnect() }
+        )
+<span class="elide">⋯  .alert("Connection failed", …) and .task { for await … in viewModel.uiState }, as on the list</span>
+    }
+}
+<span class="elide">⋯  in DeviceDetailContent:</span>
+            Button(action: disconnected ? onConnect : onDisconnect) {
+<mark>                Text(disconnected ? "Connect" : "Disconnect")</mark>
+<span class="elide">⋯  ConnectionStatus: switch onEnum(of: connection), one case per state</span></code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceListViewController.swift</figcaption>
+<pre><code>    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+<mark>        guard let deviceId = dataSource.itemIdentifier(for: indexPath), let device = devicesById[deviceId] else { return }</mark>
+        // The detail screen gets the whole device: it needs all of it to connect.
+<mark>        navigationController?.pushViewController(DeviceDetailViewController(device: device), animated: true)</mark>
+    }</code></pre>
+  </figure>
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/DeviceDetailViewController.swift</figcaption>
+<pre><code>final class DeviceDetailViewController: UIViewController {
+    private let device: Device
+<span class="elide">⋯  a comment on the owner's lifetime</span>
+<mark>    private let owner = ViewModelOwner()</mark>
+<mark>    private lazy var viewModel: DeviceDetailViewModel = owner.viewModel()</mark>
+    private var observation: Task&lt;Void, Never&gt;?
+<span class="elide">⋯  in viewDidLoad, the button's action:</span>
+<mark>            if viewModel.uiState.value.connection is ConnectionStateDisconnected {</mark>
+                viewModel.connect(device: device)
+            } else {
+                viewModel.disconnect()
+            }
+<span class="elide">⋯</span>
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android. Leaving the
+    // screen stops the collection, not the connection.
+<span class="elide">⋯  viewWillAppear: a Task collects uiState into render(_:)</span>
+<mark>    override func viewDidDisappear(_ animated: Bool) {</mark>
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }</code></pre>
+  </figure>
+  <p><code>render(_:)</code> switches on <code>onEnum(of: state.connection)</code> for the status text, runs the spinner while connecting, and sets the button's title. The button's action holds <code>[weak self]</code>, so the controller can be deallocated when it's popped.</p>
+  </div>
+  </div>
+  <p data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>SwiftUI's route carries the <code>Device</code> itself, because a route only has to be <code>Hashable</code>. UIKit passes it to the controller's initialiser. In both, the <code>ViewModelOwner</code> lives exactly as long as the screen (the view's <code>@State</code>, the controller's property), so popping the screen clears the ViewModel.</p>
+
+  <h2>7. The trap: a connection kept in something that goes away</h2>
+  <p>A BLE connection lives for seconds or minutes. The objects of a screen often live for less. Lesson 03 warned that rotation destroys the Activity, and that "a BLE connection object held in the Activity gets dropped mid-connection while the radio link may still be open". We ran exactly that on the API 30 emulator, with a throwaway screen that kept its <code>BluetoothGatt</code> in Compose's <code>remember</code> (state of the composition, so of the Activity) and called <code>connectGatt</code> on a tap:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Step</th><th>What logcat and the screen showed</th></tr>
+    <tr><td>Tap Connect</td><td><code>connect() - device: BE:AC:10:00:00:01, auto: false</code>, <code>registerApp()</code>, client 6 registered. The screen holds the <code>BluetoothGatt</code></td></tr>
+    <tr><td>Rotate</td><td>the new Activity's screen holds nothing: its Close button closed <code>null</code></td></tr>
+    <tr><td>Tap Connect again</td><td>a second <code>registerApp()</code>: client 7, while client 6 was never closed (no <code>close()</code> or <code>unregisterApp()</code> for it in the log)</td></tr>
+    <tr><td>About 30 s after the first attempt</td><td><code>onClientConnectionState() - status=133</code> for both clients, and the first one's callback, an object from the destroyed screen, still ran and logged</td></tr>
+  </table>
+  </div>
+  <p>The beacon never answered, so this was only an attempt, but the shape is the same for a live link: after a rotation, nothing in the app can reach the old <code>BluetoothGatt</code> to close it, Android keeps its client registered, and its callback keeps a dead screen's objects reachable. The fix is not "remember harder". It's to put each thing where its lifetime fits:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 300" role="img" aria-labelledby="l14-life-title">
+      <title id="l14-life-title">Lifetimes on Android while connected, over time. Top lane, the detail screen: Activity number one is destroyed by a rotation and Activity number two takes its place; later the user presses Back. Second lane, DeviceDetailViewModel: one instance from the first Connect until Back clears it. Third lane, the connection's coroutine, launched in viewModelScope on Connect: it runs through the rotation and is cancelled when the ViewModel is cleared, which closes the GATT client in the adapter's awaitClose. Bottom lane, the session service and the adapter, Koin singles that live as long as the process. A dashed line marks the trap: a BluetoothGatt kept in Activity number one is lost at the rotation while its link stays open.</title>
+      <defs><marker id="l14-life-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <line class="axis" x1="150" y1="270" x2="740" y2="270"/>
+      <text class="small muted" x="150" y="290">Connect</text>
+      <text class="small muted" x="380" y="290">rotation</text>
+      <text class="small muted" x="640" y="290">Back</text>
+      <text class="small" x="10" y="44">screen</text>
+      <g data-part="android">
+        <rect class="box" x="150" y="26" width="240" height="30" rx="6"/>
+        <text class="small" x="160" y="46">Activity #1</text>
+        <rect class="box" x="400" y="26" width="250" height="30" rx="6"/>
+        <text class="small" x="410" y="46">Activity #2</text>
+      </g>
+      <text class="small" x="10" y="94">ViewModel</text>
+      <g data-part="inbound">
+        <rect class="box" x="150" y="76" width="500" height="30" rx="6"/>
+        <text class="small" x="160" y="96">DeviceDetailViewModel: survives the rotation, cleared at Back</text>
+      </g>
+      <text class="small" x="10" y="144">connection</text>
+      <g data-part="inbound">
+        <rect class="box" x="150" y="126" width="500" height="30" rx="6"/>
+        <text class="small" x="160" y="146">session.connect in viewModelScope: cancelled at Back → awaitClose → close()</text>
+      </g>
+      <text class="small" x="10" y="194">process</text>
+      <g data-part="core">
+        <rect class="box" x="150" y="176" width="590" height="30" rx="6"/>
+        <text class="small" x="160" y="196">SessionService, AndroidBleConnection: Koin singles, as long as the app runs</text>
+      </g>
+      <text class="small" x="10" y="238">the trap</text>
+      <path class="edge dashed" d="M150,234 L390,234" marker-end="url(#l14-life-arrow)"/>
+      <text class="small muted" x="400" y="238">gatt kept in Activity #1: lost here, link still open</text>
+    </svg>
+    <figcaption>Each piece lives where its lifetime fits: the views in the screen, the connection's coroutine in the ViewModel, the radio's objects in the adapter.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="android">Android (the screen)</li>
+    <li data-part="inbound">Inbound adapter (the ViewModel and its scope)</li>
+    <li data-part="core">App core and adapters, process-wide</li>
+  </ul>
+  <ol class="walk">
+    <li><strong>The radio's objects live in the adapter.</strong> No screen ever sees a <code>BluetoothGatt</code> or a <code>CBPeripheral</code>; the adapter and the session service are Koin singles. Lesson 03's map put the connection there: "Holding a BLE connection belongs in an Android BLE adapter, an outbound adapter behind an outbound port, outside the Activity".</li>
+    <li><strong>How long the connection lasts is decided by a scope.</strong> The ViewModel runs <code>session.connect</code> in <code>viewModelScope</code>. A rotation doesn't clear the ViewModel (Lesson 08), so the connection carries on. When the screen is gone for good, the ViewModel is cleared, the scope is cancelled, and <code>awaitClose</code> closes the link. Nothing has to remember to call <code>close()</code>.</li>
+    <li><strong>We ran it on the API 30 emulator</strong>: Connect, rotate during the attempt, rotate back: one <code>registerApp()</code> only, and the screen still said "connecting…". Connect, then Back three seconds later: <code>cancelOpen()</code>, <code>close()</code> and <code>unregisterApp()</code> at once.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · the screen's own scope is too short (Android)</span>
+    The scope matters as much as where the objects live. If the screen launched <code>session.connect</code> in Compose's <code>rememberCoroutineScope()</code> instead of the ViewModel's, a rotation would cancel it. Lesson 06 said why: that scope is "tied to this composable's place on screen. It's cancelled when the composable leaves (rotation, navigation)". We tried it with the simulated adapters on the API 36 emulator: connected, rotated, and the screen said "Status: not connected". The app had hung up on its own. The unaided exercise has you see it.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · view teardown on iOS</span>
+    iOS doesn't rebuild a screen on rotation, but it has its own ways to lose a connection. <strong>An unretained peripheral:</strong> CoreBluetooth cancels a pending connection "upon deallocation of <i>peripheral</i>", so a <code>CBPeripheral</code> held only by a local constant, or by a view that goes away, ends the attempt; section 5 keeps it in the adapter. <strong>Disappear is not "gone":</strong> <code>onDisappear</code> and <code>viewDidDisappear</code> also run when another screen is pushed on top. Lesson 04's logs show it: pushing the detail screen logged <code>ContentView onDisappear</code> on SwiftUI and <code>ViewController viewDidDisappear</code> on UIKit. Disconnecting there would cut the link whenever a later lesson shows something on top of the detail screen. Here, the <code>ViewModelOwner</code> clears the ViewModel only when it is deinitialised: when the screen leaves the navigation stack. <code>viewDidDisappear</code> only stops the UIKit screen's collection of <code>uiState</code>.
+  </div>
+
+  <h2>8. Wiring: each platform passes its connection</h2>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</figcaption>
+<pre><code>internal val appModule = module {
+    single&lt;DeviceScanning&gt; { ScanningService(get(), get()) }
+    // One session for the whole app: every screen sees the same connection state.
+<mark>    single&lt;DeviceSession&gt; { SessionService(get(), get()) }</mark>
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    viewModelOf(::DeviceListViewModel)
+<mark>    viewModelOf(::DeviceDetailViewModel)</mark>
+}
+<span class="elide">⋯  platformModule(permissionChecker, bleScanner, bleConnection): one single { } per adapter</span>
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+<mark>fun initKoin(permissionChecker: PermissionChecker, bleScanner: BleScanner, bleConnection: BleConnection) {</mark>
+    startKoin {
+        modules(appModule, platformModule(permissionChecker, bleScanner, bleConnection))
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>single</code> for the session</strong>: its <code>connectionState</code> is the app's one truth about the connection, and its one-device rule only works if there's one service. A <code>factory</code> would give each screen its own state.</li>
+    <li><strong>The connection adapter goes through <code>platformModule</code></strong>, like the scanner and for the same reasons: Android's needs a <code>Context</code>, and iOS's is a Swift object.</li>
+  </ol>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</figcaption>
+<pre><code>        permissionChecker = AndroidPermissionChecker(this)
+<mark>        initKoin(permissionChecker, AndroidBleScanner(this), AndroidBleConnection(this))</mark></code></pre>
+  </figure>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/iOSApp.swift</figcaption>
+<pre><code>        AppModuleKt.doInitKoin(
+            permissionChecker: IosPermissionChecker(),
+            bleScanner: IosBleScanner(),
+<mark>            bleConnection: IosBleConnection()</mark>
+        )</code></pre>
+  </figure>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/AppDelegate.swift</figcaption>
+<pre><code>        AppModuleKt.doInitKoin(
+            permissionChecker: IosPermissionChecker(),
+            bleScanner: IosBleScanner(),
+<mark>            bleConnection: IosBleConnection()</mark>
+        )
+        return true</code></pre>
+  </figure>
+  </div>
+  </div>
+  <p><code>SimulatedBleConnection</code>, in <code>commonMain</code> next to <code>SimulatedBleScanner</code>, is bound nowhere. It connects each sample device after one second and never answers for the Smart Scale. Passing both simulated adapters to <code>initKoin</code> is how you watch a connection on the emulator or the Simulator, where no real device can be reached.</p>
+
+  <h2>9. Tests</h2>
+  <p>The fake radio for connections lets the test decide when the device answers and when the link fails:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeBleConnection.kt</figcaption>
+<pre><code><mark>class FakeBleConnection : BleConnection {</mark>
+    private val events = Channel&lt;Event&gt;(Channel.UNLIMITED)
+<span class="elide">⋯  attempts and isLinked, both with private set</span>
+    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = flow {
+        attempts++
+<mark>        isLinked = true</mark>
+        try {
+            emit(ConnectionState.Connecting(device))
+            for (event in events) {
+                when (event) {
+<mark>                    Event.Answer -&gt; emit(ConnectionState.Connected(device))</mark>
+<mark>                    is Event.Fail -&gt; throw ConnectionException(event.message)</mark>
+                }
+            }
+        } finally {
+<mark>            isLinked = false</mark>
+        }
+    }
+<span class="elide">⋯  answer() and fail(message) send an event</span></code></pre>
+  </figure>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/core/SessionServiceTest.kt</figcaption>
+<pre><code>    @Test
+<mark>    fun disconnectEndsTheLinkAndConnectReturns() = runTest {</mark>
+        val call = async { session.connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+        assertTrue(radio.isLinked)
+
+<mark>        session.disconnect()</mark>
+<mark>        call.await() // returns normally: the app asked for it</mark>
+
+<mark>        assertFalse(radio.isLinked)</mark>
+        assertEquals(ConnectionState.Disconnected, session.connectionState.value)
+    }
+<span class="elide">⋯  cancellingTheCallerAlsoDisconnects, aFailedLinkReachesTheCaller</span>
+    @Test
+<mark>    fun givesUpOnADeviceThatDoesNotAnswer() = runTest {</mark>
+        val error = assertFailsWith&lt;ConnectionException&gt; { session.connect(obd) }
+
+        assertEquals("OBD-II Adapter didn't answer within 10 seconds.", error.message)
+<mark>        assertEquals(SessionService.CONNECT_TIMEOUT.inWholeMilliseconds, testScheduler.currentTime)</mark>
+        assertFalse(radio.isLinked)
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>isLinked</code></strong> becomes <code>false</code> in the fake's <code>finally</code>, which runs when the service's collection ends: the same moment a real adapter's <code>awaitClose</code> closes the radio. Every test that ends a connection checks it.</li>
+    <li><strong>The timeout costs no real time</strong>: <code>runTest</code> skips <code>delay</code>, and <code>currentTime</code> proves the attempt ended at exactly 10 virtual seconds (Lesson 11). <code>theTimeoutStopsOnceConnected</code> checks the other side: connected, then a virtual minute later still connected. We broke it on purpose, removing <code>giveUp.cancel()</code>, and that test failed.</li>
+    <li><strong>The other six</strong>: every state in order (<code>reportsEachStateOfTheConnection</code>, with Turbine), cancelling the caller disconnects, a radio failure reaches the caller, no permission means no attempt, and one device at a time.</li>
+  </ol>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceDetailViewModelTest.kt</figcaption>
+<pre><code>    private val session = TestDeviceSession()
+<mark>    private val store = ViewModelStore() // plays the screen that owns the ViewModel</mark>
+<span class="elide">⋯  setUp: setMain, then ViewModelProvider.create(store, factory)[DeviceDetailViewModel::class]</span>
+    @Test
+<mark>    fun theConnectionEndsWhenTheScreenIsGoneForGood() = runTest {</mark>
+        viewModel.connect(obd)
+        testScheduler.runCurrent()
+        assertTrue(session.isHolding)
+
+<mark>        store.clear() // the screen left the back stack: the ViewModel is cleared</mark>
+        testScheduler.runCurrent()
+
+<mark>        assertFalse(session.isHolding)</mark>
+    }</code></pre>
+  </figure>
+  <p><code>TestDeviceSession</code> is a test implementation of the inbound port: its <code>connect</code> holds until cancelled, and <code>isHolding</code> says whether it still is. The ViewModel comes from a real <code>ViewModelStore</code> through <code>ViewModelProvider.create</code> and a <code>viewModelFactory { initializer { … } }</code>, so <code>store.clear()</code> does what leaving the screen does on both platforms. Four more ViewModel tests: it shows the session's state, a failure becomes a message until it's shown, a second Connect while one is held is ignored, and Disconnect reaches the session.</p>
+
+  <h2>10. What actually happens</h2>
+  <p>We built m09 on all four tracks (Kotlin 2.4.20, SKIE 0.10.15, Xcode 26.2). <code>allTests</code> passed 33 of 33 on the JVM and 33 of 33 on the iOS simulator, with no compiler warning from our code. With the real adapters there is nothing to connect to on the emulator and the Simulator, so most runs swap in simulated ones:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Run</th><th>What we saw</th></tr>
+    <tr><td>Android API 30 emulator, real adapters, Compose: tap a <code>gDevice-beacon</code> row</td><td>the beacon's name, "ID: BE:AC:10:00:00:01" and its signal; "Status: not connected"; Connect</td></tr>
+    <tr><td>the same, Connect</td><td>"Status: connecting…" and Disconnect; after 10 s "Connection failed: gDevice-beacon didn't answer within 10 seconds."; logcat: <code>connect() … auto: false</code>, then <code>cancelOpen()</code>, <code>close()</code>, <code>unregisterApp()</code></td></tr>
+    <tr><td>the same, Connect, Back 3 s later</td><td><code>cancelOpen()</code>, <code>close()</code>, <code>unregisterApp()</code> at once</td></tr>
+    <tr><td>Android API 36 emulator, <code>SimulatedBleScanner</code> with the real <code>AndroidBleConnection</code>, Compose</td><td>Bluetooth off, Connect: "Bluetooth is off. Turn it on, then connect again." Bluetooth on, Connect: the 10-second message, and the same four logcat lines</td></tr>
+    <tr><td>API 36, both simulated adapters, Compose and XML</td><td>Connect: "Status: connected" within 2 s; rotate: still connected; Disconnect: not connected; Connect, Back, open Heart Rate Monitor, Connect: connected, no "Another connection is open"; Smart Scale: "connecting…", then "Smart Scale didn't answer within 10 seconds."</td></tr>
+    <tr><td>iOS 26.2 Simulator, <code>SimulatedBleScanner</code> with the real <code>IosBleConnection</code>, SwiftUI and UIKit</td><td>Connect: "Connection failed: This phone has no Bluetooth LE radio."; after OK, "Status: not connected" and Connect again</td></tr>
+    <tr><td>Simulator, both simulated adapters, SwiftUI and UIKit</td><td>the same as the API 36 run, landscape included</td></tr>
+  </table>
+  </div>
+  <p>The Back-then-another-device run is the important one: the second device connects only because leaving the first screen cleared its ViewModel and ended its connection. The real goal, a connection to LightBlue, needs your phones; the agent brief lists those runs as device checks. <strong>m09 is a natural stop</strong> when <code>allTests</code> is green on both platforms, the runs above behave the same for you, and at least one of your phones connects to LightBlue. Commit it. Lesson 15 discovers the device's services and reads a value.</p>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to trace a tap on Back while connected, on your Android track, down to <code>gatt.close()</code>: which object is cleared, which scope is cancelled, which coroutine that cancels, and which block runs. Then the same on iOS, from the screen leaving the navigation stack to <code>cancelPeripheralConnection</code>.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>DeviceSession.connect(device)</code> suspend for as long as the connection lasts, instead of returning once the link is up?</p>
+    <div class="opts">
+      <button class="opt">so the screen can show a spinner</button>
+      <button class="opt" data-correct>so the caller's coroutine sets the connection's lifetime: cancelling it disconnects, and the link can't outlive whoever asked for it</button>
+      <button class="opt">because Android's <code>connectGatt</code> blocks until it's connected</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The connection is the call. In the app the call runs in <code>viewModelScope</code>, so the connection lasts as long as the detail screen's ViewModel, and clearing it closes the link through the adapter's <code>awaitClose</code>.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">A screen kept its <code>BluetoothGatt</code> in Compose state and connected from it. The user rotates the phone. What happens to that connection?</p>
+    <div class="opts">
+      <button class="opt" data-correct>the new screen can't reach it, so nothing closes it: Android keeps the old GATT client registered, and its callback keeps running</button>
+      <button class="opt">Android closes it with the old Activity</button>
+      <button class="opt"><code>remember</code> carries it over to the new Activity</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Our API 30 run: after the rotation, the new screen held nothing, a second Connect registered a second client, and the first one's callback still logged status 133 thirty seconds later. Only <code>close()</code> unregisters a client.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>IosBleConnection</code> keep the <code>CBPeripheral</code> in a property?</p>
+    <div class="opts">
+      <button class="opt">so the scanner can find it again</button>
+      <button class="opt">because <code>retrievePeripherals</code> can only be called once</button>
+      <button class="opt" data-correct>CoreBluetooth cancels a pending connection when its peripheral is deallocated</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>CBCentralManager.h</code>: "Pending attempts are cancelled automatically upon deallocation of <i>peripheral</i>". A local constant would be released when <code>start</code> returns.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Where does the 10-second connection timeout live, and why there?</p>
+    <div class="opts">
+      <button class="opt">in the iOS adapter, because only iOS needs it</button>
+      <button class="opt" data-correct>in <code>SessionService</code>: it's the app's rule, the same on both platforms, and iOS attempts never time out on their own</button>
+      <button class="opt">in the ViewModel, like the scan timeout</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Apple: "Connection attempts never time out". The scan timeout is a screen's choice (how long this screen scans); "a device that doesn't answer has failed" is a rule for every caller, tested once with virtual time.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">In <code>centralManager(_:didDisconnectPeripheral:error:)</code>, <code>error</code> is <code>nil</code>. What happened?</p>
+    <div class="opts">
+      <button class="opt" data-correct>the app asked for it with <code>cancelPeripheralConnection</code></button>
+      <button class="opt">the peripheral went out of range</button>
+      <button class="opt">Bluetooth was switched off</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">"If the disconnection was not initiated by <code>cancelPeripheralConnection</code>, the cause will be detailed in the <i>error</i> parameter." So the adapter ends the Flow with a message only when there is an error.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">On iOS, what clears <code>DeviceDetailViewModel</code>, and so ends the connection? (Lesson 08)</p>
+    <div class="opts">
+      <button class="opt"><code>onDisappear</code>, when the detail screen is covered</button>
+      <button class="opt" data-correct>the <code>ViewModelOwner</code>'s <code>deinit</code>, which calls <code>store.clear()</code> when the screen leaves the navigation stack</button>
+      <button class="opt">Koin, when the app goes to the background</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The owner lives in the view's <code>@State</code> (SwiftUI) or the controller's property (UIKit). Clearing the store cancels <code>viewModelScope</code>, as on Android.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why is <code>DeviceSession</code> bound with <code>single</code> rather than <code>factory</code>? (Lesson 11)</p>
+    <div class="opts">
+      <button class="opt"><code>factory</code> can't build a class with two parameters</button>
+      <button class="opt" data-correct>every screen must see the same connection state, and the one-device rule needs one service</button>
+      <button class="opt"><code>single</code> makes it a ViewModel</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A <code>factory</code> builds a new instance for each request: each screen would get its own state, and two services could each connect a device.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m09 build)</span>
+    <ol>
+      <li><strong>Predict, then watch.</strong> Pass <code>SimulatedBleScanner()</code> and <code>SimulatedBleConnection()</code> to <code>initKoin</code> on Android (or <code>doInitKoin</code> on iOS). Write down what the status line will say, then: Connect; rotate (Android) or turn the Simulator to landscape; Disconnect; Connect, Back, Connect on another device; the Smart Scale. Then put the real <code>AndroidBleConnection(this)</code> back, keep the simulated scanner, run <code>adb logcat -s BluetoothGatt</code>, and Connect: which lines appear, and when?</li>
+      <li><strong>Write a test.</strong> Add <code>aDroppedLinkReachesTheCaller</code> to <code>SessionServiceTest</code>: connected first, then <code>radio.fail("The link to OBD-II Adapter was lost (Android status 8).")</code>; the call throws that message, the state is Disconnected and <code>isLinked</code> is false. Then delete the line in <code>finally</code> that sets Disconnected, predict which tests fail, and run them on both platforms.</li>
+      <li><strong>Break the lifetime on purpose.</strong> With both simulated adapters, make the screen hold the connection instead of the ViewModel. Compose: in <code>DeviceDetailScreen</code>, take <code>val session: DeviceSession = koinInject()</code> and <code>val scope = rememberCoroutineScope()</code>, and pass <code>onConnect = { scope.launch { session.connect(device) } }</code>. XML: in <code>DeviceDetailFragment</code>, take <code>private val session: DeviceSession by inject()</code> and connect in <code>viewLifecycleOwner.lifecycleScope.launch { … }</code>. Predict what the status says after a rotation, then try it. Revert.</li>
+      <li><strong>On your phones</strong>, with LightBlue advertising: connect to your Mac's row, then uncheck the virtual device in LightBlue. What does each phone say, and how long does it take?</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run the tests and both apps yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/14-ble-connect.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/14-ble-connect.html" -o .course/lesson-14.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/ble-cheatsheet.html" -o .course/ref-ble-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/architecture-di-testing-cheatsheet.html" -o .course/ref-architecture-di-testing-cheatsheet.html
+Lessons 08, 11 and 13, which this lesson builds on; skipped if they're already there:
+  [ -f .course/lesson-08.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/08-shared-viewmodels.html" -o .course/lesson-08.html
+  [ -f .course/lesson-11.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/11-testing-and-koin.html" -o .course/lesson-11.html
+  [ -f .course/lesson-13.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/13-ble-concepts-and-scan.html" -o .course/lesson-13.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" for my tracks exactly,
+except where the brief below says otherwise.
+
+Lesson 14 (BLE: connect): build milestone m09, a connection to the selected device through
+the DeviceSession inbound port and SessionService, over a BleConnection outbound port
+(Android connectGatt + callbackFlow, iOS Swift CBCentralManager.connect + ConnectFlow.kt),
+with the connection state on a new detail screen, on top of m08.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m08 project in demo/ (Lesson 13). Use exactly the file contents shown in the
+lesson's "Full files" section for my tracks, including package lines, imports and comments. All
+paths are relative to demo/. Touch no file that isn't listed here.
+
+1. Shared code, all tracks. Under shared/src/commonMain/kotlin/com/example/devicemonitor/:
+     add: core/ConnectionState.kt, core/ConnectionException.kt, core/SessionService.kt,
+       core/inbound/DeviceSession.kt, core/outbound/BleConnection.kt,
+       adapter/inbound/DeviceDetailUiState.kt, adapter/inbound/DeviceDetailViewModel.kt,
+       adapter/outbound/SimulatedBleConnection.kt
+     replaced: adapter/outbound/SampleDevices.kt, di/AppModule.kt
+     add shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleConnection.kt
+     add shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/ConnectFlow.kt
+     under shared/src/commonTest/kotlin/com/example/devicemonitor/:
+       add: doubles/FakeBleConnection.kt, doubles/TestDeviceSession.kt,
+         core/SessionServiceTest.kt, adapter/inbound/DeviceDetailViewModelTest.kt
+       replaced: di/AppModuleTest.kt
+   shared/build.gradle.kts and every other file in shared/ stay as in m08.
+
+2. Android, both tracks: androidApp/src/main/java/com/example/devicemonitor/android/
+   DeviceMonitorApplication.kt: replaced. androidApp/build.gradle.kts and the manifest stay as in m08.
+     Compose: DeviceMonitorApp.kt and DeviceDetailScreen.kt: replaced (DeviceListScreen.kt stays).
+     XML: DeviceListFragment.kt, DeviceDetailFragment.kt, res/layout/fragment_device_detail.xml and
+       res/navigation/nav_graph.xml: replaced.
+   iOS, both tracks: add iosApp/iosApp/IosBleConnection.swift, then run `xcodegen generate` in
+   iosApp/ so the Xcode project includes it. project.yml stays as in m08. Do NOT edit
+   Info.plist or the .xcodeproj by hand.
+     SwiftUI: iOSApp.swift, ContentView.swift, DeviceListView.swift and DeviceDetailView.swift: replaced.
+     UIKit: AppDelegate.swift, DeviceListViewController.swift and DeviceDetailViewController.swift:
+       replaced.
+   Every other Android and iOS file stays as in m08.
+
+3. Test, then build both apps. From demo/:
+     ./gradlew :shared:allTests
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Android: run on an emulator with Android 12 or newer (API 31+), and grant the permissions:
+     adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+     adb shell pm grant com.example.devicemonitor android.permission.BLUETOOTH_SCAN
+     adb shell pm grant com.example.devicemonitor android.permission.BLUETOOTH_CONNECT
+     adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`, then
+     `xcrun simctl launch booted com.example.devicemonitor`.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- ./gradlew :shared:allTests runs BOTH testAndroidHostTest and iosSimulatorArm64Test (show me
+  the task lines), and all 33 tests pass on each: 8 in SessionServiceTest, 5 in
+  DeviceDetailViewModelTest, 8 in ScanningServiceTest, 7 in DeviceListViewModelTest, 4 in
+  PermissionServiceTest, 1 in AppModuleTest. Show the counts from the XML files in
+  shared/build/test-results/.
+- All builds succeed with no compiler warnings (w: / warning:) from our own Kotlin or Swift
+  code, test code included (never use -q: it hides w: lines; read the output). Not from our
+  code, and expected: the same lines as in Lesson 13's brief (SKIE's "Configuration '…' was
+  resolved during configuration time", SLF4J "Failed to load class", Gradle's "Deprecated
+  Gradle features … Gradle 10", "Unable to strip the following libraries", Xcode's
+  "appintentsmetadataprocessor … warning: Metadata extraction skipped", xcodebuild's
+  "WARNING: Using the first of multiple matching destinations", and Gradle's "The Daemon will
+  expire …"). Xcode "note:" lines are not warnings.
+- The app core stays platform-free:
+    grep -rn 'import android\|import platform\.\|import org.koin' shared/src/commonMain/kotlin/com/example/devicemonitor/core
+  finds nothing. The exported header declares the new entry point and still no Koin types:
+    grep -c 'doInitKoinPermissionChecker:(id&lt;SharedPermissionChecker&gt;)permissionChecker bleScanner:(id&lt;SharedBleScanner&gt;)bleScanner bleConnection' shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h
+  prints 1, and grep -c 'Koin_core' on the same file prints 0 (build that framework first
+  with ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64 if it isn't there).
+- The emulator and the Simulator can't reach a real device, so two runs swap adapters for a
+  while. Make each swap in the app-start file only (Android: DeviceMonitorApplication.kt; iOS:
+  iOSApp.swift or AppDelegate.swift), rebuild, and put the file back exactly as in Full files
+  afterwards (diff it). The simulated classes are in com.example.devicemonitor.adapter.outbound.
+  Run A: SimulatedBleScanner() in place of the real scanner, the real connection kept.
+  Run B: SimulatedBleScanner() and SimulatedBleConnection() in place of both.
+- Android emulator (API 31+), my track (the XML buttons show their text in capitals, so match
+  case-insensitively; find nodes with `adb shell uiautomator dump`):
+  Run A:
+  1. Scan, tap the "OBD-II Adapter" row: "OBD-II Adapter", "ID: C4:7C:8D:6A:01:10",
+     "Signal: -48 dBm", "Status: not connected" and a "Connect" button.
+  2. adb shell cmd bluetooth_manager disable; tap Connect: an alert "Connection failed" with
+     "Bluetooth is off. Turn it on, then connect again." Tap OK. adb shell cmd bluetooth_manager enable.
+  3. adb logcat -c; tap Connect: "Status: connecting…" and a "Disconnect" button. Wait 12 s: the
+     alert says "OBD-II Adapter didn't answer within 10 seconds."; after OK, "Status: not
+     connected". `adb logcat -d -s BluetoothGatt` shows connect(), then about 10 s later
+     cancelOpen(), close() and unregisterApp().
+  4. adb logcat -c; tap Connect, then within 3 s go back (adb shell input keyevent KEYCODE_BACK):
+     the list. `adb logcat -d -s BluetoothGatt` shows cancelOpen(), close() and unregisterApp()
+     within 2 s of going back, long before the 10 s timeout.
+  Run B:
+  5. Scan, tap "OBD-II Adapter", Connect: "Status: connected" within 3 s, and "Disconnect".
+  6. Rotate: adb shell settings put system accelerometer_rotation 0, then
+     adb shell settings put system user_rotation 1. Still "Status: connected". Rotate back
+     (user_rotation 0). Tap Disconnect: "Status: not connected".
+  7. Connect, wait for "connected", go back, tap "Heart Rate Monitor", Connect: "Status:
+     connected" and no alert (leaving the first screen ended its connection).
+  8. Go back, tap "Smart Scale", Connect: "Status: connecting…", then after 10 s the alert
+     "Smart Scale didn't answer within 10 seconds."
+- Optional, if you have an emulator with Android 11 (API 30) and the real adapters: grant
+  android.permission.ACCESS_FINE_LOCATION instead in step 3 above, scan, tap a
+  "gDevice-beacon" row and Connect. On our API 30 image the beacon never answered: the
+  10-second message. Report what yours shows.
+- iOS Simulator, my track. Drive it with a throwaway XCUITest that launches the installed app
+  by bundle ID (or idb); don't script the Simulator window with System Events.
+  Run A: Scan, tap "OBD-II Adapter", Connect: an alert "Connection failed" with "This phone has
+  no Bluetooth LE radio." OK: "Status: not connected" and Connect enabled.
+  Run B: steps 5, 7 and 8 above, and for step 6 set XCUIDevice.shared.orientation to
+  .landscapeLeft: still "Status: connected"; back to .portrait, Disconnect: "Status: not connected".
+- Device checks (list them for me, don't try to run them): with LightBlue advertising a
+  virtual device on my Mac, on a physical Android phone and an iPhone on my track, using the
+  real adapters: Connect reaches "Status: connected"; Disconnect returns to "not connected";
+  unchecking the virtual device in LightBlue while connected shows "Connection failed" with a
+  "link … was lost" message; Connect with the virtual device unchecked gives a "Connection
+  failed" message (the 10-second one, or the radio's own); rotating an Android phone while
+  connected keeps "connected", and going back from the detail screen ends the connection;
+  turning Bluetooth off while connected ends the connection with a message.
+Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
+numbers, and show me where each box of the lesson's "who talks to whom" diagram is in the code.
+Do NOT do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li>Android: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/connect-gatt-server">Connect to a GATT server</a> (primary source: <code>connectGatt</code>, the callback, closing), and the reference pages for <a href="https://developer.android.com/reference/android/bluetooth/BluetoothDevice">BluetoothDevice</a> (<code>connectGatt</code>, <code>TRANSPORT_LE</code>), <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGatt">BluetoothGatt</a> (<code>disconnect</code>, <code>close</code>, the status codes), <a href="https://developer.android.com/reference/android/bluetooth/BluetoothGattCallback">BluetoothGattCallback</a> and <a href="https://developer.android.com/reference/android/bluetooth/BluetoothAdapter">BluetoothAdapter</a> (<code>getRemoteDevice</code>).</li>
+    <li>iOS: <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager">CBCentralManager</a> (primary source: <code>connect(_:options:)</code>, <code>cancelPeripheralConnection(_:)</code>, <code>retrievePeripherals(withIdentifiers:)</code>), <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerdelegate">CBCentralManagerDelegate</a> (<code>didConnect</code>, <code>didFailToConnect</code>, <code>didDisconnectPeripheral</code>) and <a href="https://developer.apple.com/documentation/corebluetooth/cbperipheral">CBPeripheral</a>. The fullest wording is in the SDK's <code>CBCentralManager.h</code>, which Xcode opens with Jump to Definition.</li>
+    <li>Lifetimes: Android's <a href="https://developer.android.com/topic/libraries/architecture/viewmodel">ViewModel overview</a> (what survives a configuration change) and <a href="https://developer.android.com/guide/topics/resources/runtime-changes">Handle configuration changes</a>; Kotlin's <a href="https://kotlinlang.org/docs/cancellation-and-timeouts.html">Cancellation and timeouts</a> and <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/coroutine-scope.html">coroutineScope</a> (how a cancelled child and a failed child differ).</li>
+    <li><a href="../reference/ble-cheatsheet.html">Cheatsheet: BLE</a>: now with connecting side by side, the lifetimes, and the traps.</li>
+    <li>Wisdom: Stack Overflow's <a href="https://stackoverflow.com/questions/tagged/android-bluetooth">android-bluetooth</a> and <a href="https://stackoverflow.com/questions/tagged/core-bluetooth">core-bluetooth</a> tags; search "gatt close status 133" and "CBPeripheral connection cancelled not retained".</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson adds or changes, complete. Open one to check your work. Nothing is deleted, and everything else stays as in m08. <code>iosApp/iosApp.xcodeproj</code> is generated by <code>xcodegen generate</code>. Each file is in the colour of its part of the app; the composition root carries none. Files that only one track has carry that track's switcher; files every track shares say so in their title.</p>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ConnectionState.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+// Where the app's connection to a device stands, in the app's terms. Each platform's adapter
+// turns its radio's callbacks into these.
+sealed interface ConnectionState {
+    data object Disconnected : ConnectionState
+    data class Connecting(val device: Device) : ConnectionState
+    data class Connected(val device: Device) : ConnectionState
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ConnectionException.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+// A connection that couldn't start, failed, or dropped: no permission, Bluetooth off, no answer,
+// or an error from the radio. The message is for the user. The service and outbound adapters
+// throw it, and it reaches inbound adapters through DeviceSession.
+class ConnectionException(message: String) : Exception(message)</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleConnection.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.Flow
+
+// Outbound port: what the app needs from a Bluetooth radio to hold a link to one device, in the
+// app's own terms. One adapter per platform: Kotlin in androidMain, Swift in the iOS app.
+interface BleConnection {
+    // The link to device, as its state changes: Connecting, then Connected once it's up.
+    // Collecting starts the connection, and cancelling the collector ends it and frees what the
+    // radio held for it. Throws ConnectionException when the attempt fails or the link drops.
+    fun connect(device: Device): Flow&lt;ConnectionState&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceSession.kt</summary>
+<pre><code>package com.example.devicemonitor.core.inbound
+
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.StateFlow
+
+// Inbound port: what the app offers for talking to one device. Inbound adapters (the shared
+// ViewModels) call it, and SessionService implements it.
+interface DeviceSession {
+    // Where the connection stands now. Every screen that shows it reads this one state.
+    val connectionState: StateFlow&lt;ConnectionState&gt;
+
+    // Connects to device and holds the connection for as long as the call runs. Returns after
+    // disconnect(); cancelling the caller's coroutine also disconnects. Throws ConnectionException:
+    // no permission, another connection open, no answer, or the link failed or dropped.
+    suspend fun connect(device: Device)
+
+    // Ends the connection, or the attempt, that connect() is holding.
+    fun disconnect()
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/SessionService.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.outbound.BleConnection
+import com.example.devicemonitor.core.outbound.PermissionChecker
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlin.time.Duration.Companion.seconds
+
+// Service: the app's connection rules. Connect only with the Bluetooth permission and to one
+// device at a time, and give up on a device that doesn't answer within CONNECT_TIMEOUT. It owns
+// the connection state that the screens show.
+class SessionService(
+    private val connection: BleConnection,
+    private val permissions: PermissionChecker,
+) : DeviceSession {
+    private val state = MutableStateFlow&lt;ConnectionState&gt;(ConnectionState.Disconnected)
+    override val connectionState: StateFlow&lt;ConnectionState&gt; = state.asStateFlow()
+    private var link: Job? = null
+
+    override suspend fun connect(device: Device) {
+        if (permissions.check(Permission.Bluetooth) != PermissionStatus.Granted) {
+            throw ConnectionException("Connecting needs the Bluetooth permission.")
+        }
+        if (state.value != ConnectionState.Disconnected) {
+            throw ConnectionException("Another connection is open. Disconnect it first.")
+        }
+        state.value = ConnectionState.Connecting(device)
+        try {
+            coroutineScope {
+                link = launch {
+                    // iOS never gives up on a connection attempt, so the app does.
+                    val giveUp = launch {
+                        delay(CONNECT_TIMEOUT)
+                        throw ConnectionException("${device.name} didn't answer within 10 seconds.")
+                    }
+                    connection.connect(device).collect { linkState -&gt;
+                        state.value = linkState
+                        if (linkState is ConnectionState.Connected) giveUp.cancel()
+                    }
+                }
+            }
+        } finally {
+            link = null
+            state.value = ConnectionState.Disconnected
+        }
+    }
+
+    // Cancelling the link ends its collection, and the adapter closes the radio's link.
+    override fun disconnect() {
+        link?.cancel()
+    }
+
+    companion object {
+        val CONNECT_TIMEOUT = 10.seconds
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceDetailUiState.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import com.example.devicemonitor.core.ConnectionState
+
+// Everything the detail screen shows about the connection. The device itself comes from the
+// list, through navigation.
+data class DeviceDetailUiState(
+    val connection: ConnectionState = ConnectionState.Disconnected,
+    val errorMessage: String? = null,
+)</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceDetailViewModel.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.inbound.DeviceSession
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+// Inbound adapter: turns the detail screen's Connect and Disconnect into calls on the
+// DeviceSession port, and the session's state into UI state. It knows the port only.
+class DeviceDetailViewModel(private val session: DeviceSession) : ViewModel() {
+    private val _uiState = MutableStateFlow(DeviceDetailUiState(connection = session.connectionState.value))
+    val uiState: StateFlow&lt;DeviceDetailUiState&gt; = _uiState.asStateFlow()
+
+    private var connectJob: Job? = null
+
+    init {
+        viewModelScope.launch {
+            session.connectionState.collect { connection -&gt;
+                _uiState.update { it.copy(connection = connection) }
+            }
+        }
+    }
+
+    // The connection runs in viewModelScope, so it lasts as long as this ViewModel: through a
+    // rotation, and until the screen is gone for good, when clearing the ViewModel cancels it.
+    fun connect(device: Device) {
+        if (connectJob?.isActive == true) return
+        connectJob = viewModelScope.launch {
+            try {
+                session.connect(device)
+            } catch (e: ConnectionException) {
+                _uiState.update { it.copy(errorMessage = e.message) }
+            }
+        }
+    }
+
+    fun disconnect() {
+        session.disconnect()
+    }
+
+    fun errorShown() {
+        _uiState.update { it.copy(errorMessage = null) }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SimulatedBleConnection.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.outbound.BleConnection
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+// Outbound adapter: a pretend link behind the BleConnection port, for the sample devices of
+// SimulatedBleScanner. Each one connects after 1 s and stays connected until the collector
+// cancels, except the Smart Scale, which never answers. The app doesn't bind it; bind it with
+// SimulatedBleScanner in place of the real radio to run without one.
+class SimulatedBleConnection : BleConnection {
+    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = flow {
+        emit(ConnectionState.Connecting(device))
+        if (device.name != "Smart Scale") {
+            delay(1000)
+            emit(ConnectionState.Connected(device))
+        }
+        awaitCancellation()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SampleDevices.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+
+// The devices the simulated radio "hears".
+object SampleDevices {
+    val all: List&lt;Device&gt; = listOf(
+        Device(id = "C4:7C:8D:6A:01:10", name = "OBD-II Adapter", rssi = -48),
+        Device(id = "C4:7C:8D:6A:01:11", name = "Heart Rate Monitor", rssi = -61),
+        Device(id = "C4:7C:8D:6A:01:12", name = "Tire Pressure Sensor", rssi = -67),
+        Device(id = "C4:7C:8D:6A:01:13", name = "Thermometer", rssi = -74),
+        Device(id = "C4:7C:8D:6A:01:14", name = "Smart Scale", rssi = -85),
+    )
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.core.PermissionService
+import com.example.devicemonitor.core.ScanningService
+import com.example.devicemonitor.core.SessionService
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.inbound.PermissionAccess
+import com.example.devicemonitor.core.outbound.BleConnection
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.core.outbound.PermissionChecker
+import org.koin.core.context.startKoin
+import org.koin.core.module.dsl.viewModelOf
+import org.koin.dsl.module
+
+// The composition root, as a Koin module: which service implements each inbound port,
+// which adapter implements each outbound port, and how to build each ViewModel.
+internal val appModule = module {
+    single&lt;DeviceScanning&gt; { ScanningService(get(), get()) }
+    // One session for the whole app: every screen sees the same connection state.
+    single&lt;DeviceSession&gt; { SessionService(get(), get()) }
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    viewModelOf(::DeviceListViewModel)
+    viewModelOf(::DeviceDetailViewModel)
+}
+
+// The outbound adapters that each platform builds itself and passes to initKoin.
+internal fun platformModule(
+    permissionChecker: PermissionChecker,
+    bleScanner: BleScanner,
+    bleConnection: BleConnection,
+) = module {
+    single { permissionChecker }
+    single { bleScanner }
+    single { bleConnection }
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+fun initKoin(permissionChecker: PermissionChecker, bleScanner: BleScanner, bleConnection: BleConnection) {
+    startKoin {
+        modules(appModule, platformModule(permissionChecker, bleScanner, bleConnection))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidBleConnection.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import android.annotation.SuppressLint
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothGatt
+import android.bluetooth.BluetoothGattCallback
+import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
+import android.content.Context
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.outbound.BleConnection
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+
+// Outbound adapter: a GATT connection over the phone's Bluetooth LE radio, behind the
+// BleConnection port. BluetoothGatt reports to a callback object; callbackFlow turns those calls
+// into a Flow, and closes the GATT client when the collector cancels.
+class AndroidBleConnection(private val context: Context) : BleConnection {
+    private val adapter: BluetoothAdapter? =
+        context.getSystemService(BluetoothManager::class.java)?.adapter
+
+    // SessionService checks the permission before every connection, so lint's check is suppressed.
+    @SuppressLint("MissingPermission")
+    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = callbackFlow {
+        val adapter = adapter
+        if (adapter == null || !adapter.isEnabled) {
+            throw ConnectionException("Bluetooth is off. Turn it on, then connect again.")
+        }
+        // Called on a background thread. trySend and close are safe from any thread.
+        val callback = object : BluetoothGattCallback() {
+            private var linked = false
+
+            override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+                when {
+                    status == BluetoothGatt.GATT_SUCCESS &amp;&amp; newState == BluetoothProfile.STATE_CONNECTED -&gt; {
+                        linked = true
+                        trySend(ConnectionState.Connected(device))
+                    }
+                    linked -&gt; close(ConnectionException("The link to ${device.name} was lost (Android status $status)."))
+                    else -&gt; close(ConnectionException("The connection failed (Android status $status)."))
+                }
+            }
+        }
+        send(ConnectionState.Connecting(device))
+        // The id is the address the scan reported. false: connect directly, now. Android 17 (API 37)
+        // deprecates this connectGatt for a new one that older phones don't have.
+        @Suppress("DEPRECATION")
+        val gatt: BluetoothGatt = adapter.getRemoteDevice(device.id)
+            .connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
+            ?: throw ConnectionException("Android couldn't start the connection.")
+
+        awaitClose {
+            // Whatever ended the link, close the GATT client, or Android keeps it registered.
+            gatt.disconnect()
+            gatt.close()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/ConnectFlow.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.channels.ProducerScope
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+
+// Swift can't build a Kotlin Flow, so the Swift connection asks for one here, as the Swift
+// scanner does in ScanFlow.kt. Collecting the Flow calls the link's open; cancelling the
+// collector calls its close. Not a port: it's the Kotlin half of the iOS adapter.
+fun connectFlow(link: IosLink, device: Device): Flow&lt;ConnectionState&gt; = callbackFlow {
+    link.open(device, LinkFeed(this))
+    awaitClose { link.close() }
+}
+
+// What the Swift connection implements for connectFlow: open and close the real link.
+interface IosLink {
+    fun open(device: Device, feed: LinkFeed)
+    fun close()
+}
+
+// Where the Swift connection reports: each state of the link, or the failure that ends it.
+class LinkFeed internal constructor(private val scope: ProducerScope&lt;ConnectionState&gt;) {
+    fun changed(state: ConnectionState) {
+        scope.trySend(state)
+    }
+
+    fun failed(message: String) {
+        scope.close(ConnectionException(message))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeBleConnection.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.outbound.BleConnection
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+
+// Fake: an outbound adapter written for tests, behind the BleConnection port. The test plays
+// the radio and the device: whether and when the device answers, and whether the link fails.
+class FakeBleConnection : BleConnection {
+    private val events = Channel&lt;Event&gt;(Channel.UNLIMITED)
+    var attempts = 0
+        private set
+    var isLinked = false // true while a collector holds the link
+        private set
+
+    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = flow {
+        attempts++
+        isLinked = true
+        try {
+            emit(ConnectionState.Connecting(device))
+            for (event in events) {
+                when (event) {
+                    Event.Answer -&gt; emit(ConnectionState.Connected(device))
+                    is Event.Fail -&gt; throw ConnectionException(event.message)
+                }
+            }
+        } finally {
+            isLinked = false
+        }
+    }
+
+    // The device answers: the link is up.
+    fun answer() {
+        events.trySend(Event.Answer)
+    }
+
+    // The attempt fails, or the link drops, with this message.
+    fun fail(message: String) {
+        events.trySend(Event.Fail(message))
+    }
+
+    private sealed interface Event {
+        data object Answer : Event
+        data class Fail(val message: String) : Event
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/TestDeviceSession.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.inbound.DeviceSession
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.flow.MutableStateFlow
+
+// Test implementation of the DeviceSession inbound port. It stands in for the whole app core,
+// so a ViewModel test tests the ViewModel only. The test sets the state and the failures.
+class TestDeviceSession : DeviceSession {
+    override val connectionState = MutableStateFlow&lt;ConnectionState&gt;(ConnectionState.Disconnected)
+    var failure: ConnectionException? = null
+    val connected = mutableListOf&lt;Device&gt;() // one entry per connect() call
+    var isHolding = false // true while a connect() call is running
+        private set
+    var disconnects = 0
+        private set
+
+    override suspend fun connect(device: Device) {
+        connected += device
+        failure?.let { throw it }
+        isHolding = true
+        try {
+            awaitCancellation()
+        } finally {
+            isHolding = false
+        }
+    }
+
+    override fun disconnect() {
+        disconnects++
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/core/SessionServiceTest.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import app.cash.turbine.test
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.doubles.FakeBleConnection
+import com.example.devicemonitor.doubles.FakePermissionChecker
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+
+@OptIn(ExperimentalCoroutinesApi::class) // currentTime
+class SessionServiceTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val heart = Device(id = "02", name = "Heart Rate Monitor", rssi = -61)
+
+    private val radio = FakeBleConnection()
+    private val os = FakePermissionChecker().apply {
+        statuses[Permission.Bluetooth] = PermissionStatus.Granted
+    }
+
+    // Through the inbound port, as the ViewModel calls it.
+    private val session: DeviceSession = SessionService(radio, os)
+
+    @Test
+    fun reportsEachStateOfTheConnection() = runTest {
+        session.connectionState.test {
+            assertEquals(ConnectionState.Disconnected, awaitItem())
+
+            val call = launch { session.connect(obd) }
+            assertEquals(ConnectionState.Connecting(obd), awaitItem())
+
+            radio.answer()
+            assertEquals(ConnectionState.Connected(obd), awaitItem())
+
+            call.cancelAndJoin()
+            assertEquals(ConnectionState.Disconnected, awaitItem())
+        }
+    }
+
+    @Test
+    fun disconnectEndsTheLinkAndConnectReturns() = runTest {
+        val call = async { session.connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+        assertTrue(radio.isLinked)
+
+        session.disconnect()
+        call.await() // returns normally: the app asked for it
+
+        assertFalse(radio.isLinked)
+        assertEquals(ConnectionState.Disconnected, session.connectionState.value)
+    }
+
+    @Test
+    fun cancellingTheCallerAlsoDisconnects() = runTest {
+        val call = launch { session.connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        call.cancelAndJoin() // what clearing a ViewModel does to viewModelScope
+
+        assertFalse(radio.isLinked)
+        assertEquals(ConnectionState.Disconnected, session.connectionState.value)
+    }
+
+    @Test
+    fun aFailedLinkReachesTheCaller() = runTest {
+        radio.fail("The connection failed (Android status 133).")
+
+        val error = assertFailsWith&lt;ConnectionException&gt; { session.connect(obd) }
+
+        assertEquals("The connection failed (Android status 133).", error.message)
+        assertEquals(ConnectionState.Disconnected, session.connectionState.value)
+    }
+
+    @Test
+    fun givesUpOnADeviceThatDoesNotAnswer() = runTest {
+        val error = assertFailsWith&lt;ConnectionException&gt; { session.connect(obd) }
+
+        assertEquals("OBD-II Adapter didn't answer within 10 seconds.", error.message)
+        assertEquals(SessionService.CONNECT_TIMEOUT.inWholeMilliseconds, testScheduler.currentTime)
+        assertFalse(radio.isLinked)
+    }
+
+    @Test
+    fun theTimeoutStopsOnceConnected() = runTest {
+        val call = launch { session.connect(obd) }
+        radio.answer()
+
+        testScheduler.advanceTimeBy(SessionService.CONNECT_TIMEOUT * 6) // a minute, connected
+
+        assertEquals(ConnectionState.Connected(obd), session.connectionState.value)
+        call.cancelAndJoin()
+    }
+
+    @Test
+    fun neverTouchesTheRadioWithoutThePermission() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Denied
+
+        val error = assertFailsWith&lt;ConnectionException&gt; { session.connect(obd) }
+
+        assertEquals("Connecting needs the Bluetooth permission.", error.message)
+        assertEquals(0, radio.attempts)
+    }
+
+    @Test
+    fun connectsToOneDeviceAtATime() = runTest {
+        val first = launch { session.connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        val error = assertFailsWith&lt;ConnectionException&gt; { session.connect(heart) }
+
+        assertEquals("Another connection is open. Disconnect it first.", error.message)
+        assertEquals(ConnectionState.Connected(obd), session.connectionState.value)
+        assertEquals(1, radio.attempts)
+        first.cancelAndJoin()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/inbound/DeviceDetailViewModelTest.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.doubles.TestDeviceSession
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlin.test.AfterTest
+import kotlin.test.BeforeTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
+
+@OptIn(ExperimentalCoroutinesApi::class) // setMain, resetMain
+class DeviceDetailViewModelTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+
+    private val session = TestDeviceSession()
+    private val store = ViewModelStore() // plays the screen that owns the ViewModel
+    private lateinit var viewModel: DeviceDetailViewModel
+
+    @BeforeTest
+    fun setUp() {
+        Dispatchers.setMain(StandardTestDispatcher())
+        val factory = viewModelFactory { initializer { DeviceDetailViewModel(session) } }
+        viewModel = ViewModelProvider.create(store, factory)[DeviceDetailViewModel::class]
+    }
+
+    @AfterTest
+    fun tearDown() {
+        Dispatchers.resetMain()
+    }
+
+    @Test
+    fun showsTheSessionsConnectionState() = runTest {
+        testScheduler.runCurrent()
+
+        session.connectionState.value = ConnectionState.Connected(obd)
+        testScheduler.runCurrent()
+
+        assertEquals(ConnectionState.Connected(obd), viewModel.uiState.value.connection)
+    }
+
+    @Test
+    fun aFailedConnectionBecomesAMessageUntilItIsShown() = runTest {
+        session.failure = ConnectionException("OBD-II Adapter didn't answer within 10 seconds.")
+
+        viewModel.connect(obd)
+        testScheduler.runCurrent()
+        assertEquals("OBD-II Adapter didn't answer within 10 seconds.", viewModel.uiState.value.errorMessage)
+
+        viewModel.errorShown()
+        assertNull(viewModel.uiState.value.errorMessage)
+    }
+
+    @Test
+    fun ignoresConnectWhileAConnectionIsHeld() = runTest {
+        viewModel.connect(obd)
+        testScheduler.runCurrent()
+        viewModel.connect(obd)
+        testScheduler.runCurrent()
+
+        assertEquals(listOf(obd), session.connected)
+    }
+
+    @Test
+    fun disconnectAsksTheSession() {
+        viewModel.disconnect()
+
+        assertEquals(1, session.disconnects)
+    }
+
+    @Test
+    fun theConnectionEndsWhenTheScreenIsGoneForGood() = runTest {
+        viewModel.connect(obd)
+        testScheduler.runCurrent()
+        assertTrue(session.isHolding)
+
+        store.clear() // the screen left the back stack: the ViewModel is cleared
+        testScheduler.runCurrent()
+
+        assertFalse(session.isHolding)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.doubles.FakeBleConnection
+import com.example.devicemonitor.doubles.FakeBleScanner
+import com.example.devicemonitor.doubles.FakePermissionChecker
+import org.koin.dsl.koinApplication
+import kotlin.test.Test
+import kotlin.test.assertNotNull
+
+class AppModuleTest {
+    // Koin checks the graph only when something asks for an instance, at run time. This
+    // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
+    // Fakes stand in for the adapters each platform passes to initKoin.
+    @Test
+    fun buildsEveryViewModel() {
+        val koin = koinApplication {
+            modules(appModule, platformModule(FakePermissionChecker(), FakeBleScanner(), FakeBleConnection()))
+        }.koin
+
+        assertNotNull(koin.get&lt;DeviceListViewModel&gt;())
+        assertNotNull(koin.get&lt;DeviceDetailViewModel&gt;())
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.app.Application
+import com.example.devicemonitor.adapter.outbound.AndroidBleConnection
+import com.example.devicemonitor.adapter.outbound.AndroidBleScanner
+import com.example.devicemonitor.adapter.outbound.AndroidPermissionChecker
+import com.example.devicemonitor.di.initKoin
+
+// Runs once per process, before any Activity: the place to start Koin.
+class DeviceMonitorApplication : Application() {
+    // The Android permission adapter, one for the process. Koin hands it to the app core as
+    // its PermissionChecker, and the screen lends it a result launcher.
+    lateinit var permissionChecker: AndroidPermissionChecker
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        permissionChecker = AndroidPermissionChecker(this)
+        initKoin(permissionChecker, AndroidBleScanner(this), AndroidBleConnection(this))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApp.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
+import com.example.devicemonitor.core.Device
+import kotlinx.serialization.Serializable
+
+@Serializable
+data object DeviceList
+
+// The selected device travels in the route: the detail screen needs all of it to connect.
+@Serializable
+data class DeviceDetail(val id: String, val name: String, val rssi: Int)
+
+@Composable
+fun DeviceMonitorApp() {
+    val navController = rememberNavController()
+    Scaffold { innerPadding -&gt;
+        NavHost(
+            navController = navController,
+            startDestination = DeviceList,
+            modifier = Modifier.padding(innerPadding),
+        ) {
+            composable&lt;DeviceList&gt; {
+                DeviceListScreen(
+                    onDeviceClick = { device -&gt;
+                        navController.navigate(DeviceDetail(device.id, device.name, device.rssi))
+                    },
+                )
+            }
+            composable&lt;DeviceDetail&gt; { entry -&gt;
+                val route: DeviceDetail = entry.toRoute()
+                DeviceDetailScreen(
+                    device = Device(id = route.id, name = route.name, rssi = route.rssi),
+                    onBack = { navController.popBackStack() },
+                )
+            }
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceDetailScreen.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.compose.dropUnlessResumed
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import org.koin.compose.viewmodel.koinViewModel
+
+// Stateful: connects the shared ViewModel to the content below. koinViewModel() scopes the
+// ViewModel to this screen's back stack entry: it survives a rotation, and it is cleared,
+// connection and all, when the screen is popped.
+@Composable
+fun DeviceDetailScreen(
+    device: Device,
+    onBack: () -&gt; Unit,
+    viewModel: DeviceDetailViewModel = koinViewModel(),
+) {
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+
+    DeviceDetailContent(
+        device = device,
+        connection = state.connection,
+        onConnect = { viewModel.connect(device) },
+        onDisconnect = viewModel::disconnect,
+        onBack = onBack,
+    )
+
+    state.errorMessage?.let { message -&gt;
+        AlertDialog(
+            onDismissRequest = viewModel::errorShown,
+            confirmButton = { TextButton(onClick = viewModel::errorShown) { Text("OK") } },
+            title = { Text("Connection failed") },
+            text = { Text(message) },
+        )
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+@Composable
+fun DeviceDetailContent(
+    device: Device,
+    connection: ConnectionState,
+    onConnect: () -&gt; Unit,
+    onDisconnect: () -&gt; Unit,
+    onBack: () -&gt; Unit,
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_bluetooth),
+            contentDescription = null,
+            colorFilter = ColorFilter.tint(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.size(96.dp),
+        )
+        Text(device.name, style = MaterialTheme.typography.headlineSmall)
+        Text("ID: ${device.id}")
+        Text("Signal: ${device.rssi} dBm")
+        ConnectionStatus(connection)
+        // One button: Connect while disconnected, Disconnect while connecting or connected.
+        val disconnected = connection is ConnectionState.Disconnected
+        Button(
+            onClick = if (disconnected) onConnect else onDisconnect,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (disconnected) "Connect" else "Disconnect")
+        }
+        TextButton(onClick = dropUnlessResumed { onBack() }) {
+            Text("Back")
+        }
+    }
+}
+
+@Composable
+private fun ConnectionStatus(connection: ConnectionState) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        when (connection) {
+            ConnectionState.Disconnected -&gt; Text("Status: not connected")
+            is ConnectionState.Connecting -&gt; {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Text("Status: connecting…")
+            }
+            is ConnectionState.Connected -&gt; Text("Status: connected", color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListFragment.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
+import androidx.recyclerview.widget.DividerItemDecoration
+import com.example.devicemonitor.adapter.inbound.DeviceListUiState
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.ScanState
+import com.example.devicemonitor.android.databinding.FragmentDeviceListBinding
+import com.example.devicemonitor.core.PermissionStatus
+import kotlinx.coroutines.launch
+import org.koin.androidx.viewmodel.ext.android.viewModel
+
+class DeviceListFragment : Fragment() {
+    // Survives rotation and the trip to the detail screen; cleared when this
+    // Fragment leaves the back stack for good.
+    private val viewModel: DeviceListViewModel by viewModel()
+
+    // Android lets only an Activity or a Fragment register for a result, and only while it is
+    // being created, so the Fragment registers here and lends the launcher to the adapter.
+    // It decides nothing: the adapter reads the answer.
+    private val permissionChecker by lazy {
+        (requireActivity().application as DeviceMonitorApplication).permissionChecker
+    }
+    private val permissionLauncher = registerForActivityResult(RequestMultiplePermissions()) {
+        permissionChecker.onResult(requireActivity())
+    }
+
+    private var binding: FragmentDeviceListBinding? = null
+    private var errorDialog: AlertDialog? = null
+    private val adapter = DeviceAdapter { device -&gt;
+        val nav = findNavController()
+        // A fast double tap delivers two clicks; only navigate from the list itself.
+        if (nav.currentDestination?.id == R.id.deviceList) {
+            // The selected device travels in the arguments: the detail screen needs all of it.
+            val args = Bundle().apply {
+                putString("deviceId", device.id)
+                putString("deviceName", device.name)
+                putInt("deviceRssi", device.rssi)
+            }
+            nav.navigate(R.id.toDetail, args)
+        }
+    }
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceListBinding.inflate(inflater, container, false)
+        binding = b
+        b.deviceList.adapter = adapter
+        b.deviceList.addItemDecoration(DividerItemDecoration(requireContext(), DividerItemDecoration.VERTICAL))
+        // One button: Scan while idle, Stop while scanning.
+        b.scanButton.setOnClickListener {
+            if (viewModel.uiState.value.scan is ScanState.Scanning) {
+                viewModel.stopScan()
+            } else {
+                viewModel.startScan(b.filterInput.text.toString())
+            }
+        }
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { render(it) }
+            }
+        }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        permissionChecker.attach(requireActivity(), permissionLauncher)
+    }
+
+    // Back from Settings (or anywhere else): the permission may have changed.
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshPermission()
+    }
+
+    override fun onStop() {
+        permissionChecker.detach(permissionLauncher)
+        super.onStop()
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        errorDialog?.dismiss() // a dismiss() doesn't call the cancel listener, so the error stays in state
+        errorDialog = null
+        binding?.deviceList?.adapter = null // the adapter outlives the view; don't let it keep the old list
+        binding = null
+    }
+
+    // The one place that touches views: every new state ends here. The EditText keeps its
+    // own text (and restores it after rotation), so render() never sets it.
+    private fun render(state: DeviceListUiState) {
+        val b = binding ?: return
+        val isScanning = state.scan is ScanState.Scanning
+        val devices = when (val scan = state.scan) {
+            ScanState.Idle -&gt; null
+            is ScanState.Scanning -&gt; scan.found
+            is ScanState.Finished -&gt; scan.found
+        }
+        renderPermission(b, state.bluetooth)
+        b.scanButton.text = if (isScanning) "Stop" else "Scan"
+        b.scanButton.isEnabled = isScanning || state.bluetooth == PermissionStatus.Granted
+        b.progress.visibility = if (isScanning) View.VISIBLE else View.GONE
+        b.statusText.text = when {
+            isScanning -&gt; "Scanning…"
+            devices == null -&gt; "Tap Scan to look for devices."
+            devices.isEmpty() -&gt; "No devices found. Try another filter."
+            else -&gt; "Devices found: ${devices.size}"
+        }
+        b.statusText.setTextColor(if (devices?.isEmpty() == true &amp;&amp; !isScanning) Color.RED else Color.DKGRAY)
+        adapter.submitList(devices.orEmpty())
+        renderError(state.errorMessage)
+    }
+
+    // One message and at most one action per permission status.
+    private fun renderPermission(b: FragmentDeviceListBinding, status: PermissionStatus) {
+        val (message, action) = when (status) {
+            PermissionStatus.Granted -&gt; "Bluetooth permission: allowed" to null
+            PermissionStatus.NotRequested -&gt;
+                "Device Monitor needs Bluetooth permission to find nearby devices." to "Allow Bluetooth"
+            PermissionStatus.Denied -&gt;
+                "Bluetooth permission was denied. Scanning needs it to find nearby devices." to "Ask again"
+            PermissionStatus.PermanentlyDenied -&gt;
+                "Bluetooth permission is off. You can turn it on in Settings." to "Open Settings"
+            PermissionStatus.Restricted -&gt;
+                "Bluetooth is restricted on this device, so scanning isn't available." to null
+        }
+        b.permissionText.text = message
+        val blocked = status != PermissionStatus.Granted &amp;&amp; status != PermissionStatus.NotRequested
+        b.permissionText.setTextColor(if (blocked) Color.RED else Color.DKGRAY)
+        b.permissionButton.visibility = if (action == null) View.GONE else View.VISIBLE
+        b.permissionButton.text = action
+        b.permissionButton.setOnClickListener {
+            if (status == PermissionStatus.PermanentlyDenied) {
+                viewModel.openSettings()
+            } else {
+                viewModel.requestPermission()
+            }
+        }
+    }
+
+    private fun renderError(message: String?) {
+        if (message == null) {
+            errorDialog?.dismiss()
+            errorDialog = null
+        } else if (errorDialog == null) {
+            errorDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Scan failed")
+                .setMessage(message)
+                .setPositiveButton("OK") { _, _ -&gt; viewModel.errorShown() }
+                .setOnCancelListener { viewModel.errorShown() }
+                .show()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceDetailFragment.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.graphics.Color
+import android.os.Bundle
+import android.view.LayoutInflater
+import android.view.View
+import android.view.ViewGroup
+import androidx.appcompat.app.AlertDialog
+import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.navigation.fragment.findNavController
+import com.example.devicemonitor.adapter.inbound.DeviceDetailUiState
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.android.databinding.FragmentDeviceDetailBinding
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.launch
+import org.koin.androidx.viewmodel.ext.android.viewModel
+
+class DeviceDetailFragment : Fragment() {
+    // Survives rotation; cleared, connection and all, when this Fragment leaves the back stack
+    // for good. The views below are rebuilt on every rotation; the connection is not in them.
+    private val viewModel: DeviceDetailViewModel by viewModel()
+
+    private var binding: FragmentDeviceDetailBinding? = null
+    private var errorDialog: AlertDialog? = null
+
+    override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View {
+        val b = FragmentDeviceDetailBinding.inflate(inflater, container, false)
+        binding = b
+        val args = requireArguments()
+        val device = Device(
+            id = args.getString("deviceId").orEmpty(),
+            name = args.getString("deviceName").orEmpty(),
+            rssi = args.getInt("deviceRssi"),
+        )
+        b.deviceName.text = device.name
+        b.deviceId.text = "ID: ${device.id}"
+        b.deviceRssi.text = "Signal: ${device.rssi} dBm"
+        // One button: Connect while disconnected, Disconnect while connecting or connected.
+        b.connectButton.setOnClickListener {
+            if (viewModel.uiState.value.connection is ConnectionState.Disconnected) {
+                viewModel.connect(device)
+            } else {
+                viewModel.disconnect()
+            }
+        }
+        b.backButton.setOnClickListener {
+            val nav = findNavController()
+            // A fast double tap would otherwise pop the list too and empty the back stack.
+            if (nav.currentDestination?.id == R.id.deviceDetail) nav.popBackStack()
+        }
+        return b.root
+    }
+
+    override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
+        super.onViewCreated(view, savedInstanceState)
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                viewModel.uiState.collect { render(it) }
+            }
+        }
+    }
+
+    override fun onDestroyView() {
+        super.onDestroyView()
+        errorDialog?.dismiss() // a dismiss() doesn't call the cancel listener, so the error stays in state
+        errorDialog = null
+        binding = null
+    }
+
+    // The one place that touches views: every new state ends here.
+    private fun render(state: DeviceDetailUiState) {
+        val b = binding ?: return
+        val connection = state.connection
+        b.progress.visibility = if (connection is ConnectionState.Connecting) View.VISIBLE else View.GONE
+        b.statusText.text = when (connection) {
+            ConnectionState.Disconnected -&gt; "Status: not connected"
+            is ConnectionState.Connecting -&gt; "Status: connecting…"
+            is ConnectionState.Connected -&gt; "Status: connected"
+        }
+        b.statusText.setTextColor(if (connection is ConnectionState.Connected) Color.BLUE else Color.DKGRAY)
+        b.connectButton.text = if (connection is ConnectionState.Disconnected) "Connect" else "Disconnect"
+        renderError(state.errorMessage)
+    }
+
+    private fun renderError(message: String?) {
+        if (message == null) {
+            errorDialog?.dismiss()
+            errorDialog = null
+        } else if (errorDialog == null) {
+            errorDialog = AlertDialog.Builder(requireContext())
+                .setTitle("Connection failed")
+                .setMessage(message)
+                .setPositiveButton("OK") { _, _ -&gt; viewModel.errorShown() }
+                .setOnCancelListener { viewModel.errorShown() }
+                .show()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/res/layout/fragment_device_detail.xml</summary>
+<pre><code>&lt;LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:gravity="center_horizontal"
+    android:orientation="vertical"
+    android:padding="16dp"&gt;
+
+    &lt;ImageView
+        android:id="@+id/deviceIcon"
+        android:layout_width="96dp"
+        android:layout_height="96dp"
+        android:contentDescription="@null"
+        android:src="@drawable/ic_bluetooth"
+        app:tint="?attr/colorAccent" /&gt;
+
+    &lt;TextView
+        android:id="@+id/deviceName"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:textAppearance="@style/TextAppearance.AppCompat.Headline" /&gt;
+
+    &lt;TextView
+        android:id="@+id/deviceId"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp" /&gt;
+
+    &lt;TextView
+        android:id="@+id/deviceRssi"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp" /&gt;
+
+    &lt;LinearLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"&gt;
+
+        &lt;ProgressBar
+            android:id="@+id/progress"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
+            android:layout_marginEnd="8dp"
+            android:visibility="gone" /&gt;
+
+        &lt;TextView
+            android:id="@+id/statusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content" /&gt;
+    &lt;/LinearLayout&gt;
+
+    &lt;Button
+        android:id="@+id/connectButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="Connect" /&gt;
+
+    &lt;Button
+        android:id="@+id/backButton"
+        style="@style/Widget.AppCompat.Button.Borderless.Colored"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:text="Back" /&gt;
+&lt;/LinearLayout&gt;</code></pre>
+    </details>
+    <details class="full-file" data-track="xml" data-part="android">
+      <summary>androidApp/src/main/res/navigation/nav_graph.xml</summary>
+<pre><code>&lt;navigation xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/nav_graph"
+    app:startDestination="@id/deviceList"&gt;
+
+    &lt;fragment
+        android:id="@+id/deviceList"
+        android:name="com.example.devicemonitor.android.DeviceListFragment"&gt;
+        &lt;action
+            android:id="@+id/toDetail"
+            app:destination="@id/deviceDetail" /&gt;
+    &lt;/fragment&gt;
+
+    &lt;fragment
+        android:id="@+id/deviceDetail"
+        android:name="com.example.devicemonitor.android.DeviceDetailFragment"&gt;
+        &lt;argument
+            android:name="deviceId"
+            app:argType="string" /&gt;
+        &lt;argument
+            android:name="deviceName"
+            app:argType="string" /&gt;
+        &lt;argument
+            android:name="deviceRssi"
+            app:argType="integer" /&gt;
+    &lt;/fragment&gt;
+&lt;/navigation&gt;</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>iosApp/iosApp/IosBleConnection.swift · both iOS tracks</summary>
+<pre><code>import CoreBluetooth
+import Shared
+
+// Outbound adapter: a link to one peripheral over the iPhone's radio, behind the Kotlin
+// BleConnection port. Like the scanner, it is its own manager's delegate and Koin keeps it alive.
+// It also keeps the CBPeripheral while the link lasts: CoreBluetooth cancels a pending
+// connection when its peripheral is deallocated.
+@MainActor
+final class IosBleConnection: NSObject, @preconcurrency BleConnection, @preconcurrency IosLink,
+    @preconcurrency CBCentralManagerDelegate {
+    private var manager: CBCentralManager?
+    private var peripheral: CBPeripheral?
+    private var device: Device?
+    private var feed: LinkFeed?
+
+    // Swift can't build a Kotlin Flow, so it asks Kotlin for one (ConnectFlow.kt, in iosMain).
+    func connect(device: Device) -&gt; SkieSwiftFlow&lt;ConnectionState&gt; {
+        connectFlow(link: self, device: device)
+    }
+
+    // IosLink: connectFlow calls these when the Flow is collected and when it is cancelled.
+    func open(device: Device, feed: LinkFeed) {
+        self.device = device
+        self.feed = feed
+        let manager = self.manager ?? makeManager()
+        // A new manager learns the radio's state a moment later; centralManagerDidUpdateState
+        // then calls start.
+        if manager.state != .unknown &amp;&amp; manager.state != .resetting { start(on: manager) }
+    }
+
+    func close() {
+        if let peripheral, manager?.state == .poweredOn { manager?.cancelPeripheralConnection(peripheral) }
+        peripheral = nil
+        device = nil
+        feed = nil
+    }
+
+    private func start(on manager: CBCentralManager) {
+        guard let device, let feed, peripheral == nil else { return }
+        guard manager.state == .poweredOn else { return end(with: message(for: manager.state)) }
+        // The scanner found the device with its own manager; this one asks for it by identifier.
+        guard let id = UUID(uuidString: device.id),
+              let found = manager.retrievePeripherals(withIdentifiers: [id]).first else {
+            return end(with: "This iPhone doesn't know \(device.name) any more. Scan again.")
+        }
+        peripheral = found
+        feed.changed(state: ConnectionStateConnecting(device: device))
+        manager.connect(found)
+    }
+
+    // Called on the main queue (queue: nil) when the link is up.
+    func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        guard peripheral === self.peripheral, let device else { return }
+        feed?.changed(state: ConnectionStateConnected(device: device))
+    }
+
+    func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral,
+                        error: Error?) {
+        guard peripheral === self.peripheral else { return }
+        end(with: "The connection failed: \(error?.localizedDescription ?? "no reason given").")
+    }
+
+    // error is nil when the app asked for the disconnection, in close(): nothing is waiting then.
+    func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral,
+                        error: Error?) {
+        guard peripheral === self.peripheral, let error, let device else { return }
+        end(with: "The link to \(device.name) was lost: \(error.localizedDescription)")
+    }
+
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        guard central.state != .unknown, central.state != .resetting else { return }
+        if peripheral == nil {
+            start(on: central) // open() was waiting for the state
+        } else if central.state != .poweredOn {
+            end(with: "Bluetooth was turned off.")
+        }
+    }
+
+    // Ends the Flow with the message; Kotlin then calls close().
+    private func end(with message: String) {
+        let feed = self.feed
+        close()
+        feed?.failed(message: message)
+    }
+
+    private func message(for state: CBManagerState) -&gt; String {
+        switch state {
+        case .unsupported: "This phone has no Bluetooth LE radio."
+        case .unauthorized: "Connecting needs the Bluetooth permission."
+        default: "Bluetooth is off. Turn it on, then connect again."
+        }
+    }
+
+    // No system alert when Bluetooth is off: the app shows its own message.
+    private func makeManager() -&gt; CBCentralManager {
+        let manager = CBCentralManager(
+            delegate: self, queue: nil,
+            options: [CBCentralManagerOptionShowPowerAlertKey: false]
+        )
+        self.manager = manager
+        return manager
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/iOSApp.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+@main
+struct iOSApp: App {
+    init() {
+        AppModuleKt.doInitKoin(
+            permissionChecker: IosPermissionChecker(),
+            bleScanner: IosBleScanner(),
+            bleConnection: IosBleConnection()
+        )
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/ContentView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+struct ContentView: View {
+    var body: some View {
+        NavigationStack {
+            DeviceListView()
+                .navigationDestination(for: DeviceRoute.self) { route in
+                    DeviceDetailView(device: route.device)
+                }
+        }
+    }
+}
+
+// The selected device travels in the route: the detail screen needs all of it to connect.
+// A Kotlin class is an NSObject in Swift, so Device is Hashable through isEqual and hash.
+struct DeviceRoute: Hashable {
+    let device: Device
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+// Stateful: owns the filter text and connects the shared ViewModel to the content below.
+struct DeviceListView: View {
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var owner = ViewModelOwner()
+    @State private var filter = ""
+    @State private var state: DeviceListUiState?
+
+    var body: some View {
+        let viewModel: DeviceListViewModel = owner.viewModel()
+        let state = self.state ?? viewModel.uiState.value
+        DeviceListContent(
+            filter: $filter,
+            bluetooth: state.bluetooth,
+            isScanning: state.scan is ScanStateScanning,
+            devices: devices(in: state.scan),
+            onScan: { viewModel.startScan(filter: filter) },
+            onStop: { viewModel.stopScan() },
+            onAllow: { viewModel.requestPermission() },
+            onOpenSettings: { viewModel.openSettings() }
+        )
+        .alert(
+            "Scan failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+        // Back from Settings (or anywhere else): the permission may have changed.
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { viewModel.refreshPermission() }
+        }
+    }
+
+    // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+    private func devices(in scan: ScanState) -&gt; [Device]? {
+        switch onEnum(of: scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceListContent: View {
+    @Binding var filter: String
+    let bluetooth: PermissionStatus
+    let isScanning: Bool
+    let devices: [Device]?
+    let onScan: () -&gt; Void
+    let onStop: () -&gt; Void
+    let onAllow: () -&gt; Void
+    let onOpenSettings: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Device name filter", text: $filter)
+                .textFieldStyle(.roundedBorder)
+                .autocorrectionDisabled()
+            PermissionRow(status: bluetooth, onAllow: onAllow, onOpenSettings: onOpenSettings)
+            // One button: Scan while idle, Stop while scanning.
+            Button(action: isScanning ? onStop : onScan) {
+                Text(isScanning ? "Stop" : "Scan")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!isScanning &amp;&amp; bluetooth != .granted)
+            ScanStatus(isScanning: isScanning, devices: devices)
+            List(devices ?? [], id: \.id) { device in
+                NavigationLink(value: DeviceRoute(device: device)) {
+                    DeviceRow(device: device)
+                }
+            }
+            .listStyle(.plain)
+        }
+        .padding()
+        .navigationTitle("Device Monitor")
+    }
+}
+
+// One message and at most one action per permission status. SKIE makes the Kotlin enum a
+// Swift enum, so this switch is exhaustive.
+private struct PermissionRow: View {
+    let status: PermissionStatus
+    let onAllow: () -&gt; Void
+    let onOpenSettings: () -&gt; Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            switch status {
+            case .granted:
+                Text("Bluetooth permission: allowed")
+                    .foregroundStyle(.secondary)
+            case .notRequested:
+                Text("Device Monitor needs Bluetooth permission to find nearby devices.")
+                Button("Allow Bluetooth", action: onAllow)
+            case .denied:
+                Text("Bluetooth permission was denied. Scanning needs it to find nearby devices.")
+                    .foregroundStyle(.red)
+                Button("Ask again", action: onAllow)
+            case .permanentlyDenied:
+                Text("Bluetooth permission is off. You can turn it on in Settings.")
+                    .foregroundStyle(.red)
+                Button("Open Settings", action: onOpenSettings)
+            case .restricted:
+                Text("Bluetooth is restricted on this device, so scanning isn't available.")
+                    .foregroundStyle(.red)
+            }
+        }
+        .font(.callout)
+    }
+}
+
+private struct ScanStatus: View {
+    let isScanning: Bool
+    let devices: [Device]?
+
+    var body: some View {
+        if isScanning {
+            HStack {
+                ProgressView()
+                Text("Scanning…")
+            }
+        } else if let devices {
+            if devices.isEmpty {
+                Text("No devices found. Try another filter.")
+                    .foregroundStyle(.red)
+            } else {
+                Text("Devices found: \(devices.count)")
+            }
+        } else {
+            Text("Tap Scan to look for devices.")
+        }
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Device
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading) {
+                Text(device.name)
+                Text(device.id)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text("\(device.rssi) dBm")
+                .font(.caption)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/DeviceDetailView.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+// Stateful: connects the shared ViewModel to the content below. The owner lives in @State, so
+// the ViewModel lasts as long as this screen is on the navigation stack; popping the screen
+// deinitialises the owner, which clears the ViewModel and ends the connection.
+struct DeviceDetailView: View {
+    let device: Device
+    @State private var owner = ViewModelOwner()
+    @State private var state: DeviceDetailUiState?
+
+    var body: some View {
+        let viewModel: DeviceDetailViewModel = owner.viewModel()
+        let state = self.state ?? viewModel.uiState.value
+        DeviceDetailContent(
+            device: device,
+            connection: state.connection,
+            onConnect: { viewModel.connect(device: device) },
+            onDisconnect: { viewModel.disconnect() }
+        )
+        .alert(
+            "Connection failed",
+            isPresented: Binding(
+                get: { state.errorMessage != nil },
+                set: { if !$0 { viewModel.errorShown() } }
+            ),
+            actions: { Button("OK") {} },
+            message: { Text(state.errorMessage ?? "") }
+        )
+        .task {
+            for await newState in viewModel.uiState {
+                self.state = newState
+            }
+        }
+    }
+}
+
+// Stateless: renders whatever it's given, reports events up.
+struct DeviceDetailContent: View {
+    let device: Device
+    let connection: ConnectionState
+    let onConnect: () -&gt; Void
+    let onDisconnect: () -&gt; Void
+
+    var body: some View {
+        let disconnected = connection is ConnectionStateDisconnected
+        VStack(spacing: 12) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.system(size: 64))
+                .foregroundStyle(.tint)
+            Text(device.name)
+                .font(.title2)
+            Text("ID: \(device.id)")
+            Text("Signal: \(device.rssi) dBm")
+            ConnectionStatus(connection: connection)
+            // One button: Connect while disconnected, Disconnect while connecting or connected.
+            Button(action: disconnected ? onConnect : onDisconnect) {
+                Text(disconnected ? "Connect" : "Disconnect")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            Spacer()
+        }
+        .padding()
+        .navigationTitle("Device")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+private struct ConnectionStatus: View {
+    let connection: ConnectionState
+
+    var body: some View {
+        switch onEnum(of: connection) {
+        case .disconnected:
+            Text("Status: not connected")
+        case .connecting:
+            HStack {
+                ProgressView()
+                Text("Status: connecting…")
+            }
+        case .connected:
+            Text("Status: connected")
+                .foregroundStyle(.tint)
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/AppDelegate.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        AppModuleKt.doInitKoin(
+            permissionChecker: IosPermissionChecker(),
+            bleScanner: IosBleScanner(),
+            bleConnection: IosBleConnection()
+        )
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {
+        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/DeviceListViewController.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+final class DeviceListViewController: UIViewController, UITableViewDelegate {
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceListViewModel = owner.viewModel()
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let filterField = UITextField()
+    private let permissionLabel = UILabel()
+    private let permissionButton = UIButton(configuration: .plain())
+    private let scanButton = UIButton(configuration: .filled())
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let tableView = UITableView()
+    // The rows' devices by id, from the last state rendered: the snapshot holds only the ids.
+    private var devicesById: [String: Device] = [:]
+    private lazy var dataSource = UITableViewDiffableDataSource&lt;Int, String&gt;(tableView: tableView) {
+        [unowned self] tableView, indexPath, deviceId in
+        let cell = tableView.dequeueReusableCell(withIdentifier: "device", for: indexPath)
+        var content = UIListContentConfiguration.subtitleCell()
+        if let device = devicesById[deviceId] {
+            content.text = device.name
+            content.secondaryText = "\(device.id)   \(device.rssi) dBm"
+        }
+        cell.contentConfiguration = content
+        cell.accessoryType = .disclosureIndicator
+        return cell
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device Monitor"
+        navigationController?.navigationBar.prefersLargeTitles = true
+        view.backgroundColor = .systemBackground
+
+        filterField.placeholder = "Device name filter"
+        filterField.borderStyle = .roundedRect
+        filterField.autocorrectionType = .no
+        scanButton.configuration?.title = "Scan"
+        // One button: Scan while idle, Stop while scanning.
+        scanButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if viewModel.uiState.value.scan is ScanStateScanning {
+                viewModel.stopScan()
+            } else {
+                viewModel.startScan(filter: filterField.text ?? "")
+            }
+        }, for: .touchUpInside)
+        permissionLabel.numberOfLines = 0
+        permissionLabel.font = .preferredFont(forTextStyle: .callout)
+        permissionButton.contentHorizontalAlignment = .leading
+        permissionButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if viewModel.uiState.value.bluetooth == .permanentlyDenied {
+                viewModel.openSettings()
+            } else {
+                viewModel.requestPermission()
+            }
+        }, for: .touchUpInside)
+        statusLabel.numberOfLines = 0
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: "device")
+        tableView.delegate = self
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let permissionRow = UIStackView(arrangedSubviews: [permissionLabel, permissionButton])
+        permissionRow.axis = .vertical
+        permissionRow.alignment = .leading
+        let stack = UIStackView(arrangedSubviews: [filterField, permissionRow, scanButton, statusRow, tableView])
+        stack.axis = .vertical
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
+        render(viewModel.uiState.value)
+        // Back from Settings (or anywhere else): the permission may have changed.
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(sceneDidActivate),
+            name: UIScene.didActivateNotification, object: nil
+        )
+    }
+
+    @objc private func sceneDidActivate() {
+        viewModel.refreshPermission()
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. The text field owns
+    // its own text, so render() never sets it.
+    private func render(_ state: DeviceListUiState) {
+        let isScanning = state.scan is ScanStateScanning
+        // SKIE turns the sealed interface into a Swift enum, so this switch is exhaustive.
+        let devices: [Device]? = switch onEnum(of: state.scan) {
+        case .idle: nil
+        case .scanning(let scanning): scanning.found
+        case .finished(let finished): finished.found
+        }
+        renderPermission(state.bluetooth)
+        scanButton.configuration?.title = isScanning ? "Stop" : "Scan"
+        scanButton.isEnabled = isScanning || state.bluetooth == .granted
+        if isScanning { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !isScanning
+        if isScanning {
+            statusLabel.text = "Scanning…"
+        } else if let devices {
+            statusLabel.text = devices.isEmpty
+                ? "No devices found. Try another filter."
+                : "Devices found: \(devices.count)"
+        } else {
+            statusLabel.text = "Tap Scan to look for devices."
+        }
+        statusLabel.textColor = devices?.isEmpty == true &amp;&amp; !isScanning ? .systemRed : .label
+
+        devicesById = Dictionary(uniqueKeysWithValues: (devices ?? []).map { ($0.id, $0) })
+        var snapshot = NSDiffableDataSourceSnapshot&lt;Int, String&gt;()
+        snapshot.appendSections([0])
+        snapshot.appendItems((devices ?? []).map(\.id))
+        dataSource.apply(snapshot, animatingDifferences: true)
+        renderError(state.errorMessage)
+    }
+
+    // One message and at most one action per permission status. SKIE makes the Kotlin enum a
+    // Swift enum, so this switch is exhaustive.
+    private func renderPermission(_ status: PermissionStatus) {
+        let (message, action): (String, String?) = switch status {
+        case .granted: ("Bluetooth permission: allowed", nil)
+        case .notRequested: ("Device Monitor needs Bluetooth permission to find nearby devices.", "Allow Bluetooth")
+        case .denied: ("Bluetooth permission was denied. Scanning needs it to find nearby devices.", "Ask again")
+        case .permanentlyDenied: ("Bluetooth permission is off. You can turn it on in Settings.", "Open Settings")
+        case .restricted: ("Bluetooth is restricted on this device, so scanning isn't available.", nil)
+        }
+        permissionLabel.text = message
+        permissionLabel.textColor = switch status {
+        case .granted: .secondaryLabel
+        case .notRequested: .label
+        case .denied, .permanentlyDenied, .restricted: .systemRed
+        }
+        permissionButton.configuration?.title = action
+        permissionButton.isHidden = action == nil
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Scan failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+
+    func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+        tableView.deselectRow(at: indexPath, animated: true)
+        guard let deviceId = dataSource.itemIdentifier(for: indexPath), let device = devicesById[deviceId] else { return }
+        // The detail screen gets the whole device: it needs all of it to connect.
+        navigationController?.pushViewController(DeviceDetailViewController(device: device), animated: true)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/DeviceDetailViewController.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+final class DeviceDetailViewController: UIViewController {
+    private let device: Device
+    // The ViewModel lives as long as this controller: popping it deinitialises the owner, which
+    // clears the ViewModel and ends the connection. Its views can come and go; the link is not in them.
+    private let owner = ViewModelOwner()
+    private lazy var viewModel: DeviceDetailViewModel = owner.viewModel()
+    private var observation: Task&lt;Void, Never&gt;?
+
+    private let spinner = UIActivityIndicatorView(style: .medium)
+    private let statusLabel = UILabel()
+    private let connectButton = UIButton(configuration: .filled())
+
+    init(device: Device) {
+        self.device = device
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        title = "Device"
+        navigationItem.largeTitleDisplayMode = .never
+        view.backgroundColor = .systemBackground
+
+        let icon = UIImageView(image: UIImage(systemName: "antenna.radiowaves.left.and.right"))
+        icon.preferredSymbolConfiguration = UIImage.SymbolConfiguration(pointSize: 64)
+        icon.tintColor = .tintColor
+        let nameLabel = UILabel()
+        nameLabel.font = .preferredFont(forTextStyle: .title2)
+        nameLabel.text = device.name
+        let idLabel = UILabel()
+        idLabel.text = "ID: \(device.id)"
+        let rssiLabel = UILabel()
+        rssiLabel.text = "Signal: \(device.rssi) dBm"
+        // One button: Connect while disconnected, Disconnect while connecting or connected.
+        connectButton.addAction(UIAction { [weak self] _ in
+            guard let self else { return }
+            if viewModel.uiState.value.connection is ConnectionStateDisconnected {
+                viewModel.connect(device: device)
+            } else {
+                viewModel.disconnect()
+            }
+        }, for: .touchUpInside)
+
+        let statusRow = UIStackView(arrangedSubviews: [spinner, statusLabel])
+        statusRow.spacing = 8
+        let stack = UIStackView(arrangedSubviews: [icon, nameLabel, idLabel, rssiLabel, statusRow, connectButton])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 12
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.topAnchor.constraint(equalTo: view.layoutMarginsGuide.topAnchor, constant: 12),
+            stack.leadingAnchor.constraint(equalTo: view.layoutMarginsGuide.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: view.layoutMarginsGuide.trailingAnchor),
+            connectButton.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        render(viewModel.uiState.value)
+    }
+
+    // Collect only while on screen, like repeatOnLifecycle(STARTED) on Android. Leaving the
+    // screen stops the collection, not the connection.
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        observation?.cancel()
+        observation = Task {
+            for await state in viewModel.uiState {
+                render(state)
+            }
+        }
+    }
+
+    override func viewDidDisappear(_ animated: Bool) {
+        super.viewDidDisappear(animated)
+        observation?.cancel()
+        observation = nil
+    }
+
+    // The one place that touches views: every new state ends here. SKIE turns the sealed
+    // interface into a Swift enum, so this switch is exhaustive.
+    private func render(_ state: DeviceDetailUiState) {
+        let disconnected = state.connection is ConnectionStateDisconnected
+        switch onEnum(of: state.connection) {
+        case .disconnected:
+            statusLabel.text = "Status: not connected"
+            statusLabel.textColor = .label
+        case .connecting:
+            statusLabel.text = "Status: connecting…"
+            statusLabel.textColor = .label
+        case .connected:
+            statusLabel.text = "Status: connected"
+            statusLabel.textColor = .tintColor
+        }
+        let connecting = state.connection is ConnectionStateConnecting
+        if connecting { spinner.startAnimating() } else { spinner.stopAnimating() }
+        spinner.isHidden = !connecting
+        connectButton.configuration?.title = disconnected ? "Connect" : "Disconnect"
+        renderError(state.errorMessage)
+    }
+
+    private func renderError(_ message: String?) {
+        guard let message, presentedViewController == nil else { return }
+        let alert = UIAlertController(title: "Connection failed", message: message, preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "OK", style: .default) { [weak self] _ in
+            self?.viewModel.errorShown()
+        })
+        present(alert, animated: true)
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="13-ble-concepts-and-scan.html">← 13 BLE: concepts and scan</a>
+    <span class="muted">Next: 15 BLE: discovery and read</span>
+  </nav>
+</main>
+</body>
+</html>
