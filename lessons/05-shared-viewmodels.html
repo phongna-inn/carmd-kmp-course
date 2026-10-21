@@ -18,7 +18,7 @@
     <span class="tag">~3.5 h · +1 h per extra UI track</span>
     <span class="tag">Part A: one ViewModel, two platforms · Part B: SKIE</span>
     <span class="tag">Milestone: m02 shell driven by a shared ViewModel</span>
-    <span class="tag">Prereq: <a href="07-declarative-ui-lists.html">07</a></span>
+    <span class="tag">Prereq: <a href="08-shared-viewmodels.html">08</a> (Part A below is now Lesson 08)</span>
   </div>
   <div class="switchers">
     <div class="switcher" data-platform="android"></div>
@@ -957,10 +957,10 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
   <h2>A6. What actually happens</h2>
   <p>We built Part A with the brief below (Kotlin 2.4.21, Lifecycle 2.11.0, coroutines 1.11.0, AGP 9.4.1, Xcode 26.2) on all four tracks, and ran it on the Android 16 emulator and the iOS 26.2 simulator. Tap Scan: rows appear one by one under "Scanning…", every 0.3 s. At 3 s the scan stops and the status reads "Devices found: 5". <strong>Rotate during a scan: it carries on</strong>, and the new screen finishes with all five devices (in m01, it fell back to "Tap Scan"). The filter <code>fail</code> shows a "Scan failed" dialog that survives rotation and goes away on OK.</p>
   <div class="shots">
-    <figure><img src="../assets/l05/android-scanning.png" alt="Android app mid-scan: Scanning… with two device rows"><figcaption>Compose · mid-scan</figcaption></figure>
-    <figure><img src="../assets/l05/android-error.png" alt="Android app showing a Scan failed dialog"><figcaption>Compose · filter "fail"</figcaption></figure>
-    <figure><img src="../assets/l05/ios-scanning.png" alt="iOS app mid-scan: Scanning… with three device rows"><figcaption>SwiftUI · mid-scan</figcaption></figure>
-    <figure><img src="../assets/l05/ios-error.png" alt="iOS app showing a Scan failed alert"><figcaption>SwiftUI · filter "fail"</figcaption></figure>
+    <figure><img src="../assets/l08/android-scanning.png" alt="Android app mid-scan: Scanning… with two device rows"><figcaption>Compose · mid-scan</figcaption></figure>
+    <figure><img src="../assets/l08/android-error.png" alt="Android app showing a Scan failed dialog"><figcaption>Compose · filter "fail"</figcaption></figure>
+    <figure><img src="../assets/l08/ios-scanning.png" alt="iOS app mid-scan: Scanning… with three device rows"><figcaption>SwiftUI · mid-scan</figcaption></figure>
+    <figure><img src="../assets/l08/ios-error.png" alt="iOS app showing a Scan failed alert"><figcaption>SwiftUI · filter "fail"</figcaption></figure>
   </div>
   <div class="callout gotcha">
     <span class="label">Gotcha · iOS: a ViewModel without an owner keeps working after its screen is gone</span>
@@ -1027,7 +1027,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
   </div>
 
   <!-- ============================== PART B ============================== -->
-  <p class="part">Part B — SKIE: let the compiler write the bridge (~1.5 h)</p>
+  <p class="part" id="part-b">Part B — SKIE: let the compiler write the bridge (~1.5 h)</p>
 
   <h2>B1. What SKIE does</h2>
   <p><a href="https://skie.touchlab.co/">SKIE</a> (Touchlab) is a Kotlin compiler plugin. While the iOS framework is built, it generates extra Swift code into the framework, so Kotlin types arrive in Swift in a Swift shape:</p>
@@ -1523,7 +1523,7 @@ shared/build/skie/…/swift/generated/ (Shared.h itself doesn't change). Do NOT 
   </ul>
 
   <nav class="progress-links">
-    <a href="07-declarative-ui-lists.html">← 07 Declarative UI: lists, async, navigation</a>
+    <a href="08-shared-viewmodels.html">← 08 Shared ViewModels</a>
     <a href="06-clean-architecture-di-testing.html">06 Clean architecture, DI, and testing →</a>
   </nav>
 </main>
