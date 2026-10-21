@@ -18,7 +18,7 @@
     <span class="tag">~3.5 h · +1 h per extra UI track</span>
     <span class="tag">Part A: one ViewModel, two platforms · Part B: SKIE</span>
     <span class="tag">Milestone: m02 shell driven by a shared ViewModel</span>
-    <span class="tag">Prereq: <a href="04-declarative-ui.html">04</a></span>
+    <span class="tag">Prereq: <a href="07-declarative-ui-lists.html">07</a></span>
   </div>
   <div class="switchers">
     <div class="switcher" data-platform="android"></div>
@@ -26,7 +26,7 @@
   </div>
 
   <div class="mission-tie">
-    <strong>Why this matters:</strong> the Device Monitor's real work (scanning, holding a connection, streaming sensor values) must not die when the user rotates the phone or opens another screen. It should also be written once, not twice. In m01 the scan lived inside the screen, and Android rotation cancelled it (<a href="04-declarative-ui.html">Lesson 04</a>, A5). Today the scan moves into a <strong>ViewModel in shared Kotlin</strong>, and both apps only observe it. That's milestone <strong>m02</strong>, and it's the shape of every screen in the team's app: a shared ViewModel with a thin native UI on each platform. From Lesson 06 the ViewModel gets its scanner through a port, and from Lesson 08 that scanner is a real radio.
+    <strong>Why this matters:</strong> the Device Monitor's real work (scanning, holding a connection, streaming sensor values) must not die when the user rotates the phone or opens another screen. It should also be written once, not twice. In m01 the scan lived inside the screen, and Android rotation cancelled it (<a href="06-declarative-ui-components.html">Lesson 06</a>, section 6). Today the scan moves into a <strong>ViewModel in shared Kotlin</strong>, and both apps only observe it. That's milestone <strong>m02</strong>, and it's the shape of every screen in the team's app: a shared ViewModel with a thin native UI on each platform. From Lesson 06 the ViewModel gets its scanner through a port, and from Lesson 08 that scanner is a real radio.
   </div>
 
   <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/topic/architecture/ui-layer">UI layer</a> guide: UI state, state holders, unidirectional data flow and <code>StateFlow</code>, all in one page. Read it after A2. iOS learners add SKIE's <a href="https://skie.touchlab.co/features/flows">Flows</a> page before Part B.</p>
@@ -1523,7 +1523,7 @@ shared/build/skie/…/swift/generated/ (Shared.h itself doesn't change). Do NOT 
   </ul>
 
   <nav class="progress-links">
-    <a href="04-declarative-ui.html">← 04 Declarative UI</a>
+    <a href="07-declarative-ui-lists.html">← 07 Declarative UI: lists, async, navigation</a>
     <a href="06-clean-architecture-di-testing.html">06 Clean architecture, DI, and testing →</a>
   </nav>
 </main>

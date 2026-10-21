@@ -335,7 +335,7 @@ pre.brief-text { white-space: pre-wrap; font-size: 0.78em; padding-top: 2.2rem; 
   .switchers { display: none; }
 }
 
-/* ---- Mini phone mock (interactive UI toys, e.g. Lesson 04) ---- */
+/* ---- Mini phone mock (interactive UI toys, e.g. Lesson 06) ---- */
 .toy { border: 1px solid var(--rule); border-radius: 6px; padding: 1rem 1.1rem; margin: 1.25rem 0; background: var(--card); }
 .toy-controls { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.9rem; }
 .toy-controls button { font-family: inherit; font-size: 0.82rem; padding: 0.35rem 0.75rem; border: 1px solid var(--accent); background: var(--card-strong); color: var(--accent); border-radius: 4px; cursor: pointer; }
