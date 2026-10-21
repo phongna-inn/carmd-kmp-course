@@ -19,7 +19,7 @@
     <li><strong>One inbound port per capability</strong> (<code>DeviceScanning</code>), not per action. New actions are new methods on it.</li>
     <li><strong>Outbound ports are named in the app's terms</strong> (<code>BleScanner</code>, <code>LogUploader</code>; never <code>ApiClient</code>, <code>ScanResult</code>, <code>CBPeripheral</code>). Use an interface, not <code>expect</code>/<code>actual</code>: ports need several implementations, one of them in Swift.</li>
     <li><strong>ViewModels talk only to inbound ports.</strong> They never see a service class or an outbound port.</li>
-    <li><strong>Constructor injection everywhere.</strong> Only the composition root (<code>di/</code>) calls the constructors or names a service or an adapter.</li>
+    <li><strong>Constructor injection everywhere.</strong> In the app's code, only the composition root (<code>di/</code>) calls the constructors or names a service or an adapter. Tests build what they test themselves (rule 8).</li>
     <li><strong>Lookups (<code>KoinComponent</code>, <code>get()</code>) only at the edges</strong>: classes Koin doesn't create (the iOS ViewModel factory). Never in the app core, ViewModels or adapters.</li>
     <li><strong>Tests drive inbound ports, with test doubles built by constructor</strong>, never through the container. One extra test checks that the Koin graph builds.</li>
   </ol>
@@ -122,7 +122,7 @@ class SomeViewModelTest {
     @AfterTest fun tearDown() { Dispatchers.resetMain() }
     // runTest shares Main's virtual clock: timeouts fire at once
     // testScheduler.runCurrent(): run what's ready, clock unchanged
-    // testScheduler.advanceTimeBy(d): move the clock and run what's due
+    // testScheduler.advanceTimeBy(d): move the clock, running what's due before the new time
     // testScheduler.currentTime: virtual ms elapsed
 }</code></pre>
   <p><code>./gradlew :shared:allTests</code> runs <code>testAndroidHostTest</code> (JVM, JUnit 4) and <code>iosSimulatorArm64Test</code> (Kotlin/Native's runner). Check that both tasks appear: a green build only means nothing failed.</p>

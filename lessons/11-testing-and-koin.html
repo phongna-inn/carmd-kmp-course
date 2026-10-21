@@ -24,10 +24,10 @@
   </div>
 
   <div class="mission-tie">
-    <strong>Why this matters:</strong> Lesson 10 promised that ports make the app core testable, and today you collect. A test drives the scanning service through its inbound port, <code>DeviceScanning</code>, exactly as the ViewModel does, with a <strong>fake</strong> radio behind the outbound port that the test controls. The same tests run on the JVM and on the iOS runtime, in milliseconds, with no device and no Bluetooth. Then you replace <code>AppContainer</code> with <strong>Koin</strong>, a DI container that runs on every KMP target. It binds each inbound port to its service and each outbound port to its adapter, so in Lesson 13 swapping in the real radios is one line. Koin checks those bindings only at run time, so one more test checks the whole graph. That's milestone <strong>m06</strong>.
+    <strong>Why this matters:</strong> Lesson 10 promised that ports make the app core testable, and today you collect. A test drives the scanning service through its inbound port, <code>DeviceScanning</code>, exactly as the ViewModel does, with a <strong>fake</strong> radio behind the outbound port that the test controls. The same tests run on the JVM and on the iOS runtime, in milliseconds, with no device and no Bluetooth. Then you replace <code>AppContainer</code> with <strong>Koin</strong>, a Kotlin Multiplatform DI container, so the same wiring runs on Android and iOS. It binds each inbound port to its service and each outbound port to its adapter, so in Lesson 13 swapping in the real radios is one line. Written the way the course writes them, those bindings are checked only at run time, so one more test checks the whole graph. That's milestone <strong>m06</strong>.
   </div>
 
-  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/kotlin/coroutines/test">Testing Kotlin coroutines on Android</a>. Read it before section 4: every rule it gives for <code>runTest</code> and the <code>Main</code> dispatcher applies to <code>commonTest</code> too. For Koin, its <a href="https://insert-koin.io/docs/reference/koin-core/definitions/">Definitions</a> page, before section 6.</p>
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/kotlin/coroutines/test">Testing Kotlin coroutines on Android</a>. Read it before section 4: its advice on <code>runTest</code> and the <code>Main</code> dispatcher applies to <code>commonTest</code> too, except its <code>MainDispatcherRule</code>. That's a JUnit 4 rule, and JUnit is JVM-only, so it doesn't compile in <code>commonTest</code>; section 5 uses <code>@BeforeTest</code> and <code>@AfterTest</code> instead. For Koin, its <a href="https://insert-koin.io/docs/reference/koin-core/definitions/">Definitions</a> page, before section 6.</p>
   <p><span class="tag">Tracks</span> Sections 1–5 are all in <code>shared/</code>, the same on every track. Koin changes a few lines per track: where Koin starts and how the screen asks for its ViewModel (sections 7 and 8). The app looks and behaves exactly as m05. Each excerpt shows only the lines its notes explain, and the complete files are in <a href="#full-files">Full files</a> at the end.</p>
 
   <h2>What changes from m05</h2>
@@ -116,7 +116,7 @@
   <ol class="walk">
     <li><strong>The service test</strong> keeps the real <code>ScanningService</code> and replaces only the radio. It tests the app's rule, "each device once, names that contain the filter", which is the part you'd hate to break.</li>
     <li><strong>The ViewModel test</strong> keeps the real ViewModel and replaces the whole app core with <code>TestDeviceScanning</code>, a test implementation of the inbound port. The course calls it that, not a fake: a fake stands in for the outside world behind an outbound port, and this one stands in for the inside. It means the ViewModel test fails only when the ViewModel is wrong, never because of the service's rule.</li>
-    <li><strong>No mocking library.</strong> Both doubles are ordinary classes that implement a port, a dozen lines each, written in <code>commonTest</code>, so they never ship in either app.</li>
+    <li><strong>No mocking library.</strong> Both doubles are ordinary classes that implement a port, under twenty lines each, written in <code>commonTest</code>, so they never ship in either app.</li>
   </ol>
 
   <h2>2. Set up <code>commonTest</code></h2>
@@ -395,7 +395,7 @@ class DeviceListViewModelTest {
   <p>This is a manual version of <strong>mutation testing</strong>: if you can break a rule and every test stays green, nothing protects that rule. The "No value produced in 3s" line is Turbine's wall-clock timeout, the one place where a failing test does take real seconds.</p>
 
   <h2>6. What a DI container adds</h2>
-  <p><code>AppContainer</code> is fine for one screen. Android's <a href="https://developer.android.com/training/dependency-injection/manual">Manual dependency injection</a> page lists what goes wrong as the app grows: "You have to manage <code>AppContainer</code> yourself, creating instances for all dependencies by hand", "There is still a lot of boilerplate code", and you manage each container's scope and lifecycle yourself: "Doing this incorrectly can lead to subtle bugs and memory leaks in your app." A <strong>DI container</strong> does that bookkeeping: you declare once what each type is and how to build it, and the container works out the order. Android's own choice is Hilt, which is Android-only. <a href="https://insert-koin.io/">Koin</a> runs on every KMP target, so the shared code uses it. Koin has three kinds of definition that matter today:</p>
+  <p><code>AppContainer</code> is fine for one screen. Android's <a href="https://developer.android.com/training/dependency-injection/manual">Manual dependency injection</a> page lists what goes wrong as the app grows: "You have to manage <code>AppContainer</code> yourself, creating instances for all dependencies by hand", "There is still a lot of boilerplate code", and you manage each container's scope and lifecycle yourself: "Doing this incorrectly can lead to subtle bugs and memory leaks in your app." A <strong>DI container</strong> does that bookkeeping: you declare once what each type is and how to build it, and the container works out the order. Android's own choice is Hilt, which is Android-only. <a href="https://insert-koin.io/">Koin</a> is a Kotlin Multiplatform library: <code>koin-core</code> is published for Android and iOS (and the JVM, JS, Wasm and other native targets), so the shared code uses it. Koin has three kinds of definition that matter today:</p>
   <div class="table-wrap">
   <table>
     <tr><th>Definition</th><th>Gives you</th><th>Ours</th></tr>
@@ -598,7 +598,7 @@ class DeviceListFragment : Fragment() {
   <p><code>by viewModel()</code> (singular, Koin's) replaces AndroidX's <code>by viewModels { … }</code> (plural): the same owner (this Fragment), the same lifetime, the same creation on first access; only the factory changes. Mind the one letter: the plural is AndroidX's, which falls back to the default factory. In <code>androidApp/build.gradle.kts</code>, add <code>implementation("io.insert-koin:koin-android:4.2.2")</code> at the end of <code>dependencies { }</code>. <code>fragment-ktx</code> is no longer used directly, but <code>koin-android</code> depends on it anyway, so the course keeps the explicit line.</p>
   </div>
   </div>
-  <p>iOS has no Koin integration with <code>ViewModelStore</code>, and doesn't need one: Lesson 08's resolver already takes any factory. Now it uses one that asks Koin, and Swift stops passing a factory at all:</p>
+  <p>Koin's docs show no way to fill a <code>ViewModelStore</code> from iOS, and we don't need one: Lesson 08's resolver already takes any factory. Now it uses one that asks Koin, and Swift stops passing a factory at all:</p>
   <figure class="excerpt" data-part="ios">
     <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/ViewModelResolver.kt</figcaption>
 <pre><code><span class="elide">⋯  package and imports: as in m05, plus CreationExtras and org.koin.core.component.KoinComponent</span>
@@ -618,7 +618,7 @@ class DeviceListFragment : Fragment() {
   <ol class="walk">
     <li><strong>The <code>factory</code> parameter is gone.</strong> Swift no longer chooses how a ViewModel is built: it asks for a class, and the composition root decides.</li>
     <li><strong><code>KoinViewModelFactory</code> is a <code>KoinComponent</code></strong>: a lookup, at the edge, in a class Koin doesn't create (section 6's rule). The store calls <code>create</code> only the first time it needs that ViewModel, so the store still owns its lifetime, and <code>ViewModelOwner</code>'s <code>deinit</code> still clears it.</li>
-    <li><strong>Why our own four lines?</strong> Koin's docs cover ViewModels on Android and in Compose, not a Swift-side <code>ViewModelStore</code>. <code>getKoin().get(modelClass)</code> is Koin's public API, and the route through the store is Lesson 08's, unchanged.</li>
+    <li><strong>Why our own four lines?</strong> Koin's docs cover ViewModels on Android and in Compose, not a Swift-side <code>ViewModelStore</code>. Koin's multiplatform code does have a class of the same name, <code>org.koin.viewmodel.factory.KoinViewModelFactory</code>, but it takes a Koin scope and one ViewModel class per instance, and the docs don't show it. <code>getKoin().get(modelClass)</code> is Koin's public API, and the route through the store is Lesson 08's, unchanged.</li>
   </ol>
   <p>In <code>iosApp/iosApp/ViewModelOwner.swift</code> (both iOS tracks), <code>viewModel</code> loses its parameter: <code>func viewModel&lt;VM: ViewModel&gt;() -&gt; VM</code> calls <code>store.resolveViewModel(modelClass: VM.self)</code>. Each screen's line gets shorter:</p>
   <div class="tracks">
@@ -642,7 +642,7 @@ class DeviceListFragment : Fragment() {
   <p>Swift infers <code>VM</code> from the declared type, the same trick as <code>koinViewModel()</code>. With <code>AppContainer</code> gone, Koin is imported in exactly three kinds of place: <code>di/</code> (main and test), <code>ViewModelResolver.kt</code>, and on Android the one screen that asks for the ViewModel. Those are the edges.</p>
 
   <h2>9. Test the graph, because the compiler no longer does</h2>
-  <p>Here is the price of a container. With <code>AppContainer</code>, a missing dependency was a compile error. With Koin, the module is a list of recipes read at run time. We deleted the <code>single&lt;BleScanner&gt;</code> line, and the Android app <strong>compiled without a warning</strong>, then crashed the moment the list screen appeared:</p>
+  <p>Here is the price of a container. With <code>AppContainer</code>, a missing dependency was a compile error. With Koin's classic DSL, the one this course uses, the module is a list of recipes read at run time. (Koin 4.2 also offers an optional Compiler Plugin with its own DSL, which "checks at build time that every dependency is declared" (<a href="https://insert-koin.io/docs/reference/koin-core/definitions/">Definitions</a>). The course stays with plain Kotlin and no compiler plugin.) We deleted the <code>single&lt;BleScanner&gt;</code> line, and the Android app <strong>compiled without a warning</strong>, then crashed the moment the list screen appeared:</p>
 <pre><code>FATAL EXCEPTION: main
 …
 Caused by: …InstanceCreationException: Could not create instance for '[Factory: '…adapter.inbound.DeviceListViewModel']'
@@ -666,7 +666,7 @@ Caused by: …NoDefinitionFoundException: No definition found for type '…core.
     <li><strong><code>koinApplication { … }</code></strong> "creates a container that is not registered in <code>GlobalContext</code>" (<a href="https://insert-koin.io/docs/reference/koin-core/starting-koin">Starting Koin</a>), unlike <code>startKoin</code>. Tests don't leak into each other, and the once-per-process rule doesn't bite.</li>
     <li><strong>It sees <code>appModule</code></strong> because <code>internal</code> means "the same Gradle module", and <code>commonTest</code> is compiled with <code>commonMain</code>'s module.</li>
     <li><strong>Building the ViewModel is safe without <code>setMain</code></strong>: nothing touches <code>viewModelScope</code> until <code>startScan</code>.</li>
-    <li><strong>Keep it current.</strong> Every new screen adds one <code>get&lt;…ViewModel&gt;()</code> line here. With the binding deleted, this test fails with the same three-line chain as the crash, on the JVM and on iOS.</li>
+    <li><strong>Keep it current.</strong> Every new screen adds one <code>get&lt;…ViewModel&gt;()</code> line here. With the binding deleted, this test fails on the JVM and on iOS. The JVM report shows the same three-line chain as the crash. The iOS report prints only the top line, <code>Could not create instance for '[Factory: '…DeviceListViewModel']'</code>, and <code>NoDefinitionFoundException</code> appears there only as a frame in the stack trace, so read the JVM report to find the missing piece.</li>
   </ol>
   <p>The other eight tests don't use Koin: they call constructors with test doubles. That's the point of constructor injection: <strong>the container is for the app, not for the tests.</strong></p>
 

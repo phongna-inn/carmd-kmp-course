@@ -198,7 +198,7 @@
     <dt><strong>Service locator</strong></dt>
     <dd>A registry that classes ask for their dependencies (<code>KoinComponent</code> + <code>get()</code>). It hides what a class needs, so the course allows it only at the edges. (11)</dd>
     <dt><strong>DI container</strong> / <strong>Koin module</strong></dt>
-    <dd>A library that builds the graph from declarations (<code>single</code>: one instance, <code>factory</code>: new each time, <code>viewModel</code>: new, then kept by the store). It works out the order, but checks it only at run time. (11)</dd>
+    <dd>A library that builds the graph from declarations (<code>single</code>: one instance, <code>factory</code>: new each time, <code>viewModel</code>: new, then kept by the store). It works out the order, but with Koin's classic DSL, the one the course uses, it checks the graph only at run time. (11)</dd>
     <dt><strong>Test double</strong></dt>
     <dd>Any object a test uses in place of a real one. The course writes them by hand, as classes that implement a port, instead of using a mocking library. (11)</dd>
     <dt><strong>Fake</strong></dt>
