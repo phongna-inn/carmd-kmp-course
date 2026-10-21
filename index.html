@@ -1,16 +1,152 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
+<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Native Device Monitor course</title>
-<meta http-equiv="refresh" content="0; url=lessons/00-introduction.html">
-<link rel="canonical" href="lessons/00-introduction.html">
+<title>00 — Introduction and lesson map</title>
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
 <main>
-  <p>Opening <a href="lessons/00-introduction.html">Lesson 00 — Introduction and lesson map</a>…</p>
+  <p class="kicker">Lesson 00 · Before day 1 · Native Device Monitor course</p>
+  <h1>Introduction and Lesson Map</h1>
+  <div class="meta">
+    <span class="tag">~10 min</span>
+    <span class="tag">Counts for no day</span>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> this is the course's front page. Read it once before Lesson 01 to see what you're building and how the lessons work. After that, come back to the map in section 3 to find today's lesson.
+  </div>
+
+  <h2>1. What you'll build</h2>
+  <p>You'll build one app, the <strong>Native Device Monitor</strong>, for Android and iOS, on top of shared Kotlin Multiplatform (KMP) code. The app:</p>
+  <ul>
+    <li>asks for the Bluetooth permissions it needs, and handles every answer;</li>
+    <li>scans for Bluetooth Low Energy (BLE) devices and filters them by name;</li>
+    <li>connects to a device, lists its services and characteristics, reads a value and subscribes to notifications;</li>
+    <li>shows the phone's battery, network and Bluetooth status;</li>
+    <li>runs a background monitor that logs that status on an interval, as often as each OS allows; neither guarantees exact timing in the background.</li>
+  </ul>
+  <p>The screens are native: Compose on Android and SwiftUI on iOS by default. Everything else that isn't tied to a platform is shared Kotlin. The app is organised around an <strong>app core</strong> in the shared code, with adapters on both sides, the shape in the diagram below. You'll build it up from Lesson 10; for now, only notice the pieces and their colours.</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 700 260" role="img" aria-labelledby="l00-hex-title">
+      <title id="l00-hex-title">The finished app's shape. On the left, the Android screen and the iOS screen call the shared ViewModels, which, with the tests, are the inbound adapters. The inbound adapters call the app core in the middle, a hexagon holding models, services, inbound ports and outbound ports. On the right, the outbound adapters, which hold the platform code, plug into the app core's outbound ports.</title>
+      <defs><marker id="l00-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="android">
+        <rect class="box" x="10" y="60" width="110" height="55" rx="6"/>
+        <text class="title" x="22" y="82">Android</text>
+        <text class="small muted" x="22" y="100">Compose screen</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="10" y="145" width="110" height="55" rx="6"/>
+        <text class="title" x="22" y="167">iOS</text>
+        <text class="small muted" x="22" y="185">SwiftUI screen</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="145" y="60" width="125" height="140" rx="6"/>
+        <text class="title" x="157" y="112">Inbound</text>
+        <text class="title" x="157" y="130">adapters</text>
+        <text class="small muted" x="157" y="150">shared ViewModels,</text>
+        <text class="small muted" x="157" y="164">tests</text>
+      </g>
+      <g data-part="core">
+        <polygon class="box" points="485,130 440,208 350,208 305,130 350,52 440,52"/>
+        <text class="title" x="395" y="105" text-anchor="middle">App core</text>
+        <text class="small muted" x="395" y="124" text-anchor="middle">models · services</text>
+        <text class="small muted" x="395" y="140" text-anchor="middle">inbound ports</text>
+        <text class="small muted" x="395" y="156" text-anchor="middle">outbound ports</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="540" y="60" width="150" height="140" rx="6"/>
+        <text class="title" x="552" y="112">Outbound</text>
+        <text class="title" x="552" y="130">adapters</text>
+        <text class="small muted" x="552" y="150">Bluetooth radio,</text>
+        <text class="small muted" x="552" y="164">permissions, files…</text>
+      </g>
+      <path class="edge" d="M120,88 L145,88" marker-end="url(#l00-hex-arrow)"/>
+      <path class="edge" d="M120,172 L145,172" marker-end="url(#l00-hex-arrow)"/>
+      <path class="edge" d="M270,130 L305,130" marker-end="url(#l00-hex-arrow)"/>
+      <path class="edge" d="M540,130 L485,130" marker-end="url(#l00-hex-arrow)"/>
+    </svg>
+    <figcaption>
+      The finished app. The arrows show who calls or plugs into whom: screens call the inbound adapters, which call the app core, and the outbound adapters plug into it.
+      <ul class="legend">
+        <li data-part="core">App core</li>
+        <li data-part="inbound">Inbound</li>
+        <li data-part="outbound">Outbound</li>
+        <li data-part="android">Android</li>
+        <li data-part="ios">iOS</li>
+      </ul>
+    </figcaption>
+  </figure>
+  <p>This colour code runs through the whole course. Diagrams and code excerpts' file-path labels use it whenever they show a part of the app, so you can tell which part you're looking at. Code that belongs to no part of the app, such as the scratch programs in Lessons 01–04, stays uncoloured.</p>
+
+  <h2>2. How the course works</h2>
+  <ul>
+    <li><strong>Four weeks, one lesson a day.</strong> There are 20 core lessons, each at most about 2.5 h on the default track, and each ends at a natural stop: a passing build or a finished exercise. Lesson 00 counts for no day.</li>
+    <li><strong>One app, growing.</strong> From Lesson 05 on, every lesson adds a <strong>milestone</strong> (<code>m00</code> to <code>m15</code>) to the same project. Lessons 01–04 are scratch programs and apps that take no milestone.</li>
+    <li><strong>Lesson anatomy.</strong> A lesson has a header with its estimate and milestone, a "why this matters" paragraph, concepts with diagrams, code <strong>excerpts</strong> (only the lines a section discusses), gotchas, retrieval checks, an unaided exercise, an agent brief, further reading, and the complete <strong>full files</strong>, collapsed at the end.</li>
+    <li><strong>UI tracks.</strong> Lessons that touch UI have a switcher: Android <code>XML | Compose | Both</code> and iOS <code>UIKit | SwiftUI | Both</code>. Compose + SwiftUI is the default. XML and UIKit are there because the team's existing app still contains that code. An extra track adds time, shown in the estimate as <code>+0.5 h</code> for example.</li>
+    <li><strong>Agent briefs.</strong> Every lesson from 01 on has a copy-paste brief near its end, just before further reading and the full files: where to start (the previous milestone, once there is one), the behaviour to build, the files involved and the acceptance checks. Hand it to your AI agent, or follow it yourself.</li>
+    <li><strong>The never-blind code rule.</strong> You may let an agent write the code, but never blind. Read the lesson's code walkthrough, or have your agent explain its code line by line. Answer the retrieval checks. Then do the unaided exercise yourself. That last step isn't optional.</li>
+  </ul>
+  <p>Before you start, check the <a href="COURSE_PLAN.md#environment">environment requirements</a> in the course plan.</p>
+
+  <h2>3. The lesson map</h2>
+  <p>Linked lessons are ready. The rest are marked <span class="tag">upcoming</span> and have no page yet. Estimates are for the default track. Total: about 42.5 h of core lessons.</p>
+  <div id="lesson-map">
+    <h3>Week 1 — Languages, platforms, KMP (~10 h)</h3>
+    <div class="table-wrap">
+    <table>
+      <tr><th>Day</th><th>Lesson</th><th>Milestone</th><th>Est.</th></tr>
+      <tr><td>1</td><td><a href="lessons/01-kotlin-for-typescript-devs.html">01 Kotlin for TypeScript developers</a></td><td>scratch program</td><td>~2 h</td></tr>
+      <tr><td>2</td><td><a href="lessons/02-swift-for-typescript-devs.html">02 Swift for TypeScript developers</a></td><td>scratch program</td><td>~2 h</td></tr>
+      <tr><td>3</td><td><a href="lessons/03-android-fundamentals.html">03 Android fundamentals</a></td><td>scratch app</td><td>~1.75 h</td></tr>
+      <tr><td>4</td><td><a href="lessons/04-ios-fundamentals.html">04 iOS fundamentals</a></td><td>scratch app</td><td>~1.75 h</td></tr>
+      <tr><td>5</td><td><a href="lessons/05-anatomy-of-a-kmp-project.html">05 Anatomy of a KMP project</a></td><td>m00</td><td>~2.5 h</td></tr>
+    </table>
+    </div>
+    <h3>Week 2 — Declarative UI, shared ViewModels, app architecture (~10 h)</h3>
+    <div class="table-wrap">
+    <table>
+      <tr><th>Day</th><th>Lesson</th><th>Milestone</th><th>Est.</th></tr>
+      <tr><td>6</td><td><a href="lessons/06-declarative-ui-components.html">06 Declarative UI: components, state, layout</a></td><td>m01</td><td>~2 h</td></tr>
+      <tr><td>7</td><td><a href="lessons/07-declarative-ui-lists.html">07 Declarative UI: lists, async, navigation</a></td><td>m02</td><td>~2.5 h</td></tr>
+      <tr><td>8</td><td><a href="lessons/08-shared-viewmodels.html">08 Shared ViewModels</a></td><td>m03</td><td>~2 h</td></tr>
+      <tr><td>9</td><td><a href="lessons/09-kotlin-swift-with-skie.html">09 Kotlin↔Swift with SKIE</a></td><td>m04</td><td>~1.5 h</td></tr>
+      <tr><td>10</td><td><a href="lessons/10-the-hexagon.html">10 The hexagon: app core, ports, adapters, DI by hand</a></td><td>m05</td><td>~2 h</td></tr>
+    </table>
+    </div>
+    <h3>Week 3 — Testing, Koin, permissions, BLE connect (~11.5 h)</h3>
+    <div class="table-wrap">
+    <table>
+      <tr><th>Day</th><th>Lesson</th><th>Milestone</th><th>Est.</th></tr>
+      <tr><td>11</td><td><a href="lessons/11-testing-and-koin.html">11 Testing the app core + Koin</a></td><td>m06</td><td>~2.5 h</td></tr>
+      <tr><td>12</td><td>12 Permissions <span class="tag">upcoming</span></td><td>m07</td><td>~2 h</td></tr>
+      <tr><td>13</td><td>13 BLE: concepts and scan <span class="tag">upcoming</span></td><td>m08</td><td>~2.5 h</td></tr>
+      <tr><td>14</td><td>14 BLE: connect <span class="tag">upcoming</span></td><td>m09</td><td>~2 h</td></tr>
+      <tr><td>15</td><td>15 BLE: discovery and read <span class="tag">upcoming</span></td><td>m10</td><td>~2.5 h</td></tr>
+    </table>
+    </div>
+    <h3>Week 4 — Complete BLE, background monitoring, finish (~11 h)</h3>
+    <div class="table-wrap">
+    <table>
+      <tr><th>Day</th><th>Lesson</th><th>Milestone</th><th>Est.</th></tr>
+      <tr><td>16</td><td>16 BLE: notify, disconnect, errors <span class="tag">upcoming</span></td><td>m11</td><td>~2.5 h</td></tr>
+      <tr><td>17</td><td>17 Device status and the log store <span class="tag">upcoming</span></td><td>m12</td><td>~2.5 h</td></tr>
+      <tr><td>18</td><td>18 Background monitor: build it <span class="tag">upcoming</span></td><td>m13</td><td>~2 h</td></tr>
+      <tr><td>19</td><td>19 Background monitor: platform behaviour table <span class="tag">upcoming</span></td><td>m14</td><td>~1.5 h</td></tr>
+      <tr><td>20</td><td>20 Integration and end-to-end check <span class="tag">upcoming</span></td><td>m15</td><td>~2.5 h</td></tr>
+    </table>
+    </div>
+  </div>
+  <p>Three optional extensions follow the core lessons: an API client with Ktor, camera and media, and a BLE library comparison. Each starts from the finished app (<code>m15</code>). The <a href="COURSE_PLAN.md">course plan</a> lists them.</p>
+
+  <nav class="progress-links">
+    <span class="muted">Start here</span>
+    <a href="lessons/01-kotlin-for-typescript-devs.html">Next: 01 Kotlin for TypeScript developers →</a>
+  </nav>
 </main>
 </body>
 </html>
