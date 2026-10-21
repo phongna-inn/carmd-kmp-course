@@ -769,6 +769,8 @@ them in full. Don't use a summarising web fetch; it can leave out code.
   mkdir -p .course    # in my workspace root, not inside demo/
   curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/10-the-hexagon.html" -o .course/lesson-10.html
   curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/glossary.html" -o .course/ref-glossary.html
+Lesson 09, which this brief's warning list points to; skipped if it's already there:
+  [ -f .course/lesson-09.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/09-kotlin-swift-with-skie.html" -o .course/lesson-09.html
 Use these files to answer my questions about this lesson without asking me for context.
 Then build what follows, using the lesson's "Full files" for my tracks exactly,
 except where the brief below says otherwise.
