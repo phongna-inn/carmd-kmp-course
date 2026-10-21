@@ -443,7 +443,7 @@ class DeviceListFragment : Fragment() {
     <li><strong><code>by viewModels { DeviceListViewModel.Factory }</code></strong> (from <code>fragment-ktx</code>) scopes the ViewModel to this Fragment. It's created on first access, survives rotation (the Fragment is recreated, but its <code>ViewModelStore</code> isn't), and is cleared when the Fragment leaves the back stack for good.</li>
     <li><strong>The state fields are gone</strong>, and so are <code>onSaveInstanceState</code> and <code>onCreate</code>. The Fragment holds no screen state any more, only views and the ViewModel reference.</li>
     <li><strong><code>viewLifecycleOwner.repeatOnLifecycle(STARTED)</code></strong> runs the <code>collect</code> block "every time the lifecycle is in the <code>STARTED</code> state (or above)" and "cancels it when it's <code>STOPPED</code>" (<a href="https://developer.android.com/topic/libraries/architecture/views/coroutines-views">coroutines with Views</a>). Use the <em>view</em> lifecycle, not the Fragment's: the views die while the Fragment sits on the back stack, and <code>render</code> must never touch dead views.</li>
-    <li><strong><code>render(state)</code></strong> is Lesson 06's <code>render()</code>, now with the state as a parameter instead of fields. Every emission ends here, and nothing else touches a widget.</li>
+    <li><strong><code>render(state)</code></strong> is m02's <code>render()</code>, now with the state as a parameter instead of fields. Every emission ends here, and nothing else touches a widget.</li>
     <li><strong>The EditText keeps the filter.</strong> It owns its text while the user types, restores it after rotation (it has an id), and is read once, when Scan is tapped.</li>
     <li><strong>The red colour gained <code>&amp;&amp; !isScanning</code>.</strong> A scan now starts as <code>Scanning(found = [])</code>. m02's rule (<code>devices?.isEmpty() == true</code>) would paint "Scanning…" red, the same kind of bug as the imperative phone in Lesson 06's toy. Compose and SwiftUI never hit this, because their <code>when</code>/<code>if</code> checks <code>isScanning</code> first. Hand-written <code>render()</code> code computes each widget separately, so each derivation has to be checked again.</li>
     <li><strong>The dialog</strong> is shown when the state has a message and no dialog is up. "OK" and cancel (Back, tap outside) call <code>errorShown()</code>. In <code>onDestroyView</code>, <code>dismiss()</code> removes the window without calling the cancel listener, so after rotation the message is still in state and the new view shows the dialog again.</li>
@@ -836,7 +836,7 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
       <button class="opt">in the dialog object the screen created</button>
     </div>
     <p class="feedback"></p>
-    <p class="why">The message is part of <code>DeviceListUiState</code>. The UI shows a dialog while it's non-null and reports back with <code>errorShown()</code>. A Channel can lose the message when the screen isn't collecting.</p>
+    <p class="why">The message is part of <code>DeviceListUiState</code>. The UI shows a dialog while it's non-null and reports back with <code>errorShown()</code>. A <code>Channel</code> can lose it: if the screen stops collecting (a rotation, say) just as the message is handed over, the message is gone.</p>
   </div>
 
   <h3>Mixed review (interleaved)</h3>
@@ -1747,7 +1747,8 @@ final class DeviceListViewController: UIViewController, UITableViewDelegate {
 <script>
 // Section 1 toy: the same scan, owned by the screen (m02) or by a ViewModel (m03).
 // m02's scan waits, then delivers every result at once; m03's streams devices one by one.
-// Timings are about 2.3 times the app's (0.3 s per device, 3 s timeout, 1.5 s wait), so you can act mid-scan.
+// Timings are slowed down so you can act mid-scan: 0.7 s per device, 4.2 s timeout and 2.1 s wait
+// (the app's are 0.3 s, 3 s and 1.5 s).
 // Rotating destroys the screen; leaving destroys it for good. Logs say why each phone acts as it does.
 document.addEventListener("DOMContentLoaded", () => {
   const SAMPLE = ["OBD-II Adapter", "Heart Rate Monitor", "Tire Pressure Sensor", "Thermometer", "Smart Scale"];
