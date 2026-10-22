@@ -1,0 +1,584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>19 — Background monitor: platform behaviour table</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 19 · Week 4 · Day 19 · Native Device Monitor course</p>
+  <h1>Background monitor: platform behaviour table</h1>
+  <div class="meta">
+    <span class="tag">~1.5 h · +0.25 h per extra UI track</span>
+    <span class="tag">Milestone: m14 behaviour table written from observed runs</span>
+    <span class="tag">Prereq: <a href="18-background-monitor.html">18</a></span>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> Lesson 18 built a monitor that asks each platform for a reading every 15 minutes. What it gets depends on the platform and on what the user does: keep the app open, switch away, come back, leave the phone alone until the system reclaims the app's memory, or kill the app by hand. A team that promises "a reading every 15 minutes" without knowing this ships a bug report with every release. Today you run the monitor in those five situations on both platforms, write down what happened, and put it where the team will find it: <code>docs/monitor-behaviour.md</code>, the monitor's <strong>behaviour table</strong>. No code changes: the m13 monitor already uses each platform's supported mechanism, and the job now is to know, and say, what that mechanism promises. That's milestone <strong>m14</strong>. The rows only a phone can show stay marked that way until you run them on yours.
+  </div>
+
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/training/monitoring-device-state/doze-standby">Optimize for Doze and App Standby</a> and <a href="https://developer.android.com/topic/performance/power/power-details">Power management restrictions</a> before section 2. Apple's <a href="https://developer.apple.com/documentation/backgroundtasks/choosing-background-strategies-for-your-app">Choosing background strategies for your app</a> before section 4. Lesson 18's sources (WorkManager's <a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a>, Apple's <a href="https://developer.apple.com/documentation/uikit/using-background-tasks-to-update-your-app">Using background tasks</a> and <code>BGTaskRequest.h</code>) still apply.</p>
+  <p><span class="tag">Tracks</span> The monitor is shared code, the same on every track: the scheduler adapters are Kotlin in <code>androidMain</code> and <code>iosMain</code>, and the iOS tracks differ only in where the app start calls <code>onAppLaunch()</code>. So the behaviour table holds for every track. We ran every row with the Compose and SwiftUI apps; on a second track, repeat the quick runs with that track's app (the extra 0.25 h). No screen and no code changes today. The excerpts show m13 code, to explain what you'll see; the one new file is in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m13</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m13</th><th>m14</th></tr>
+    <tr><td>shared code, adapters, screens</td><td colspan="2">unchanged</td></tr>
+    <tr><td>tests</td><td colspan="2">unchanged: 95 per platform</td></tr>
+    <tr><td><code>docs/monitor-behaviour.md</code></td><td>—</td><td>new: the behaviour table, per platform and situation, with how each row is known (seen on the emulator or Simulator, or waiting for a phone)</td></tr>
+  </table>
+  </div>
+
+  <h2>1. Five situations, and how to make each one</h2>
+  <p>Appendix A.7 of the course plan names five situations: in the foreground, in the background, on return to the foreground, after the OS ends the app, and after the user force-kills it. Each has a command that produces it on an emulator or a simulator, or the closest thing to it:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Situation</th><th>Android emulator</th><th>iOS Simulator</th></tr>
+    <tr><td><strong>Foreground</strong>: the app on screen</td><td><code>am start</code> and leave it; <code>adb shell svc power stayon true</code> keeps the screen on</td><td><code>xcrun simctl launch</code> and leave it</td></tr>
+    <tr><td><strong>Background</strong>: the user switched away; the process is still there</td><td><code>adb shell input keyevent KEYCODE_HOME</code></td><td>open another app: <code>xcrun simctl launch booted com.apple.Preferences</code></td></tr>
+    <tr><td><strong>Return</strong> to the foreground</td><td><code>am start</code> again</td><td><code>xcrun simctl launch</code> the app again</td></tr>
+    <tr><td><strong>OS ends the app</strong> to reclaim memory</td><td>Home, then <code>adb shell am kill</code>: "kills only processes that are safe to kill and that will not impact the user experience"</td><td>background, then <code>xcrun simctl terminate</code>: the process ends; the Simulator runs no background tasks, so nothing launches it again</td></tr>
+    <tr><td><strong>Force-kill</strong> by the user</td><td><code>adb shell am force-stop</code>: "Force-stop everything associated with package" (Settings → Apps → Force stop on a phone)</td><td>a phone's app switcher (swipe the app up); only a phone shows what follows</td></tr>
+  </table>
+  </div>
+  <p>The two <code>am</code> descriptions are from the <a href="https://developer.android.com/tools/adb">Android Debug Bridge</a> page's activity manager table. <code>am kill</code> is the closest an emulator gets to the system's own kill, but it isn't the same: section 2 shows the difference Android records. The Simulator's <code>terminate</code> help says only "Terminate an application by identifier on a device", and doesn't say whether it is like a force quit or like the system's kill. On the Simulator that doesn't matter: either way, nothing of the app runs until someone launches it.</p>
+  <p><strong>How to watch.</strong> The log file is the record of what happened: one line per tick, with its time. Around it, each platform tells you which process did what:</p>
+  <ul>
+    <li><strong>Android:</strong> <code>adb shell run-as com.example.devicemonitor cat files/status-log.jsonl</code> (the records), <code>adb logcat -v time -s DeviceMonitor:I ActivityManager:I WM-ForceStopRunnable:D</code> ("Monitor tick" with the process id, the process starting and being killed, WorkManager's reaction), <code>adb shell pidof com.example.devicemonitor</code>, and <code>adb shell dumpsys jobscheduler | grep 'JobStatus{.*devicemonitor'</code> (the next run's <code>TIME=</code>).</li>
+    <li><strong>iOS:</strong> the console of <code>xcrun simctl launch --console-pty</code> (the adapter's <code>println</code> lines) and <code>Library/Application Support/status-log.jsonl</code> in the app's data container (<code>xcrun simctl get_app_container booted com.example.devicemonitor data</code>).</li>
+  </ul>
+
+  <h2>2. Android: what we saw</h2>
+  <p>We ran m13's Compose app on the API 36 emulator, one situation after another on one fresh install, and read the log, logcat and <code>dumpsys</code> at each step. Times are the emulator's clock, as logcat and the records show it:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Situation</th><th>What we did</th><th>What we saw</th></tr>
+    <tr><td>foreground</td><td>fresh install, launch, the app left on screen</td><td>record 1 at 23:18:31, 6 s after the process started; record 2 at 23:33:33 (15 min 2 s later), from the same process (pid 11085), with the app still on screen</td></tr>
+    <tr><td>background</td><td>Home</td><td>record 3 at 23:50:33 (16 min 59 s later), from the same process</td></tr>
+    <tr><td>return</td><td><code>am start</code></td><td>no new record; a minute later <code>TIME=+13m48s</code>: the next run kept its time</td></tr>
+    <tr><td>OS ends the app</td><td>Home, <code>am kill</code> at 23:51:48</td><td><code>pidof</code> empty. At 00:06:29 Android started a new process (11710) "for service {…/androidx.work.impl.background.systemjob.SystemJobService}", and record 4 came at 00:06:32 (15 min 59 s after record 3)</td></tr>
+    <tr><td>force-kill</td><td><code>am force-stop</code> at 00:06:37</td><td>our job gone from <code>dumpsys jobscheduler</code> at once; no process and no record for the next 30 minutes, though the next run had been due at about 00:21</td></tr>
+    <tr><td>open again</td><td><code>am start</code> at 00:36:42</td><td>a new process (11902) and <code>WM-ForceStopRunnable</code> "Application was force-stopped, rescheduling."; record 5 at 00:36:47, as the app opened; our job back in <code>dumpsys jobscheduler</code>, under a new id; record 6 at 00:53:53, 17 min 6 s later, with the app in the background</td></tr>
+    <tr><td>swipe away in Recents</td><td>the app on screen, then Recents, swipe its card up (00:54:54)</td><td>process ended; exit-info: <code>reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK)</code>; <code>dumpsys package</code>: <code>stopped=false</code>, and our job still counting down. At 01:09:21 a new process for the job, record 7 at 01:09:23 (15 min 31 s after record 6), with "Application was force-stopped, rescheduling." again</td></tr>
+  </table>
+  </div>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidMonitorScheduler.kt</figcaption>
+<pre><code>    override fun schedule(interval: Duration, tick: suspend () -&gt; Unit) {
+        currentTick = tick
+<span class="elide">⋯        the period, never under 15 minutes, and the periodic request</span>
+        // One schedule however many launches call this: UPDATE keeps the work that is already
+        // scheduled, with its timing, and only changes its period.
+<mark>        workManager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request)</mark>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Foreground and background are one row on Android.</strong> WorkManager doesn't look at the screen: records 2 and 3 came from the same process, one with the app on screen and one behind the launcher. The gaps, 15 min 2 s and 16 min 59 s, are what "minimum" means: "The interval period is defined as the minimum time between repetitions" (<a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a>).</li>
+    <li><strong>Return writes nothing.</strong> The launch runs <code>onAppLaunch()</code> again in the same process, which calls <code>schedule</code>, and <code>UPDATE</code> keeps the work and its timing (Lesson 18, section 4). The countdown went on from where it was.</li>
+    <li><strong>A killed process is started again for the work.</strong> The schedule lives in WorkManager's database and JobScheduler, not in the process. When the time came, Android started a new process for WorkManager's <code>JobService</code>; <code>Application.onCreate</code> handed over the tick, and the worker ran it 2.6 s after the process started, reading Wi-Fi as connected.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidMonitorScheduler.kt</figcaption>
+<pre><code><span class="elide">⋯  class MonitorWorker(…) : CoroutineWorker(…) {</span>
+    override suspend fun doWork(): Result {
+<mark>        val tick = AndroidMonitorScheduler.currentTick</mark>
+<mark>        Log.i("DeviceMonitor", if (tick == null) "Monitor work ran, but the monitor is stopped" else "Monitor tick")</mark>
+        tick?.invoke()
+        return Result.success()
+    }</code></pre>
+  </figure>
+  <ol class="walk" start="4">
+    <li><strong>Logcat names the process.</strong> Each "Monitor tick" line carries its process id, so <code>I/DeviceMonitor(11085)</code> and <code>I/DeviceMonitor(11710)</code> tell you which process ran which tick, and <code>ActivityManager</code>'s "Start proc … for service" tells you why the second one exists.</li>
+    <li><strong><code>am kill</code> isn't the low-memory killer.</strong> <code>adb shell dumpsys activity exit-info com.example.devicemonitor</code> recorded our kill as <code>reason=10 (USER REQUESTED) subreason=24 (KILL BACKGROUND)</code>. The system's own kill under memory pressure is <code>REASON_LOW_MEMORY</code>: "Application process was killed by the system low memory killer" (<a href="https://developer.android.com/reference/android/app/ApplicationExitInfo">ApplicationExitInfo</a>). That's why, in the new process, WorkManager logged <code>WM-ForceStopRunnable</code> "Application was force-stopped, rescheduling.": from Android 11 (API 30), WorkManager's <code>ForceStopRunnable</code> reads the app's exit reasons, counts any "user requested" exit since the last one it handled as a force stop, and reschedules its work: harmless here, because the work was still there and kept its timing. A real low-memory kill is a device check.</li>
+    <li><strong>Force stop is different in kind.</strong> A force stop puts the app in the stopped state: Android removed our JobScheduler job on the spot, and nothing ran for 30 minutes. That state is meant "to keep apps in this state until the user explicitly removes the app from this state by directly launching the app or indirectly interacting with the app" (<a href="https://developer.android.com/about/versions/15/behavior-changes-all">Android 15 behavior changes</a>), and Android's reference says what is lost: <code>ApplicationStartInfo.wasForceStopped()</code> lets an app "know if it should re-register for any alarms, jobs and other callbacks that were cleared when the app was force-stopped" (<a href="https://developer.android.com/reference/android/app/ApplicationStartInfo">ApplicationStartInfo</a>). WorkManager does that itself: when the user opened the app, it found the "user requested" exit (subreason <code>FORCE STOP</code> this time), put the work back, and ran the overdue run at once. Only the user opening the app restarts the monitor.</li>
+    <li><strong>Recents isn't Force stop.</strong> Swiping the app away in Recents ended the process, and Android's reference lists it with Force stop under the same reason: "user clicked the "Force stop" button of the application in the Settings, or removed the application away from Recents" (<code>REASON_USER_REQUESTED</code>, <a href="https://developer.android.com/reference/android/app/ApplicationExitInfo">ApplicationExitInfo</a>). But on the emulator the app wasn't stopped: the job stayed and the next run came as after <code>am kill</code>. Users swipe apps away far more often than they force-stop them, and a phone maker's Android may handle it differently: that's a row to check on your phone.</li>
+  </ol>
+  <p><strong>What only a phone shows: Doze and App Standby.</strong> The emulator was plugged in and awake. A phone on battery, locked and still, goes into Doze, which "defers their jobs, syncs, and standard alarms" and "Doesn't let JobScheduler run. WorkManager uses JobScheduler internally, so WorkManager tasks don't run"; the work waits for a maintenance window, and "Over time, the system schedules maintenance windows less frequently" (<a href="https://developer.android.com/training/monitoring-device-state/doze-standby">Optimize for Doze and App Standby</a>). App Standby buckets also limit how often an app's jobs run on battery, sorted by "how recently and how frequently the apps are used" (<a href="https://developer.android.com/topic/performance/appstandby">App Standby Buckets</a>): from "Up to 20 minutes in a rolling 60 minute period" of job time for an active app to "Once per day for up to 10 minutes" for a restricted one, and "WorkManager uses JobScheduler to schedule tasks when the app is not visible and workers are thus impacted by job resource limits" (<a href="https://developer.android.com/topic/performance/power/power-details">Power management restrictions</a>). On a phone, then, expect the 15 minutes to stretch, the longer the phone sits still.</p>
+
+  <h2>3. iOS: what we saw on the Simulator</h2>
+  <p>The same sequence with m13's SwiftUI app on the iOS 26.2 Simulator, the console captured with <code>--console-pty</code>:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Situation</th><th>What we did</th><th>What we saw</th></tr>
+    <tr><td>foreground</td><td>fresh install, launch at 23:19:07, the app left on screen</td><td>no record at launch; "Monitor tick (foreground)" and record 1 at 23:34:08, 15 minutes after launch</td></tr>
+    <tr><td>background</td><td>the Settings app opened at 23:35:19</td><td>at once: "Monitor: no background refresh: The operation couldn’t be completed. (BGTaskSchedulerErrorDomain error 1.)"; then nothing for 5 minutes</td></tr>
+    <tr><td>return</td><td>the app launched again at 23:40:30</td><td>no record at the return, none 10 minutes later; record 2 at 23:55:31, 15 minutes after the return (21 min 23 s after record 1)</td></tr>
+    <tr><td>OS ends the app</td><td>Settings at 23:56:32, then <code>simctl terminate</code> 10 s later</td><td>process gone; nothing in 5 minutes</td></tr>
+    <tr><td>open again</td><td>launched at 00:01:47 (a new process)</td><td>no record at launch, none 10 minutes later; record 3 at 00:16:48, 15 minutes after the launch. All three records were in the file</td></tr>
+  </table>
+  </div>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosMonitorScheduler.kt</figcaption>
+<pre><code><span class="elide">⋯  in init: app-level notifications</span>
+<mark>        center.addObserverForName(UIApplicationDidBecomeActiveNotification, null, NSOperationQueue.mainQueue) { _ -&gt;</mark>
+            scheduler.cancelTaskRequestWithIdentifier(TASK_ID) // the timer takes over
+<mark>            startTimer()</mark>
+        }
+<span class="elide">⋯  didEnterBackground: cancel the timer, submit() a refresh request</span>
+
+    private fun startTimer() {
+        val tick = tick ?: return
+<mark>        timer?.cancel()</mark>
+        timer = scope.launch {
+            while (true) {
+<mark>                delay(interval)</mark>
+                println("Monitor tick (foreground)")
+                tick()
+            }
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Every activation starts the timer over.</strong> Becoming active cancels the old timer and waits a whole interval before the first tick. That's why the second record came 15 minutes after the return, not 15 minutes after the first record. The consequence belongs in the table: <strong>a user who opens the app for less than 15 minutes at a time gets no foreground records at all.</strong> Changing that (say, a tick on return when the last record is older than the interval) would be a rule of the app, so it would go in <code>MonitoringService</code> with a test, not in the adapter; m14 records the behaviour and changes nothing.</li>
+    <li><strong>In the background the Simulator runs nothing.</strong> The adapter hands over to <code>BGTaskScheduler</code>, and the Simulator rejects the request with error 1, <code>Unavailable</code>, documented for "The app is running on Simulator which doesn’t support background processing" (<code>BGTaskScheduler.h</code>). Apple's debugger commands that launch a task on demand are no help here: "The debug functions work only on devices" (<a href="https://developer.apple.com/documentation/backgroundtasks/starting-and-terminating-tasks-during-development">Starting and terminating tasks during development</a>). So what iOS does for the app in the background is a phone row, every time.</li>
+    <li><strong>The log outlives the process; the timer doesn't.</strong> After <code>terminate</code> the two records were still in the file, and the new process started with no timer and no tick until a full interval after it became active.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 300" role="img" aria-labelledby="l19-runs-title">
+      <title id="l19-runs-title">The runs of sections 2 and 3 on one time axis, 0 to 80 minutes. Android, from the first record: the app on screen until minute 15, with records at 0 and 15; in the background until 32, with a record at 32 from the same process; on screen again for a minute, no record; then killed with am kill, and at minute 48 a record from a new process Android started for the work; then force-stopped, and nothing for 30 minutes; opened again at 78, with a record at once. iOS, from launch: on screen until minute 16, with the first record at 15; in the background for 5 minutes, with error 1 and no record; on screen again from 21, with the next record at 36, 15 minutes after the return; then in the background and terminated, nothing; opened again at 43, with the next record at 58, 15 minutes after the launch.</title>
+      <g data-part="android">
+        <text class="title" x="20" y="64">Android</text>
+        <rect class="box" x="130" y="46" width="115" height="28" rx="4"/>
+        <text class="small" x="138" y="65">on screen</text>
+        <rect class="box" x="371" y="46" width="9" height="28" rx="2"/>
+        <rect class="box" x="716" y="46" width="14" height="28" rx="2"/>
+      </g>
+      <path class="edge dashed" d="M246,60 L370,60"/>
+      <text class="small muted" x="262" y="40">background</text>
+      <text class="small muted" x="384" y="65">am kill: process gone</text>
+      <text class="small muted" x="510" y="65">force-stopped: nothing runs</text>
+      <text class="small muted" x="350" y="40">return</text>
+      <text class="small muted" x="676" y="40">opened</text>
+      <circle class="dot" cx="130" cy="92" r="5"/>
+      <circle class="dot" cx="242" cy="92" r="5"/>
+      <circle class="dot" cx="370" cy="92" r="5"/>
+      <circle class="dot" cx="490" cy="92" r="5"/>
+      <circle class="dot" cx="717" cy="92" r="5"/>
+      <text class="small muted" x="440" y="112">new process</text>
+      <g data-part="ios">
+        <text class="title" x="20" y="164">iOS</text>
+        <rect class="box" x="130" y="146" width="121" height="28" rx="4"/>
+        <text class="small" x="138" y="165">on screen</text>
+        <rect class="box" x="290" y="146" width="120" height="28" rx="4"/>
+        <text class="small" x="298" y="165">on screen</text>
+        <rect class="box" x="450" y="146" width="280" height="28" rx="4"/>
+        <text class="small" x="458" y="165">on screen (new process)</text>
+      </g>
+      <path class="edge dashed" d="M252,160 L289,160"/>
+      <text class="small muted" x="246" y="140">error 1</text>
+      <text class="small muted" x="412" y="140">ended</text>
+      <circle class="dot" cx="242" cy="192" r="5"/>
+      <circle class="dot" cx="403" cy="192" r="5"/>
+      <circle class="dot" cx="563" cy="192" r="5"/>
+      <line class="axis" x1="130" y1="232" x2="730" y2="232"/>
+      <text class="small muted" x="126" y="250">0</text>
+      <text class="small muted" x="236" y="250">15</text>
+      <text class="small muted" x="349" y="250">30</text>
+      <text class="small muted" x="461" y="250">45</text>
+      <text class="small muted" x="574" y="250">60</text>
+      <text class="small muted" x="686" y="250">75 min</text>
+      <text class="small muted" x="20" y="284">Dots: records. Boxes: the app on screen. Dashed: in the background, process alive.</text>
+    </svg>
+    <figcaption>Android's records follow the work's schedule, whatever the user does, until a force stop. iOS's follow the app being on screen, and each return starts the 15 minutes over.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="android">Android (emulator)</li>
+    <li data-part="ios">iOS (Simulator)</li>
+  </ul>
+  <p><strong>What only a phone shows.</strong> On an iPhone the background request succeeds (unless Background App Refresh is off), and iOS may launch or wake the app for it. When the system ends a suspended app to reclaim memory ("the system terminates background apps as needed to make those resources available", <a href="https://developer.apple.com/documentation/uikit/preparing-your-ui-to-run-in-the-background">Preparing your UI to run in the background</a>), a pending request can still bring it back: "If your app isn’t running when an event arrives, the system launches the app and moves it directly to the background" (<a href="https://developer.apple.com/documentation/uikit/about-the-background-execution-sequence">About the background execution sequence</a>). A force quit is different. No BackgroundTasks page or header mentions it, but Apple's documentation says it for the other ways iOS launches apps in the background: "the system does not automatically launch your app if the user has force-quit it. In that situation, the user must relaunch your app or restart the device before the system attempts to launch your app automatically again" (<a href="https://developer.apple.com/documentation/uikit/uiapplicationdelegate/application(_:didreceiveremotenotification:fetchcompletionhandler:)">application(_:didReceiveRemoteNotification:fetchCompletionHandler:)</a>), and "the system does not automatically relaunch apps that were force quit by the user" (<a href="https://developer.apple.com/documentation/foundation/urlsessionconfiguration/background(withidentifier:)">background(withIdentifier:)</a>). Apple's Developer Technical Support says the same of background launches in general, with a caveat: "iOS also sets a flag that prevents the app from being launched in the background. That flag gets cleared when the user next launches the app manually", and "In some circumstances iOS will not honour this flag" (<a href="https://developer.apple.com/forums/thread/685525">iOS Background Execution Limits</a>, Apple Developer Forums). The table writes "expected: no records until the user opens the app" and marks it for a phone.</p>
+
+  <h2>4. Why iOS gives no fixed interval</h2>
+  <p>Android's 15 minutes is a floor, and the work runs eventually: WorkManager is "intended for work that is required to run reliably" (Lesson 18), and Doze only delays it. iOS's 15 minutes is a floor with no promise behind it at all:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 370" role="img" aria-labelledby="l19-why-title">
+      <title id="l19-why-title">How each platform decides when the monitor's background tick runs. On Android, the app's periodic work request, at least 15 minutes, goes to WorkManager, which hands it to JobScheduler; Doze and the app's standby bucket can delay it, but it runs, at least 15 minutes after the previous run. On iOS, the app's refresh request says only "not before 15 minutes from now". The system then decides from conditions the app doesn't control: how the user has used the app, battery level and Low Power Mode, network, the Background App Refresh setting, and whether the user force-quit the app. The result is a launch at a time iOS chooses, which may be hours later, or none; and each request is one launch, so the handler must submit the next.</title>
+      <defs><marker id="l19-why-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="android">
+        <text class="title" x="20" y="34">Android</text>
+        <rect class="box" x="20" y="48" width="170" height="56" rx="6"/>
+        <text class="small" x="30" y="72">periodic work request</text>
+        <text class="small muted" x="30" y="92">at least 15 minutes</text>
+        <rect class="box" x="250" y="48" width="230" height="56" rx="6"/>
+        <text class="small" x="260" y="72">WorkManager → JobScheduler</text>
+        <text class="small muted" x="260" y="92">Doze, standby bucket: later</text>
+        <rect class="box" x="540" y="48" width="200" height="56" rx="6"/>
+        <text class="small" x="550" y="72">runs, 15 min or more</text>
+        <text class="small muted" x="550" y="92">after the previous run</text>
+      </g>
+      <path class="edge" d="M190,76 L248,76" marker-end="url(#l19-why-arrow)"/>
+      <path class="edge" d="M480,76 L538,76" marker-end="url(#l19-why-arrow)"/>
+      <g data-part="ios">
+        <text class="title" x="20" y="150">iOS</text>
+        <rect class="box" x="20" y="164" width="170" height="56" rx="6"/>
+        <text class="small" x="30" y="188">refresh request</text>
+        <text class="small muted" x="30" y="208">"not before" 15 minutes</text>
+        <rect class="box" x="250" y="164" width="230" height="130" rx="6"/>
+        <text class="small" x="260" y="188">the system decides, from:</text>
+        <text class="small muted" x="260" y="210">how the user uses the app</text>
+        <text class="small muted" x="260" y="230">battery, Low Power Mode</text>
+        <text class="small muted" x="260" y="250">network</text>
+        <text class="small muted" x="260" y="270">Background App Refresh setting</text>
+        <text class="small muted" x="260" y="290">a force quit</text>
+        <rect class="box" x="540" y="164" width="200" height="56" rx="6"/>
+        <text class="small" x="550" y="188">one launch, when iOS</text>
+        <text class="small muted" x="550" y="208">chooses: maybe hours; or none</text>
+      </g>
+      <path class="edge" d="M190,192 L248,192" marker-end="url(#l19-why-arrow)"/>
+      <path class="edge" d="M480,192 L538,192" marker-end="url(#l19-why-arrow)"/>
+      <path class="edge dashed" d="M640,222 C640,360 105,360 105,224" marker-end="url(#l19-why-arrow)"/>
+      <text class="small muted" x="290" y="352">the handler submits the next request</text>
+    </svg>
+    <figcaption>Both platforms set a floor. Android runs the work eventually; iOS decides whether to run it at all.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <ol class="walk">
+    <li><strong>"Not sooner", never "at".</strong> <code>earliestBeginDate</code>: "the system doesn’t guarantee launching the task at the specified date, but only that it won’t begin sooner", and a refresh request is fulfilled "intelligently based on system conditions and app usage" (<code>BGTaskRequest.h</code>). Apple's strategy guide: "The system decides the best time to launch your background task, and provides your app up to 30 seconds of background runtime" (<a href="https://developer.apple.com/documentation/backgroundtasks/choosing-background-strategies-for-your-app">Choosing background strategies</a>).</li>
+    <li><strong>What it decides from.</strong> Apple's WWDC19 session on background execution: "How often your app is launched and at what times depends on how the user has historically used your app", and the system "monitors various system conditions including battery level, app usage, network connectivity, and more" (<a href="https://developer.apple.com/videos/play/wwdc2019/707/">Advances in App Background Execution</a>). The user can turn it off: <code>backgroundRefreshStatus</code> tells whether "Background App Refresh—an app’s ability to open in the background to perform refresh tasks—is enabled", and "Background App Refresh is disabled automatically when a device is operating in low-power mode" (<a href="https://developer.apple.com/documentation/uikit/uiapplication/backgroundrefreshstatus">backgroundRefreshStatus</a>).</li>
+    <li><strong>It can be hours.</strong> Apple warns developers testing it: "The delay between the time you schedule a background task and when the system launches your app to run the task can be many hours" (<a href="https://developer.apple.com/documentation/backgroundtasks/starting-and-terminating-tasks-during-development">Starting and terminating tasks during development</a>).</li>
+    <li><strong>One request, one launch.</strong> "There can be a total of 1 refresh task and 10 processing tasks scheduled at any time" (<a href="https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/submit(_:)">submit(_:)</a>), so the chain lives only as long as each launch submits the next, which is why Lesson 18's handler calls <code>submit()</code> first.</li>
+  </ol>
+  <p>Why it's built this way is the same reason as Android's floor: a phone's battery and data belong to the user, and the system spends them on the apps the user actually uses. An app can't buy its way out with a cleverer timer. It can only use the mechanism made for what it does, which is the next section.</p>
+
+  <h2>5. What each platform allows</h2>
+  <p>The behaviour table says what the monitor gets. The team also needs to know what it <em>could</em> ask for, and what it may not:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>The app needs</th><th>Android</th><th>iOS</th></tr>
+    <tr><td>a reading while the app is on screen</td><td colspan="2">any timer, at any interval: the app is running (the iOS adapter's foreground timer)</td></tr>
+    <tr><td>a reading every N minutes in the background</td><td>WorkManager periodic work, N ≥ 15, "the minimum time between repetitions": what m13 does</td><td>no such mechanism. A refresh task runs "up to 30 seconds", when the system decides: what m13 does</td></tr>
+    <tr><td>continuous work the user knows about</td><td>a foreground service, with its notification and declared type (Lesson 18)</td><td>only the background modes' own purposes: "VoIP, audio playback, location, task completion, local notifications, etc." (App Review Guideline 2.5.4)</td></tr>
+    <tr><td>to hear from a connected BLE device in the background</td><td>a foreground service, for a task the user notices (Lesson 18)</td><td>the <code>bluetooth-central</code> background mode: "the system wakes up your app when any of the <code>CBCentralManagerDelegate</code> or <code>CBPeripheralDelegate</code> delegate methods are invoked", but "Apps should not use being woken up as an opportunity to perform extraneous tasks" (<a href="https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html">Core Bluetooth background processing</a>)</td></tr>
+    <tr><td>to keep running after the user force-kills it</td><td colspan="2">nothing: both platforms treat a force-kill as the user saying no until the user opens the app again. Android's stopped state is meant "to keep apps in this state until the user explicitly removes the app from this state by directly launching the app or indirectly interacting with the app" (<a href="https://developer.android.com/about/versions/15/behavior-changes-all">Android 15 behavior changes</a>); iOS: section 3</td></tr>
+  </table>
+  </div>
+  <p>Lesson 18's rule stands: use the platform-supported mechanism, and never bypass the OS's limits. Where a platform can't do something, the table says so; that's what Appendix A.7 means by "document that".</p>
+
+  <h2>6. Write the table into the project</h2>
+  <p>The table goes into the repository, next to the code it describes, so the next person who hears "the monitor skipped an hour" finds the answer before filing a bug:</p>
+  <figure class="excerpt">
+    <figcaption class="path">docs/monitor-behaviour.md</figcaption>
+<pre><code><span class="elide">⋯  title, what the monitor asks for, and how to read "Seen on"</span>
+## iOS: a timer in the foreground, a BGAppRefreshTask request in the background
+
+| Situation | What happens | Seen on |
+|---|---|---|
+<mark>| Foreground | The app's own timer: the first record one interval after the app becomes active, then one per interval while it stays active. | Simulator |</mark>
+<mark>| Return to foreground | The timer starts over: the next record one full interval after the return. Visits shorter than 15 minutes write nothing. | Simulator |</mark>
+<span class="elide">⋯  Background, on the Simulator: error 1, no records until the app is active again</span>
+<mark>| Background, on a phone | iOS may launch or wake the app for the refresh task: not before 15 minutes, at a time iOS chooses (it can be hours), or not at all. Each run asks for the next. | phone, not yet run |</mark>
+<span class="elide">⋯  the other iOS rows, and "What neither platform promises"</span></code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>A "Seen on" column.</strong> Each row says how it is known: <em>emulator</em> or <em>Simulator</em> for what we ran, <em>phone, not yet run</em> for what only a phone can show, written from the platform's documentation. A reader can tell an observation from an expectation, and you know which rows to run on your phones.</li>
+    <li><strong>Behaviour, not timings.</strong> The table says "15 minutes or more", not "15 min 59 s": exact gaps differ on every run and every device, and belong in your notes. A row changes when a run contradicts it.</li>
+    <li><strong>Markdown, in <code>docs/</code>.</strong> It's read on GitHub and in the IDE, and it isn't packed into either app. The Android and iOS build files never look at <code>docs/</code>.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · "the monitor stopped" after a force stop</span>
+    A tester who force-stops the Android app, or swipes it away on an iPhone, and then waits for records, will file "the monitor stopped working". It did stop, as both platforms intend, and that's the table's force-kill row. Check that row before you look for a bug. On Android the opposite also happens: a tester who uses <code>am kill</code> to "simulate" a force stop sees the monitor carry on, because <code>am kill</code> doesn't put the app in the stopped state.
+  </div>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · the emulator's JobScheduler can sit on a due job</span>
+    In Lesson 18's verification run, one emulator left our due job unstarted for over 35 minutes (<code>TIME=</code> negative, "Ready: true"), while the same emulator had run it on time an hour earlier. If a run here waits much longer than 15 minutes, that's what's happening; <code>adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler -u 0 com.example.devicemonitor &lt;job id&gt;</code> runs it once the period is up. Say in your notes that you did, because then that row's gap wasn't Android's own.
+  </div>
+
+  <h2>7. What actually happens: the runs behind this page</h2>
+  <p>We ran m13 unchanged (Kotlin 2.4.20, WorkManager 2.12.0, Xcode 26.2): <code>allTests</code> passed 95 of 95 on the JVM and 95 of 95 on the iOS simulator. The Android runs are section 2's table (API 36 emulator, Compose app, one fresh install), the iOS runs section 3's (iOS 26.2 Simulator, SwiftUI app). Two more runs: the UIKit app, built from the Lesson 18 XML/UIKit copy, gave the same foreground, background and return rows on the same Simulator (first record 15 minutes after launch, error 1 in the background, the next record 15 minutes after the return); the XML app runs the same monitor code as the Compose app (Lesson 18), and we didn't repeat its runs.</p>
+  <p><strong>m14 is a natural stop</strong> when <code>docs/monitor-behaviour.md</code> is in your project, every emulator and Simulator row in it matches what you saw, and every phone row is either run on your phones and updated, or still says "phone, not yet run". Commit it.</p>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to explain, row by row, which line of m13 code produces each emulator and Simulator row of your table, and which platform rule produces each phone row. Then ask it what would change in the table if <code>onAppLaunch()</code> were called from the list screen's <code>onAppear</code> instead of the app start.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">On Android, the app stays on screen for 40 minutes after a fresh install. How many records do you expect?</p>
+    <div class="opts">
+      <button class="opt">none until the app goes to the background</button>
+      <button class="opt" data-correct>one at once, then one per period, 15 minutes or more apart: usually three</button>
+      <button class="opt">one per minute, because the app is in the foreground</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">WorkManager doesn't look at the screen. A new periodic request runs at once, then at least one interval apart; we saw 15 min 2 s with the app on screen.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">An iPhone user opens the app for 5 minutes every 10 minutes all afternoon. How many foreground records does m13 write?</p>
+    <div class="opts">
+      <button class="opt">one every 15 minutes, as configured</button>
+      <button class="opt">one each time the app opens</button>
+      <button class="opt" data-correct>none: each activation starts the timer over, and the first tick is a whole interval later</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">On the Simulator the record after a return came 15 minutes after the return, not 15 minutes after the previous record. Background records, on a phone, are up to iOS.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">On the emulator, you press Home and run <code>am kill</code>. What happens to the monitor?</p>
+    <div class="opts">
+      <button class="opt">nothing until the user opens the app again</button>
+      <button class="opt" data-correct>at the next run Android starts a new process for WorkManager's job; <code>Application.onCreate</code> hands over the tick and a record is written</button>
+      <button class="opt">the record is written by the old process, which Android restores</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The schedule lives in WorkManager's database and JobScheduler, not in the process. We saw "Start proc 11710 … for service {…SystemJobService}" and a record 2.6 s later.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">After <code>am kill</code>, WorkManager logged "Application was force-stopped, rescheduling." Was the app force-stopped?</p>
+    <div class="opts">
+      <button class="opt">yes: <code>am kill</code> and <code>am force-stop</code> do the same thing</button>
+      <button class="opt" data-correct>no: Android recorded the kill as "user requested · kill background", and WorkManager reschedules after any such exit to be safe; the job was still there</button>
+      <button class="opt">yes, and that's why the next record came late</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>dumpsys activity exit-info</code> shows the reason. A real force stop removes the job from JobScheduler at once; <code>am kill</code> left it counting down.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why can't the iOS adapter promise a reading every 15 minutes in the background?</p>
+    <div class="opts">
+      <button class="opt">because Kotlin/Native timers stop in the background, and a Swift timer would work</button>
+      <button class="opt">because 15 minutes is under iOS's minimum</button>
+      <button class="opt" data-correct>a refresh request only sets "not before"; the system decides when, or whether, from app usage, battery, network and the user's settings, and each request is one launch</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">No timer runs in a suspended app, in any language. <code>BGTaskRequest.h</code>: the system "doesn’t guarantee launching the task at the specified date, but only that it won’t begin sooner".</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which rows of the table can't be filled in on the emulator or Simulator?</p>
+    <div class="opts">
+      <button class="opt">none: the emulator and the Simulator run the same code as a phone</button>
+      <button class="opt" data-correct>every iOS background row, Android's locked-phone (Doze) row, a real low-memory kill, and the iPhone force quit: they're marked "phone, not yet run"</button>
+      <button class="opt">only the force-kill rows</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The Simulator rejects every refresh request (error 1), and its debug launch works "only on devices". The emulator is plugged in and awake, and <code>am kill</code> isn't the low-memory killer.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">After <code>simctl terminate</code> and a relaunch, the log file still has both records, but the new process's <code>MonitorStatus</code> has no <code>lastRecord</code>. Why? (Lessons 17–18)</p>
+    <div class="opts">
+      <button class="opt">the relaunch cleared the status on purpose</button>
+      <button class="opt" data-correct>the records are in the log store's file, which outlives the process; <code>MonitorStatus</code> is a <code>StateFlow</code> in memory, one per process</button>
+      <button class="opt">the iOS log store writes only on a clean exit</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Lesson 18 said it: "The log file is what lasts." Show the log, not <code>lastRecord</code>, for history.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The iOS adapter restarts its timer on <code>UIApplicationDidBecomeActiveNotification</code>. Why that, and not a screen's <code>onAppear</code>? (Lessons 04 and 18)</p>
+    <div class="opts">
+      <button class="opt"><code>onAppear</code> doesn't exist in UIKit</button>
+      <button class="opt" data-correct>it's app-level: it fires whichever screen is showing, on both iOS tracks, and a screen's callbacks follow only that screen</button>
+      <button class="opt">notifications run on a background thread, which the timer needs</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Pressing Home gives no view callbacks at all; the app and scene levels are where background work hooks in (the platform lifecycles cheatsheet's rule).</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">A teammate proposes a tick on every return to the foreground when the last record is older than the interval. Where would that go? (Lessons 10 and 18)</p>
+    <div class="opts">
+      <button class="opt">in <code>IosMonitorScheduler</code>, which already sees the return</button>
+      <button class="opt" data-correct>in <code>MonitoringService</code>, with a test using the fake scheduler and clock: "older than the interval" is a rule of the app, and both platforms would get it</button>
+      <button class="opt">in the list screen's ViewModel, which knows when the user is looking</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Adapters are timers; rules go in a service. The service would need to hear about the return, which is a port question to settle first.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m14 project)</span>
+    <ol>
+      <li><strong>Doze on the emulator.</strong> Predict, from section 2, what happens to the next record if the emulator goes into Doze just before it's due. Then run it: <code>adb shell dumpsys battery unplug</code>, <code>adb shell dumpsys deviceidle force-idle</code>, wait past <code>TIME=</code>, read the log; then <code>adb shell dumpsys deviceidle unforce</code> and <code>adb shell dumpsys battery reset</code>, and read it again. Which sentence of the Doze page explains what you saw?</li>
+      <li><strong>A standby bucket.</strong> <code>adb shell am set-standby-bucket com.example.devicemonitor rare</code> with the emulator unplugged as above, and <code>am get-standby-bucket</code> to check. Using the job limits in <a href="https://developer.android.com/topic/performance/power/power-details">Power management restrictions</a>, predict the next hour of records, then watch. Put the bucket back with <code>active</code>.</li>
+      <li><strong>Short visits on iOS.</strong> Before you try it, write down how many records a 1-minute build of the iOS app writes if you switch to Settings every 50 seconds and back at once, for 5 minutes. Then build it (change <code>MONITOR_INTERVAL</code> in a throwaway copy, never in your project) and check.</li>
+      <li><strong>On your phones</strong>: run the table's "phone, not yet run" rows (the agent brief lists them as device checks). For each, change "phone, not yet run" to the phone and OS version, and correct the "What happens" text if your phone disagrees. Use your numbers from Lesson 18's last exercise step.</li>
+      <li><strong>One paragraph for a product owner.</strong> Under the table, write what the monitor can promise on each platform, in words a non-developer understands, without "WorkManager" or "BGTaskScheduler".</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. The runs take about 70 minutes of waiting on Android and 55 on iOS; they can run side by side. Then read the table against sections 2–3, run a few rows yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/19-background-behaviour-table.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/19-background-behaviour-table.html" -o .course/lesson-19.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/platform-lifecycles-cheatsheet.html" -o .course/ref-platform-lifecycles-cheatsheet.html
+Lesson 18, which this lesson builds on; skipped if it's already there:
+  [ -f .course/lesson-18.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/18-background-monitor.html" -o .course/lesson-18.html
+Use these files to answer my questions about this lesson without asking me for context.
+
+Lesson 19 (Background monitor: platform behaviour table): milestone m14 on top of m13. No code
+changes. Add the behaviour table, then run the monitor in each situation on an emulator and a
+simulator and check that every "emulator" and "Simulator" row matches what you see.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m13 project in demo/ (Lesson 18). All paths are relative to demo/.
+
+1. add: docs/monitor-behaviour.md, exactly as in the lesson's "Full files" section. Touch no
+   other file. Do NOT edit a row because a run disagrees: report the disagreement to me with
+   your evidence, and I decide.
+
+2. Build both apps for my tracks as in Lesson 18's brief, step 3 (./gradlew :shared:allTests,
+   then the Android APK and the iOS app). Keep evidence of every run below in a folder outside
+   demo/ (logs, the log file, dumpsys lines, console output), with the host clock time of each step.
+
+Acceptance checks (run every one you can; the Android and iOS runs can go side by side):
+- ./gradlew :shared:allTests still passes 95 tests on testAndroidHostTest and 95 on
+  iosSimulatorArm64Test (show the counts from shared/build/test-results/), and no file outside
+  docs/ changed since m13.
+- Android emulator (API 31+), my track's APK. Fresh install as in Lesson 18's brief, then
+  adb shell svc power stayon true, start adb logcat -v time -s DeviceMonitor:I ActivityManager:I WM-ForceStopRunnable:D
+  into a file, and launch with am start. Read the log with
+  adb shell run-as com.example.devicemonitor cat files/status-log.jsonl
+  and the next run with adb shell dumpsys jobscheduler | grep 'JobStatus{.*devicemonitor'.
+  A1 foreground: one record within 10 s of launch. Leave the app on screen until the next run:
+     a second record 15 minutes or more after the first, logged by the same process id.
+  A2 background: adb shell input keyevent KEYCODE_HOME. At the next run: a third record, 15
+     minutes or more after the second, from the same process id.
+  A3 return: am start again. 60 s later: still three records, and TIME= has kept counting down
+     (it did not jump back to about 15 minutes).
+  A4 OS kill: Home, wait 3 s, adb shell am kill com.example.devicemonitor; adb shell pidof
+     com.example.devicemonitor prints nothing (if it prints a number, run am kill again).
+     adb shell dumpsys activity exit-info com.example.devicemonitor shows reason=10 (USER
+     REQUESTED) subreason=24 (KILL BACKGROUND). At the next run: logcat shows "Start proc …
+     for service {com.example.devicemonitor/androidx.work.impl.background.systemjob.SystemJobService}",
+     WM-ForceStopRunnable "Application was force-stopped, rescheduling.", and "Monitor tick"
+     from the new process id; the log has a fourth record.
+  A5 force-kill: adb shell am force-stop com.example.devicemonitor. At once: the grep on
+     dumpsys jobscheduler prints nothing, and exit-info shows subreason=21 (FORCE STOP).
+     Wait until 20 minutes after the fourth record: still four records, and no "Start proc" for
+     our package in logcat. Then am start: within 10 s a fifth record; logcat shows
+     WM-ForceStopRunnable "Application was force-stopped, rescheduling." from the new process
+     id; the dumpsys grep shows our job again, with TIME=+14m… or a little less.
+  If TIME= is negative (the job is due) and no record comes for five more minutes, the emulator's
+  JobScheduler is slow to start it: run it once by hand, as in Lesson 18's brief
+  (adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler -u 0 com.example.devicemonitor &lt;id&gt;),
+  and say in your report which run needed it.
+- iOS Simulator, my track's app. Fresh install as in Lesson 18's brief, then launch with
+  xcrun simctl launch --console-pty booted com.example.devicemonitor, its output to a file.
+  The log file is "$(xcrun simctl get_app_container booted com.example.devicemonitor data)/Library/Application Support/status-log.jsonl".
+  I1 foreground: no log file (or no record) 10 s after launch; 15 to 16 minutes after launch,
+     "Monitor tick (foreground)" in the console and one record.
+  I2 background: xcrun simctl launch booted com.apple.Preferences. At once the console shows
+     "Monitor: no background refresh: The operation couldn’t be completed.
+     (BGTaskSchedulerErrorDomain error 1.)". Five minutes later: still one record.
+  I3 return: xcrun simctl launch booted com.example.devicemonitor. Ten minutes later: still one
+     record. 15 to 16 minutes after the return: a second "Monitor tick (foreground)" and a
+     second record.
+  I4 process ended: xcrun simctl launch booted com.apple.Preferences, wait 10 s, then
+     xcrun simctl terminate booted com.example.devicemonitor. Five minutes later: still two
+     records. Launch the app again (with --console-pty, a second file): 10 s later still two
+     records; 15 to 16 minutes later a third.
+- Device checks (list them for me, don't try to run them), on a physical Android phone and an
+  iPhone on my track. Each is a "phone, not yet run" row of docs/monitor-behaviour.md:
+  1. Android, Doze: install, open the app once, unplug, lock the phone and leave it still for
+     2 hours: record times; expect gaps of 15 minutes or more, growing while the phone is still.
+  2. Android, a real low-memory kill: open the app, press Home, open many heavy apps until
+     adb shell dumpsys activity exit-info com.example.devicemonitor shows reason LOW_MEMORY;
+     expect the next record from a new process, as in A4.
+  3. Android, swipe the app away in Recents: expect what the table's Recents row says, and
+     write down what your phone does (some phone makers stop apps more aggressively).
+  4. iPhone, background: open the app, press Home, leave it for a few hours on Wi-Fi with
+     Background App Refresh on: count the "Monitor tick (background)" records; zero is allowed.
+  5. iPhone, force quit: open the app, swipe it away in the app switcher, leave it for a few
+     hours: expect no records until you open it again.
+  6. iPhone, Background App Refresh off (Settings → General → Background App Refresh), or Low
+     Power Mode on: press Home with Xcode attached; expect error 1 in the console.
+Then walk me through docs/monitor-behaviour.md row by row, tied to the lesson's sections, and
+show me the evidence for each row you ran.
+Do NOT do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li>Android, background limits: <a href="https://developer.android.com/training/monitoring-device-state/doze-standby">Optimize for Doze and App Standby</a> (primary source: what Doze defers, maintenance windows, and the <code>dumpsys deviceidle</code> test commands), <a href="https://developer.android.com/topic/performance/appstandby">App Standby Buckets</a>, <a href="https://developer.android.com/topic/performance/power/power-details">Power management restrictions</a> (job limits per standby bucket; WorkManager is affected) and <a href="https://developer.android.com/topic/performance/power/test-power">Test power-related issues</a> (<code>am set-standby-bucket</code>).</li>
+    <li>Android, ending a process: the <a href="https://developer.android.com/tools/adb">Android Debug Bridge</a> page (<code>am kill</code>, <code>am force-stop</code>), <a href="https://developer.android.com/guide/components/activities/process-lifecycle">Processes and app lifecycle</a> (cached processes "can be killed by the system at any time"), <a href="https://developer.android.com/reference/android/app/ApplicationExitInfo">ApplicationExitInfo</a> (exit reasons: user requested, low memory), and <a href="https://developer.android.com/about/versions/15/behavior-changes-all">Android 15 behavior changes</a> ("Changes to package stopped state"). WorkManager's reaction is in its source, <a href="https://android.googlesource.com/platform/frameworks/support/+/androidx-main/work/work-runtime/src/main/java/androidx/work/impl/utils/ForceStopRunnable.java">ForceStopRunnable.java</a>.</li>
+    <li>iOS: <a href="https://developer.apple.com/documentation/backgroundtasks/choosing-background-strategies-for-your-app">Choosing background strategies for your app</a> (primary source), <a href="https://developer.apple.com/documentation/backgroundtasks/bgtaskrequest/earliestbegindate">earliestBeginDate</a>, <a href="https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/submit(_:)">submit(_:)</a>, <a href="https://developer.apple.com/documentation/uikit/uiapplication/backgroundrefreshstatus">backgroundRefreshStatus</a> (and Low Power Mode), <a href="https://developer.apple.com/documentation/backgroundtasks/starting-and-terminating-tasks-during-development">Starting and terminating tasks during development</a> ("can be many hours"; device only), <a href="https://developer.apple.com/documentation/uikit/preparing-your-ui-to-run-in-the-background">Preparing your UI to run in the background</a>, and <a href="https://developer.apple.com/documentation/uikit/about-the-background-execution-sequence">About the background execution sequence</a>. Apple's WWDC19 session <a href="https://developer.apple.com/videos/play/wwdc2019/707/">Advances in App Background Execution</a> explains how the system picks launch times.</li>
+    <li>iOS, force quit: Apple documents it for push launches (<a href="https://developer.apple.com/documentation/uikit/uiapplicationdelegate/application(_:didreceiveremotenotification:fetchcompletionhandler:)">application(_:didReceiveRemoteNotification:fetchCompletionHandler:)</a>) and background sessions (<a href="https://developer.apple.com/documentation/foundation/urlsessionconfiguration/background(withidentifier:)">background(withIdentifier:)</a>); for background launches in general, Apple DTS's <a href="https://developer.apple.com/forums/thread/685525">iOS Background Execution Limits</a> (a forum post, not documentation).</li>
+    <li>iOS, BLE in the background: <a href="https://developer.apple.com/library/archive/documentation/NetworkingInternetWeb/Conceptual/CoreBluetooth_concepts/CoreBluetoothBackgroundProcessingForIOSApps/PerformingTasksWhileYourAppIsInTheBackground.html">Core Bluetooth background processing for iOS apps</a> (the <code>bluetooth-central</code> mode; Apple's archive).</li>
+    <li><a href="../reference/platform-lifecycles-cheatsheet.html">Cheatsheet: platform lifecycles</a>: app-level work hooks the app or scene level, and "A suspended app gets <em>no</em> callback when it's killed".</li>
+    <li>Wisdom: Apple's Developer Forums, tag <a href="https://developer.apple.com/forums/tags/backgroundtasks">Background Tasks</a>; Stack Overflow's <a href="https://stackoverflow.com/questions/tagged/android-workmanager">android-workmanager</a> tag. Treat what you read there as a row to run, not a row to copy.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>The one file this lesson adds, complete. Nothing else changes: every file is as in m13, on every track. It belongs to no part of the app, so it carries no colour.</p>
+    <details class="full-file">
+      <summary>docs/monitor-behaviour.md</summary>
+<pre><code># Background monitor: what each platform does
+
+The status monitor (Lessons 18-19) asks for a reading of the phone's status every 15 minutes and
+appends it to the log (status-log.jsonl). This table says what each platform gives it, in each
+situation. Written from runs on the Android emulator and the iOS Simulator (Lesson 19), and from
+each platform's documentation for what only a phone can show.
+
+"Seen on" says how a row is known:
+- emulator / Simulator: we ran it and saw this.
+- phone, not yet run: only a physical phone can show it. The row says what the platform's
+  documentation says. When you run it, write the phone and OS version here, and correct the row
+  if the phone disagrees.
+
+## Android: WorkManager periodic work, 15 minutes
+
+| Situation | What happens | Seen on |
+|---|---|---|
+| Foreground | A record a moment after the first launch, then one per period, 15 minutes or more apart, from the same process. Being on screen changes nothing. | emulator |
+| Background (Home, process alive) | The same: WorkManager runs the work in the running process. | emulator |
+| Background, phone locked and still, on battery | Doze defers the work to maintenance windows, which come less often the longer the phone is still; standby buckets limit how often jobs run. Expect gaps longer than 15 minutes. | phone, not yet run |
+| Return to foreground | No extra record. The next run keeps its time (UPDATE keeps the schedule). | emulator |
+| OS ends the process | At the next run Android starts a new process for the work; Application.onCreate hands over the tick, and the record is written. The schedule is kept. | emulator (am kill) |
+| OS ends the process under real memory pressure | Expected the same as the row above; Android records the exit as LOW_MEMORY. | phone, not yet run |
+| Force stop (Settings &gt; Apps &gt; Force stop) | No records until the user opens the app again: Android removes the work's job at once. When the app opens, WorkManager reschedules and runs the overdue work: a record at once, then one per period. | emulator |
+| Swipe away in Recents | The process ends, but the app isn't stopped: the job stays, and the next run starts a new process, as when the OS ends it. A phone maker's Android can differ: check yours. | emulator; phone, not yet run |
+
+## iOS: a timer in the foreground, a BGAppRefreshTask request in the background
+
+| Situation | What happens | Seen on |
+|---|---|---|
+| Foreground | The app's own timer: the first record one interval after the app becomes active, then one per interval while it stays active. | Simulator |
+| Return to foreground | The timer starts over: the next record one full interval after the return. Visits shorter than 15 minutes write nothing. | Simulator |
+| Background, on the Simulator | iOS suspends the app. The refresh request fails with error 1 (the Simulator doesn't support background tasks): no records until the app is active again. | Simulator |
+| Background, on a phone | iOS may launch or wake the app for the refresh task: not before 15 minutes, at a time iOS chooses (it can be hours), or not at all. Each run asks for the next. | phone, not yet run |
+| Process ended (Simulator: simctl terminate) | Nothing runs until the user opens the app. The log keeps its records; the new process writes its first record one interval after it becomes active. | Simulator |
+| OS ends the app, on a phone | A pending refresh request can still launch the app in the background, when iOS chooses. | phone, not yet run |
+| Force quit (swipe up in the app switcher) | Expected: no background launches, so no records, until the user opens the app again. | phone, not yet run |
+| Background App Refresh off, or Low Power Mode | No refresh tasks: the request fails with error 1 when Background App Refresh is off; Low Power Mode turns Background App Refresh off. | phone, not yet run |
+
+## What neither platform promises
+
+- An exact interval. Android's 15 minutes is the least time between runs; iOS's is the earliest
+  time a run may start, and in the background iOS decides whether it starts at all.
+- Records after the user force-kills the app, until the user opens it again.
+- A record the moment the app opens. Android writes on the work's schedule (at once only when a
+  run is due, as on the first launch or after a force stop); iOS writes one interval after each
+  activation.
+
+## Sources
+
+- Android: Define work requests (periodic work), Optimize for Doze and App Standby, Power
+  management restrictions, Android 15 behavior changes (package stopped state).
+- iOS: BGTaskRequest.h (earliestBeginDate), Choosing background strategies for your app,
+  BGTaskScheduler.h (error 1 on the Simulator), backgroundRefreshStatus.
+- Lesson 19 lists the links and the commands for every run.</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="18-background-monitor.html">← 18 Background monitor: build it</a>
+    <span class="muted">Next: 20 Integration and end-to-end check</span>
+  </nav>
+</main>
+</body>
+</html>
