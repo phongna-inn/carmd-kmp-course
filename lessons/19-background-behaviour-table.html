@@ -65,7 +65,7 @@
     <tr><td>return</td><td><code>am start</code></td><td>no new record; a minute later <code>TIME=+13m48s</code>: the next run kept its time</td></tr>
     <tr><td>OS ends the app</td><td>Home, <code>am kill</code> at 23:51:48</td><td><code>pidof</code> empty. At 00:06:29 Android started a new process (11710) "for service {…/androidx.work.impl.background.systemjob.SystemJobService}", and record 4 came at 00:06:32 (15 min 59 s after record 3)</td></tr>
     <tr><td>force-kill</td><td><code>am force-stop</code> at 00:06:37</td><td>our job gone from <code>dumpsys jobscheduler</code> at once; no process and no record for the next 30 minutes, though the next run had been due at about 00:21</td></tr>
-    <tr><td>open again</td><td><code>am start</code> at 00:36:42</td><td>a new process (11902) and <code>WM-ForceStopRunnable</code> "Application was force-stopped, rescheduling."; record 5 at 00:36:47, as the app opened; our job back in <code>dumpsys jobscheduler</code>, under a new id; record 6 at 00:53:53, 17 min 6 s later, with the app in the background</td></tr>
+    <tr><td>open again</td><td><code>am start</code> at 00:36:42</td><td>a new process (11902) and <code>WM-ForceStopRunnable</code> "Application was force-stopped, rescheduling."; record 5 at 00:36:47, as the app opened (in two later runs, with the work 15 to 20 minutes overdue, the app wrote two records 1 to 2 s apart, and logcat showed <code>WM-Processor</code> "WorkerWrapper interrupted" after the first <code>Monitor tick</code>, then the work started again: expect one record or two); our job back in <code>dumpsys jobscheduler</code>, under a new id; record 6 at 00:53:53, 17 min 6 s later, with the app in the background</td></tr>
     <tr><td>swipe away in Recents</td><td>the app on screen, then Recents, swipe its card up (00:54:54)</td><td>process ended; exit-info: <code>reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK)</code>; <code>dumpsys package</code>: <code>stopped=false</code>, and our job still counting down. At 01:09:21 a new process for the job, record 7 at 01:09:23 (15 min 31 s after record 6), with "Application was force-stopped, rescheduling." again</td></tr>
   </table>
   </div>
@@ -459,9 +459,11 @@ Acceptance checks (run every one you can; the Android and iOS runs can go side b
   A5 force-kill: adb shell am force-stop com.example.devicemonitor. At once: the grep on
      dumpsys jobscheduler prints nothing, and exit-info shows subreason=21 (FORCE STOP).
      Wait until 20 minutes after the fourth record: still four records, and no "Start proc" for
-     our package in logcat. Then am start: within 10 s a fifth record; logcat shows
-     WM-ForceStopRunnable "Application was force-stopped, rescheduling." from the new process
-     id; the dumpsys grep shows our job again, with TIME=+14m… or a little less.
+     our package in logcat. Then am start: within 10 s a fifth record (sometimes a sixth 1 to
+     2 s after it: WorkManager's log shows the first run interrupted and started again; say
+     which you saw); logcat shows WM-ForceStopRunnable "Application was force-stopped,
+     rescheduling." from the new process id; the dumpsys grep shows our job again, with
+     TIME=+14m… or a little less.
   If TIME= is negative (the job is due) and no record comes for five more minutes, the emulator's
   JobScheduler is slow to start it: run it once by hand, as in Lesson 18's brief
   (adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler -u 0 com.example.devicemonitor &lt;id&gt;),
@@ -540,7 +542,7 @@ each platform's documentation for what only a phone can show.
 | Return to foreground | No extra record. The next run keeps its time (UPDATE keeps the schedule). | emulator |
 | OS ends the process | At the next run Android starts a new process for the work; Application.onCreate hands over the tick, and the record is written. The schedule is kept. | emulator (am kill) |
 | OS ends the process under real memory pressure | Expected the same as the row above; Android records the exit as LOW_MEMORY. | phone, not yet run |
-| Force stop (Settings &gt; Apps &gt; Force stop) | No records until the user opens the app again: Android removes the work's job at once. When the app opens, WorkManager reschedules and runs the overdue work: a record at once, then one per period. | emulator |
+| Force stop (Settings &gt; Apps &gt; Force stop) | No records until the user opens the app again: Android removes the work's job at once. When the app opens, WorkManager reschedules and runs the overdue work: a record at once (sometimes two, a second or two apart: the first run is interrupted and started again), then one per period. | emulator |
 | Swipe away in Recents | The process ends, but the app isn't stopped: the job stays, and the next run starts a new process, as when the OS ends it. A phone maker's Android can differ: check yours. | emulator; phone, not yet run |
 
 ## iOS: a timer in the foreground, a BGAppRefreshTask request in the background
