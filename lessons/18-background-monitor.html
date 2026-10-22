@@ -1,0 +1,1930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>18 — Background monitor: build it</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Lesson 18 · Week 4 · Day 18 · Native Device Monitor course</p>
+  <h1>Background monitor: build it</h1>
+  <div class="meta">
+    <span class="tag">~2 h · +0.25 h per extra UI track</span>
+    <span class="tag">Milestone: m13 monitor logs status on an interval</span>
+    <span class="tag">Prereq: <a href="17-device-status-and-log-store.html">17</a></span>
+  </div>
+  <div class="switchers">
+    <div class="switcher" data-platform="ios"></div>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> Lesson 17 gave the app the phone's status and a log to keep it in. A device monitor's real job is to keep reading while nobody looks: every 15 minutes, with the app open, in the background, or not running at all. Neither phone lets an app loop forever in the background. Android runs repeating work through WorkManager, at most once every 15 minutes; iOS suspends an app in the background and launches it again only when it decides to, through <code>BGTaskScheduler</code>. Today the app gets a <code>DeviceMonitoring</code> inbound port and a monitoring service that turns each tick into a log record, and a <code>MonitorScheduler</code> outbound port whose two adapters ask each platform for ticks in the way it allows. The monitor starts where the app starts, not where a screen appears, because the launches that matter most never show a screen. That's milestone <strong>m13</strong>: the monitor logs the status on an interval, on both platforms.
+  </div>
+
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/topic/libraries/architecture/workmanager">Task scheduling</a> (WorkManager) and <a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a> ("Schedule periodic work") before section 4. Apple's <a href="https://developer.apple.com/documentation/uikit/using-background-tasks-to-update-your-app">Using background tasks to update your app</a> before section 5, with the comments in <code>BGTaskScheduler.h</code> (Xcode: Open Quickly, ⇧⌘O). Kotlin's <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-clock/">Clock</a> before section 3.</p>
+  <p><span class="tag">Tracks</span> The ports, the service, both adapters, the launch hook and the tests are shared code, the same on every track, and so is Android's <code>Application</code> class. Only the iOS app start differs: <code>iOSApp.swift</code> (SwiftUI) or <code>AppDelegate.swift</code> (UIKit), each with its own <code>project.yml</code>. No screen changes today: Lesson 20 gives the monitor its buttons. Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+
+  <h2>What changes from m12</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m12</th><th>m13</th></tr>
+    <tr><td>app core</td><td>scanning, permissions, the BLE session, the status report; the <code>LogStore</code> port</td><td>a new model, <code>MonitorStatus</code>; a new inbound port, <code>DeviceMonitoring</code>, implemented by <code>MonitoringService</code>; a new outbound port, <code>MonitorScheduler</code>. The status rules move out of <code>StatusService</code> into <code>readStatus</code>, which both services call</td></tr>
+    <tr><td>Android adapters</td><td>BLE radio, permissions, status, <code>AndroidLogStore</code></td><td>plus <code>AndroidMonitorScheduler</code> and its <code>MonitorWorker</code>, over WorkManager 2.12.0 (one line in <code>shared/build.gradle.kts</code>); the manifest is unchanged</td></tr>
+    <tr><td>iOS adapters</td><td>Swift BLE, permission and status classes; <code>IosLogStore</code> in <code>iosMain</code></td><td>plus <code>IosMonitorScheduler</code>, Kotlin in <code>iosMain</code> over Apple's BackgroundTasks and UIKit; <code>project.yml</code> gains the background mode and the task identifier</td></tr>
+    <tr><td>shared inbound adapters</td><td>the two screens' ViewModels</td><td>plus <code>AppLaunch.kt</code>: <code>onAppLaunch()</code>, which starts the monitor</td></tr>
+    <tr><td>Koin</td><td>six adapters passed to <code>initKoin</code>; <code>LogStore</code> not bound</td><td>eight: the log store and the scheduler join them. <code>DeviceMonitoring</code> is bound to <code>MonitoringService</code></td></tr>
+    <tr><td>the app starts</td><td><code>initKoin(…)</code></td><td><code>initKoin(…)</code>, then <code>onAppLaunch()</code>: in <code>Application.onCreate</code>, the SwiftUI <code>App</code>'s <code>init</code>, or UIKit's <code>didFinishLaunchingWithOptions</code></td></tr>
+    <tr><td>the screens</td><td colspan="2">unchanged</td></tr>
+    <tr><td>tests</td><td>87 per platform</td><td>95 per platform: 7 for the monitoring service, 1 more for the Koin graph</td></tr>
+  </table>
+  </div>
+
+  <h2>1. Who owns the clock</h2>
+  <p>While it's on screen, an app can run whatever timer it likes. Once it leaves the screen, what runs and when is each platform's decision, made in its own way:</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="l18-clock-title">
+      <title id="l18-clock-title">Who runs the monitor's tick, in three situations from left to right: the app on screen, the app in the background, and the app's process gone. On Android, in all three, WorkManager runs the tick about every 15 minutes, never more often; when the process is gone it starts the process first, and Application.onCreate runs before the work. On iOS, with the app on screen, the app's own timer ticks every 15 minutes. In the background iOS suspends the app, and with the process gone nothing of the app runs; in both cases a background refresh task may launch or wake the app, not before the earliest date the app asked for, at a time iOS chooses, and never on the Simulator.</title>
+      <defs><marker id="l18-clock-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="title small" x="150" y="28">app on screen</text>
+      <text class="title small" x="360" y="28">in the background</text>
+      <text class="title small" x="580" y="28">process gone</text>
+      <line class="axis" x1="120" y1="40" x2="740" y2="40"/>
+      <g data-part="android">
+        <text class="title" x="20" y="96">Android</text>
+        <rect class="box" x="120" y="66" width="620" height="60" rx="6"/>
+        <text class="small" x="134" y="90">WorkManager: one tick about every 15 minutes, never more often; the moment is Android's</text>
+        <text class="small muted" x="134" y="112">the same with the app open or not; for the process-gone column it starts the process first</text>
+      </g>
+      <circle class="dot" cx="180" cy="150" r="5"/>
+      <circle class="dot" cx="330" cy="150" r="5"/>
+      <circle class="dot" cx="500" cy="150" r="5"/>
+      <circle class="dot" cx="680" cy="150" r="5"/>
+      <g data-part="ios">
+        <text class="title" x="20" y="214">iOS</text>
+        <rect class="box" x="120" y="184" width="190" height="60" rx="6"/>
+        <text class="small" x="132" y="208">the app's own timer:</text>
+        <text class="small" x="132" y="228">a tick every 15 minutes</text>
+        <rect class="box" x="330" y="184" width="410" height="60" rx="6"/>
+        <text class="small" x="342" y="208">suspended, or not running: nothing of the app runs</text>
+        <text class="small" x="342" y="228">until iOS launches it for a background refresh task</text>
+      </g>
+      <circle class="dot" cx="200" cy="268" r="5"/>
+      <circle class="dot" cx="290" cy="268" r="5"/>
+      <circle class="dot dropped" cx="420" cy="268" r="5"/>
+      <circle class="dot" cx="610" cy="268" r="5"/>
+      <path class="edge dashed" d="M430,268 L598,268" marker-end="url(#l18-clock-arrow)"/>
+      <text class="small muted" x="440" y="292">"not before" the date asked for; iOS picks when, or never</text>
+      <text class="small muted" x="20" y="320">Dots: ticks. The hollow dot is when the app asked to run; the filled one, when iOS might run it. The Simulator never runs it.</text>
+    </svg>
+    <figcaption>On Android one mechanism covers every case; on iOS the foreground and the background are two different mechanisms.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <ol class="walk">
+    <li><strong>Android: WorkManager.</strong> "WorkManager is intended for work that is required to run reliably even if the user navigates off a screen, the app exits, or the device restarts", and it "lets tasks persist across app restarts and device reboots" (<a href="https://developer.android.com/topic/libraries/architecture/workmanager">Task scheduling</a>). For repeating work: "The minimum repeat interval that can be defined is 15 minutes (same as the JobScheduler API)", and "The interval period is defined as the minimum time between repetitions. The exact time that the worker is going to be executed depends on the constraints that you are using in your WorkRequest object and on the optimizations performed by the system" (<a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a>).</li>
+    <li><strong>iOS: two mechanisms.</strong> In the foreground the app runs its own timer. In the background, the app is suspended, and "Background tasks give your app a way to run code while the app is suspended" (<code>BGTaskScheduler.h</code>). A refresh task's <code>earliestBeginDate</code> means "the system doesn't guarantee launching the task at the specified date, but only that it won't begin sooner", and "The system will fulfill this request intelligently based on system conditions and app usage" (<code>BGTaskRequest.h</code>). Apple's own example asks for "no earlier than 15 minutes from now" (<a href="https://developer.apple.com/documentation/uikit/using-background-tasks-to-update-your-app">Using background tasks</a>).</li>
+    <li><strong>15 minutes, on both.</strong> It's Android's floor, and a sensible rhythm for a phone's battery and network. iOS has no floor in its API, and no promise either: in the background, 15 minutes is the earliest, never the schedule. Lesson 19 measures what each phone actually does.</li>
+  </ol>
+  <p><strong>No bypassing the OS's limits.</strong> Each platform has tools that look like a way around them. Each is either meant for something else or not allowed for this:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Tempting</th><th>What the platform says</th></tr>
+    <tr><td>a coroutine loop with <code>delay</code> in a ViewModel or an Activity</td><td>Coroutines are for work "that doesn't need to persist if the app leaves the visible state"; "they stop as soon as the app closes. For work that should persist even after the app closes, use WorkManager" (<a href="https://developer.android.com/topic/libraries/architecture/workmanager">Task scheduling</a>). The iOS adapter does use a timer, but only in the foreground, where that's exactly right.</td></tr>
+    <tr><td>Android exact alarms every few minutes</td><td>"exact alarms wake a device from Doze mode. It is therefore not efficient in terms of power and resource management. Only use it for precise alarms or notifications such as calendar events, not for recurring background work" (the same page).</td></tr>
+    <tr><td>an Android foreground service that runs forever, to keep the process alive</td><td>"Only use a foreground service when your app needs to perform a task that is noticeable by the user" (<a href="https://developer.android.com/develop/background-work/services/fgs">Foreground services overview</a>). It shows a notification while it runs, needs a declared type from Android 14, and an app targeting Android 12 or later "can't start foreground services while the app is running in the background, except for a few special cases" (section 4).</td></tr>
+    <tr><td>an iOS background mode the app doesn't need (audio, location) to stay awake</td><td>App Review Guideline 2.5.4: "Multitasking apps may only use background services for their intended purposes: VoIP, audio playback, location, task completion, local notifications, etc." (<a href="https://developer.apple.com/app-store/review/guidelines/">App Review Guidelines</a>).</td></tr>
+  </table>
+  </div>
+
+  <h2>2. Two ports: what the app offers, what it needs</h2>
+  <p>Appendix A.7 of the course plan asks for a monitor that can start at an interval, stop, report where it stands, and show or clear its log. That's the inbound port:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceMonitoring.kt</figcaption>
+<pre><code>interface DeviceMonitoring {
+    // Starts the monitor, or changes its interval: about every interval, as often as the
+    // platform allows, it reads the phone's status and appends it to the log.
+<mark>    fun start(interval: Duration)</mark>
+
+    // Stops the monitor. The log is kept.
+<mark>    fun stop()</mark>
+
+    // Stopped, or running with its newest reading and error.
+<mark>    val status: StateFlow&lt;MonitorStatus&gt;</mark>
+<span class="elide">⋯  logs(): every record, oldest first; clearLogs(): removes them (both suspend)</span>
+}</code></pre>
+  </figure>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/MonitorStatus.kt</figcaption>
+<pre><code><mark>sealed interface MonitorStatus {</mark>
+    data object Stopped : MonitorStatus
+
+    // Started, at this interval. lastRecord is the newest reading this process saved; lastError
+    // is set when the newest attempt couldn't be saved, and cleared by the next one that is.
+<mark>    data class Running(</mark>
+        val interval: Duration,
+        val lastRecord: LogRecord? = null,
+        val lastError: String? = null,
+    ) : MonitorStatus
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>start</code> isn't <code>suspend</code></strong>: it hands the tick to the platform and returns. The ticks come later, on the platform's schedule.</li>
+    <li><strong>A <code>StateFlow</code>, like the session's <code>connectionState</code></strong> (Lesson 14): a screen can collect it, and a test can read <code>.value</code>. <code>MonitorStatus</code> is sealed for the same reason as <code>ConnectionState</code>: a <code>when</code> over it must handle both states.</li>
+    <li><strong>"This process".</strong> The status lives in memory, so each process has its own. On Android a tick may run in a process WorkManager started while nobody was looking, and the process that shows the screen later never sees that tick's <code>lastRecord</code>. The log file is what lasts.</li>
+  </ol>
+  <p>What the service needs from the platform is a timer it can't build itself:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/MonitorScheduler.kt</figcaption>
+<pre><code>// Outbound port: the platform's way to run the monitor's tick on a timer, inside the limits the
+// platform sets. One adapter per platform: WorkManager on Android, a timer and BGTaskScheduler
+// on iOS. Neither promises an exact time: the interval is "about", and in the background the
+// platform decides when.
+<mark>interface MonitorScheduler {</mark>
+    // Calls tick about every interval until cancel(). Calling it again replaces both.
+<mark>    fun schedule(interval: Duration, tick: suspend () -&gt; Unit)</mark>
+
+    // Stops calling tick.
+<mark>    fun cancel()</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Named for what the app needs</strong>, not for a platform: no "work", no "task", no "job". WorkManager and <code>BGTaskScheduler</code> stay inside their adapters.</li>
+    <li><strong>The tick is a <code>suspend</code> function the service hands over.</strong> The adapter decides <em>when</em>; the service decides <em>what</em>. That split is the whole design: the rules of a tick are tested on the JVM and in the iOS simulator with a fake timer (section 7), and each adapter is only a timer.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 470" role="img" aria-labelledby="l18-hex-title">
+      <title id="l18-hex-title">The monitor's parts. The app's launch, an inbound adapter in the shared code called onAppLaunch, calls the inbound port DeviceMonitoring. MonitoringService in the app core implements it. It calls six outbound ports: the four status ports from Lesson 17 (BatteryProvider, NetworkProvider, BluetoothProvider, and ConnectionStatus, which the SessionConnectionStatus bridge answers from the session), LogStore, and MonitorScheduler. The status rules are a function in the app core, readStatus, that both MonitoringService and StatusService call. MonitorScheduler is implemented on Android by AndroidMonitorScheduler, Kotlin in androidMain over WorkManager, and on iOS by IosMonitorScheduler, Kotlin in iosMain over BackgroundTasks and UIKit. When the time comes, each adapter calls the tick the service handed it.</title>
+      <defs><marker id="l18-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="inbound">
+        <rect class="box" x="10" y="150" width="150" height="60" rx="6"/>
+        <text class="title small" x="20" y="174">onAppLaunch()</text>
+        <text class="small muted" x="20" y="194">inbound adapter</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="190" y="40" width="320" height="330" rx="6"/>
+        <text class="title" x="204" y="64">App core</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="204" y="150" width="140" height="40" rx="6"/>
+        <text class="mono small" x="214" y="175">DeviceMonitoring</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="204" y="210" width="140" height="40" rx="6"/>
+        <text class="mono small" x="214" y="235">MonitoringService</text>
+        <rect class="box" x="204" y="300" width="140" height="40" rx="6"/>
+        <text class="mono small" x="214" y="325">readStatus(…)</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="368" y="60" width="132" height="70" rx="6"/>
+        <text class="small" x="378" y="82">BatteryProvider,</text>
+        <text class="small" x="378" y="100">NetworkProvider,</text>
+        <text class="small" x="378" y="118">BluetoothProvider</text>
+        <rect class="box" x="368" y="150" width="132" height="40" rx="6"/>
+        <text class="mono small" x="376" y="175">ConnectionStatus</text>
+        <rect class="box" x="368" y="210" width="132" height="40" rx="6"/>
+        <text class="mono small" x="376" y="235">LogStore</text>
+        <rect class="box" x="368" y="270" width="132" height="40" rx="6"/>
+        <text class="mono small" x="376" y="295">MonitorScheduler</text>
+      </g>
+      <g data-part="android">
+        <rect class="box" x="540" y="230" width="210" height="60" rx="6"/>
+        <text class="title small" x="550" y="252">AndroidMonitorScheduler</text>
+        <text class="small muted" x="550" y="274">androidMain · WorkManager</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="540" y="310" width="210" height="60" rx="6"/>
+        <text class="title small" x="550" y="332">IosMonitorScheduler</text>
+        <text class="small muted" x="550" y="354">iosMain · BackgroundTasks, UIKit</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="540" y="140" width="210" height="60" rx="6"/>
+        <text class="title small" x="550" y="162">SessionConnectionStatus</text>
+        <text class="small muted" x="550" y="184">bridge adapter (Lesson 17)</text>
+      </g>
+      <path class="edge" d="M160,175 L202,172" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge" d="M274,190 L274,208" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge" d="M344,220 L366,100" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge" d="M344,226 L366,172" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge" d="M344,232 L366,230" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge" d="M344,240 L366,286" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge" d="M274,250 L274,298" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge dashed" d="M538,170 L502,170" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge dashed" d="M538,262 L502,290" marker-end="url(#l18-hex-arrow)"/>
+      <path class="edge dashed" d="M538,336 L502,300" marker-end="url(#l18-hex-arrow)"/>
+      <text class="small muted" x="10" y="410">Solid: calls. Dashed: adapters implement the outbound ports. The status ports' platform adapters (Lesson 17) are left out.</text>
+      <text class="small muted" x="10" y="430">When the time comes, the scheduler adapter calls back the tick that MonitoringService handed it.</text>
+      <text class="small muted" x="10" y="450">StatusService (Lesson 17) calls readStatus too; in the tests, fakes take every adapter's place.</text>
+    </svg>
+    <figcaption>One inbound port, six outbound ports; only <code>MonitorScheduler</code> is new on the outside.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound</li>
+    <li data-part="outbound">Outbound ports and the bridge adapter</li>
+    <li data-part="android">Android adapter</li>
+    <li data-part="ios">iOS adapter</li>
+  </ul>
+
+  <h2>3. The monitoring service: one tick, one record</h2>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/MonitoringService.kt</figcaption>
+<pre><code><mark>class MonitoringService(</mark>
+    private val battery: BatteryProvider,
+    private val network: NetworkProvider,
+    private val bluetooth: BluetoothProvider,
+<mark>    private val connection: ConnectionStatus,</mark>
+    private val log: LogStore,
+    private val scheduler: MonitorScheduler,
+<mark>    private val clock: Clock = Clock.System,</mark>
+) : DeviceMonitoring {
+<span class="elide">⋯  _status: MutableStateFlow&lt;MonitorStatus&gt;(Stopped), exposed as status</span>
+    override fun start(interval: Duration) {
+        require(interval.isPositive()) { "The monitor's interval must be positive, not $interval." }
+        _status.value = MonitorStatus.Running(interval)
+<mark>        scheduler.schedule(interval) { tick() }</mark>
+    }
+
+    override fun stop() {
+<mark>        scheduler.cancel()</mark>
+        _status.value = MonitorStatus.Stopped
+    }
+<span class="elide">⋯  logs() = log.read(); clearLogs() = log.clear()</span></code></pre>
+  </figure>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/MonitoringService.kt</figcaption>
+<pre><code>    // One reading. A tick that comes after stop() writes nothing. A file error doesn't stop the
+    // monitor: it shows in the status, and the next tick tries again.
+    private suspend fun tick() {
+<mark>        if (_status.value !is MonitorStatus.Running) return</mark>
+<mark>        val record = LogRecord(clock.now(), readStatus(battery, network, bluetooth, connection))</mark>
+        val error = try {
+<mark>            log.append(record)</mark>
+            null
+<mark>        } catch (e: LogStoreException) {</mark>
+            e.message
+        }
+<span class="elide">⋯        _status.update: Running gets lastRecord = record and lastError = null, or lastError = error</span>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The four status ports again, <code>ConnectionStatus</code> included.</strong> The monitor reads "Bluetooth connected" through Lesson 17's port and its bridge, never through <code>DeviceSession</code>: services don't know each other (Lesson 17, section 3). Koin hands both services the same adapters, so a record and the list screen's status line read the same sources.</li>
+    <li><strong>Why not a bridge to <code>StatusReport</code>?</strong> A bridge is for what another capability <em>holds</em>: the session owns the connection state, so the status asks through a bridge. Nobody in the app holds the battery level or the network; the platform does, and the monitor asks the platform's ports directly. What the two services share is <em>rules</em>, and rules shared by two services are written once, as a plain function in the app core:</li>
+  </ol>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/ReadStatus.kt</figcaption>
+<pre><code>// The app's rules for the phone's status, written once: StatusService answers the screen with
+// them, and MonitoringService logs them. A plain function in the app core, not a third service:
+// it applies rules to what the ports report, and holds no state.
+<mark>internal suspend fun readStatus(</mark>
+    battery: BatteryProvider,
+    network: NetworkProvider,
+    bluetooth: BluetoothProvider,
+    connection: ConnectionStatus,
+): DeviceStatus {
+<span class="elide">⋯  the body of Lesson 17's StatusService.current(): the Wi-Fi rule, and only Connected counts</span>
+}</code></pre>
+  </figure>
+  <figure class="excerpt" data-part="core">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/StatusService.kt</figcaption>
+<pre><code><span class="elide">⋯  class StatusService(battery, network, bluetooth, connection) : StatusReport {</span>
+<mark>    override suspend fun current(): DeviceStatus = readStatus(battery, network, bluetooth, connection)</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk" start="3">
+    <li><strong>Still in the app core, still tested through both services.</strong> <code>StatusServiceTest</code> didn't change and still passes; <code>MonitoringServiceTest</code>'s <code>theRecordFollowsTheStatusRules</code> checks the same two rules in a record. Removing the Wi-Fi rule from <code>readStatus</code> fails one test in each (we tried). <code>internal</code> keeps it out of Swift's header.</li>
+    <li><strong>A <code>Clock</code>, passed in.</strong> <code>kotlin.time.Clock</code> is the standard library's interface with one method, <code>now()</code>. Its reference: "It is not recommended to use <code>Clock.System</code> directly in the implementation. Instead, you can pass a <code>Clock</code> explicitly to the necessary functions or classes. This way, tests can be written deterministically by providing custom <code>Clock</code> implementations" (<a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-clock/">Clock</a>). The default keeps Koin's binding short; the tests pass a clock they set.</li>
+    <li><strong>A late tick writes nothing.</strong> A platform can be about to call the tick when <code>stop()</code> runs: WorkManager may already have started the worker, or a coroutine may be past its <code>delay</code>. The first line makes "stopped" mean stopped. <code>stopCancelsAndALateTickWritesNothing</code> fails without it (we tried).</li>
+    <li><strong>A file error is a reading that failed, not a crash.</strong> A full disk (<code>LogStoreException</code>, Lesson 17) lands in <code>lastError</code>, and the next tick tries again. Anything else still throws: a bug should be loud.</li>
+  </ol>
+
+  <h2>4. Android: WorkManager</h2>
+  <p>WorkManager comes from Jetpack: <code>implementation("androidx.work:work-runtime:2.12.0")</code> in <code>androidMain</code>'s dependencies in <code>shared/build.gradle.kts</code>. Since 2.9, the Kotlin APIs are in that artifact: "<code>work-runtime-ktx</code> is now empty, <code>CoroutineWorker</code> and other Kotlin specific utilities are now available in the main <code>work-runtime</code> artifact" (<a href="https://developer.android.com/jetpack/androidx/releases/work">WorkManager release notes</a>).</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidMonitorScheduler.kt</figcaption>
+<pre><code><mark>class AndroidMonitorScheduler(context: Context) : MonitorScheduler {</mark>
+    private val workManager = WorkManager.getInstance(context)
+
+    override fun schedule(interval: Duration, tick: suspend () -&gt; Unit) {
+<mark>        currentTick = tick</mark>
+        // Android's floor for periodic work is 15 minutes: never ask for less.
+<mark>        val period = interval.coerceAtLeast(PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS.milliseconds)</mark>
+<mark>        val request = PeriodicWorkRequestBuilder&lt;MonitorWorker&gt;(period.toJavaDuration()).build()</mark>
+        // One schedule however many launches call this: UPDATE keeps the work that is already
+        // scheduled, with its timing, and only changes its period.
+<mark>        workManager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request)</mark>
+    }
+
+    override fun cancel() {
+        currentTick = null
+<mark>        workManager.cancelUniqueWork(WORK_NAME)</mark>
+    }
+<span class="elide">⋯  companion object: WORK_NAME = "status-monitor", and currentTick (below)</span>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Periodic work, at least 15 minutes apart.</strong> "The repeat interval must be greater than or equal to <code>PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS</code>" (<a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a>). <code>coerceAtLeast</code> makes that the adapter's promise rather than a surprise. The builder that takes a <code>java.time.Duration</code> needs API 26, the app's minimum; <code>toJavaDuration()</code> converts Kotlin's.</li>
+    <li><strong>Unique work, by name.</strong> The app starts the monitor on every launch (section 6), so <code>schedule</code> runs many times. <code>UPDATE</code>: "If there is existing pending (uncompleted) work with the same unique name, it will be updated with the new specification. Otherwise, new work with the given name will be enqueued", and "It preserves enqueue time" (<a href="https://developer.android.com/reference/androidx/work/ExistingPeriodicWorkPolicy">ExistingPeriodicWorkPolicy</a>). <code>KEEP</code> would ignore a new interval; <code>CANCEL_AND_REENQUEUE</code> starts over: with it, our relaunch wrote a second record at once. With <code>UPDATE</code>, a relaunch left the next run where it was (<code>dumpsys jobscheduler</code> still counted down) and wrote no extra record.</li>
+    <li><strong>The first run is at once.</strong> A new periodic request has no initial delay, so the first record appears a moment after the first launch: on the emulator, within a second of <code>am start</code>.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidMonitorScheduler.kt</figcaption>
+<pre><code>    internal companion object {
+        const val WORK_NAME = "status-monitor"
+
+        // WorkManager builds MonitorWorker itself, so the worker can't be handed the tick: it
+        // finds it here, in the process they share. A new process gets it from onAppLaunch.
+        @Volatile
+<mark>        var currentTick: (suspend () -&gt; Unit)? = null</mark>
+    }
+}
+
+// What WorkManager runs each period, in the app's process: Android starts the process for it
+// if it isn't running, and Application.onCreate runs first.
+<mark>class MonitorWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {</mark>
+    override suspend fun doWork(): Result {
+<mark>        val tick = AndroidMonitorScheduler.currentTick</mark>
+        Log.i("DeviceMonitor", if (tick == null) "Monitor work ran, but the monitor is stopped" else "Monitor tick")
+<mark>        tick?.invoke()</mark>
+        return Result.success()
+    }
+}</code></pre>
+  </figure>
+  <ol class="walk" start="4">
+    <li><strong>WorkManager builds the worker itself.</strong> "ListenableWorker classes are instantiated at runtime by the <code>WorkerFactory</code> specified in the <code>Configuration</code>" (<a href="https://developer.android.com/reference/androidx/work/ListenableWorker">ListenableWorker</a>), and this app keeps the default configuration, whose factory looks up the constructor that takes a <code>Context</code> and <code>WorkerParameters</code> (<code>getDeclaredConstructor</code> in <code>WorkerFactory</code>'s bytecode, work-runtime 2.12.0). A lambda can't travel with the request either: "Scheduled work is stored in an internally managed SQLite database" (<a href="https://developer.android.com/topic/libraries/architecture/workmanager">Task scheduling</a>). So the worker reaches the tick through the one thing it shares with the adapter: the process. <code>@Volatile</code>, because the worker reads it on another thread.</li>
+    <li><strong>A new process.</strong> If the app isn't running, Android starts its process to run the work: on the emulator, logcat said "Start proc … for service {com.example.devicemonitor/androidx.work.impl.background.systemjob.SystemJobService}", WorkManager's <code>JobService</code>. <code>Application.onCreate</code> is "Called when the application is starting, before any activity, service, or receiver objects (excluding content providers) have been created" (<a href="https://developer.android.com/reference/android/app/Application#onCreate()">Application</a>), so <code>onAppLaunch()</code> has handed over the tick before <code>doWork</code> runs (section 6).</li>
+    <li><strong><code>CoroutineWorker</code></strong> lets <code>doWork</code> be <code>suspend</code>, and "defaults to <code>Dispatchers.Default</code>" (<a href="https://developer.android.com/develop/background-work/background-tasks/persistent/threading/coroutineworker">Threading in CoroutineWorker</a>). That's fine here: none of Lesson 17's Android status adapters needs the main thread (the network one already keeps its map in a <code>ConcurrentHashMap</code>, because its callbacks arrive on another thread), and the log store moves to <code>Dispatchers.IO</code> itself.</li>
+    <li><strong>No manifest change.</strong> WorkManager's own manifest is merged into the app's: <code>aapt2 dump permissions</code> on our APK lists <code>WAKE_LOCK</code>, <code>RECEIVE_BOOT_COMPLETED</code> and <code>FOREGROUND_SERVICE</code>, and the merge report names <code>work-runtime:2.12.0</code> for each.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · you can't force a periodic run early</span>
+    JobScheduler can run a job on demand (<code>adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler com.example.devicemonitor &lt;job id&gt;</code>; on our API 36 emulator WorkManager's jobs sat in that namespace, and without <code>-n</code> the command said "Could not find job"). For our periodic work, WorkManager then refused: "Delaying execution for com.example.devicemonitor.adapter.outbound.MonitorWorker because it is being executed before schedule." (logcat, tag <code>WM-WorkerWrapper</code>), and wrote no record. To see a second tick, wait out the 15 minutes. The job id also changes when WorkManager reschedules, so read it from <code>dumpsys jobscheduler</code> each time.
+  </div>
+  <p><strong>And the foreground service?</strong> The course plan names it next to WorkManager, and it's the right tool for a different monitor: one the user starts and watches, such as live readings from a connected device every few seconds while a notification says so. Android's background-tasks guide puts it that way: "If the task is not invisible to the user, the correct solution may be to use a foreground service. These services run continuously once started", while for work that can wait, "In most cases, your best option for running background tasks is to use WorkManager" (<a href="https://developer.android.com/develop/background-work/background-tasks">Background tasks overview</a>). Our monitor is invisible and can wait a few minutes, so WorkManager it is. A foreground service would also need, from Android 14, "an appropriate service type for each foreground service" declared in the manifest with its permission (<a href="https://developer.android.com/develop/background-work/services/fgs/service-types">Foreground service types</a>), and couldn't be started from the background: "Apps that target Android 12 (API level 31) or higher can't start foreground services while the app is running in the background, except for a few special cases" (<a href="https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start">Restrictions on starting a foreground service from the background</a>).</p>
+
+  <h2>5. iOS: a timer in the foreground, BGTaskScheduler in the background</h2>
+  <p>The iOS adapter is Kotlin in <code>iosMain</code>, like Lesson 17's log store: the port takes a Kotlin <code>Duration</code> and a <code>suspend</code> lambda, which reach Swift's header as an <code>int64_t</code> and an <code>id&lt;SharedKotlinSuspendFunction0&gt;</code> (<code>- (void)scheduleInterval:(int64_t)interval tick:…</code>), while Kotlin/Native imports Apple's BackgroundTasks and UIKit as <code>platform.BackgroundTasks</code> and <code>platform.UIKit</code>. It follows the app's state with UIKit's app-level notifications:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosMonitorScheduler.kt</figcaption>
+<pre><code><mark>class IosMonitorScheduler : MonitorScheduler {</mark>
+    private val scope = MainScope() // ticks run on the main thread, like the status adapters
+<span class="elide">⋯  scheduler = BGTaskScheduler.sharedScheduler; tick, interval, timer: Job?</span>
+    init {
+        // Once per process, and during launch: registering after launch is an error, and a second
+        // registration of the same identifier ends the app. false: the identifier isn't permitted.
+<mark>        val registered = scheduler.registerForTaskWithIdentifier(TASK_ID, dispatch_get_main_queue()) { task -&gt;</mark>
+            refresh(task as BGAppRefreshTask)
+        }
+<mark>        check(registered) { "$TASK_ID isn't in BGTaskSchedulerPermittedIdentifiers (project.yml)." }</mark>
+        // App-level lifecycle, not a screen's: these fire whichever screen is showing.
+        val center = NSNotificationCenter.defaultCenter
+<mark>        center.addObserverForName(UIApplicationDidBecomeActiveNotification, null, NSOperationQueue.mainQueue) { _ -&gt;</mark>
+            scheduler.cancelTaskRequestWithIdentifier(TASK_ID) // the timer takes over
+<mark>            startTimer()</mark>
+        }
+<mark>        center.addObserverForName(UIApplicationDidEnterBackgroundNotification, null, NSOperationQueue.mainQueue) { _ -&gt;</mark>
+<span class="elide">⋯            hand over: if the timer is running, cancel it and submit() a refresh request</span>
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Registered in <code>init</code>, so built at launch.</strong> Apple: "Registration of all launch handlers must be complete before the end of <code>applicationDidFinishLaunching(_:)</code>", and "Register each task identifier only once. The system kills the app on the second registration of the same task identifier" (<a href="https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/register(fortaskwithidentifier:using:launchhandler:)">register(forTaskWithIdentifier:using:launchHandler:)</a>). So the app start builds one <code>IosMonitorScheduler()</code> and passes it to <code>doInitKoin</code>, like the other adapters; a Koin <code>single { IosMonitorScheduler() }</code> would build it whenever something first asked, maybe after launch. <code>register</code> "Returns <code>false</code> if the identifier isn't included in the <code>BGTaskSchedulerPermittedIdentifiers</code> Info.plist", and the <code>check</code> after it turns that into a crash at launch with a message that says what to fix, instead of a monitor that silently never runs in the background.</li>
+    <li><strong>The main queue, and <code>MainScope</code>.</strong> Passing <code>nil</code> for the queue would mean "a default background queue". The tick reads Lesson 17's iOS status adapters, which are <code>@MainActor</code> and check at run time that they're called on the main thread, so everything here runs there.</li>
+    <li><strong>App-level notifications.</strong> <code>didBecomeActiveNotification</code> "posts when the app becomes active", and <code>didEnterBackgroundNotification</code> "posts when the app enters the background" (<a href="https://developer.apple.com/documentation/uikit/uiapplication/didbecomeactivenotification">didBecomeActiveNotification</a>, <a href="https://developer.apple.com/documentation/uikit/uiapplication/didenterbackgroundnotification">didEnterBackgroundNotification</a>). Both iOS tracks use scenes, and with scenes UIKit doesn't call the app delegate's <code>applicationDidEnterBackground(_:)</code>, but "UIKit posts a <code>didEnterBackgroundNotification</code> regardless of whether your app uses scenes" (<a href="https://developer.apple.com/documentation/uikit/uiapplicationdelegate/applicationdidenterbackground(_:)">applicationDidEnterBackground(_:)</a>): the notification works for SwiftUI and UIKit alike, from shared code. A screen's <code>onAppear</code> or <code>viewWillAppear</code> would follow one screen, and wouldn't fire at all in a launch with no screen.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosMonitorScheduler.kt</figcaption>
+<pre><code>    private fun startTimer() {
+        val tick = tick ?: return
+        timer?.cancel()
+<mark>        timer = scope.launch {</mark>
+            while (true) {
+<mark>                delay(interval)</mark>
+                println("Monitor tick (foreground)")
+                tick()
+            }
+        }
+    }
+
+    // Asks iOS to launch the app in the background, not before one interval from now.
+    private fun submit() {
+<mark>        val request = BGAppRefreshTaskRequest(identifier = TASK_ID)</mark>
+<mark>        request.earliestBeginDate = NSDate.dateWithTimeIntervalSinceNow(interval.inWholeSeconds.toDouble())</mark>
+        memScoped {
+            val error = alloc&lt;ObjCObjectVar&lt;NSError?&gt;&gt;()
+<mark>            if (!scheduler.submitTaskRequest(request, error.ptr)) {</mark>
+                // On the Simulator, always: it "doesn't support background processing".
+                println("Monitor: no background refresh: ${error.value?.localizedDescription}")
+            }
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk" start="4">
+    <li><strong>In the foreground, a plain coroutine timer</strong>: the first tick one interval after the app becomes active, then one per interval while it stays active. When the app goes to the background the timer is cancelled, and nothing would run it anyway: iOS suspends the app.</li>
+    <li><strong>Lesson 17's error pattern, again.</strong> <code>submitTaskRequest:error:</code> returns <code>NO</code> and fills an <code>NSError **</code>, so the Kotlin side passes <code>error.ptr</code> inside <code>memScoped</code>. "Submitting a task request for an unexecuted task that's already in the queue replaces the previous task request", and "There can be a total of 1 refresh task and 10 processing tasks scheduled at any time" (<code>BGTaskScheduler.h</code>): one identifier, one pending request at most.</li>
+    <li><strong>The Simulator can't.</strong> <code>BGTaskSchedulerErrorCodeUnavailable</code> (1) is documented for "The app is running on Simulator which doesn't support background processing" (<code>BGTaskScheduler.h</code>), and that's what we got on the iOS 26.2 Simulator each time the app went to the background: "Monitor: no background refresh: The operation couldn't be completed. (BGTaskSchedulerErrorDomain error 1.)". On a phone, the header gives code 1 when "The user has disabled background refresh in settings"; a missing background mode or identifier is code 3, <code>NotPermitted</code>, instead.</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosMonitorScheduler.kt</figcaption>
+<pre><code>    // iOS launched (or woke) the app in the background for the refresh task.
+    private fun refresh(task: BGAppRefreshTask) {
+        val tick = tick
+        if (tick == null) {
+            task.setTaskCompletedWithSuccess(true)
+            return
+        }
+<mark>        submit() // the next one first: this one may be cut short</mark>
+        val work = scope.launch {
+            println("Monitor tick (background)")
+            tick()
+<mark>            task.setTaskCompletedWithSuccess(true)</mark>
+        }
+<mark>        task.expirationHandler = {</mark>
+            work.cancel()
+            task.setTaskCompletedWithSuccess(false)
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk" start="7">
+    <li><strong>Apple's own order</strong>: the sample's handler schedules a new refresh task first, gives the task an expiration handler that cancels the work, and reports completion when the work ends (<a href="https://developer.apple.com/documentation/uikit/using-background-tasks-to-update-your-app">Using background tasks</a>). Each refresh asks for the next, so the chain continues for as long as iOS keeps granting them.</li>
+    <li><strong>Always complete the task.</strong> <code>BGTask.h</code>: "The system suspends the app as soon as all background tasks are complete", and "Not calling <code>setTaskCompletedWithSuccess:</code> before the time for the task expires may result in the system killing your app." The expiration handler is "called shortly before the task's background time expires"; cancelling the coroutine there stops a slow tick.</li>
+    <li><strong>A launch straight into the background</strong> runs the app start first: "the system launches the app and moves it directly to the background", then UIKit "calls the app delegate's <code>applicationDidEnterBackground(_:)</code> method" (with scenes, UIKit skips that method but still posts the notification), then "delivers the event that caused the launch" (<a href="https://developer.apple.com/documentation/uikit/about-the-background-execution-sequence">About the background execution sequence</a>). That background notification comes with no timer running, so the adapter submits nothing then; the refresh task submits the next one.</li>
+  </ol>
+  <p>Apple's article lists two settings: the "Background fetch" mode, and the task identifier in <code>BGTaskSchedulerPermittedIdentifiers</code>. Without the first, a refresh task can't run ("Executing app refresh tasks requires setting the <code>fetch</code> <code>UIBackgroundModes</code> capability", <code>BGTask.h</code>); without the second, <code>register</code> "Returns <code>false</code> if the identifier isn't included in the <code>BGTaskSchedulerPermittedIdentifiers</code> Info.plist". XcodeGen writes both from <code>project.yml</code>, on both iOS tracks:</p>
+  <figure class="excerpt">
+    <figcaption class="path">iosApp/project.yml</figcaption>
+<pre><code>    info:
+      path: iosApp/Info.plist
+      properties:
+<span class="elide">⋯        CFBundleDisplayName, UILaunchScreen, NSBluetoothAlwaysUsageDescription (and, on UIKit, the scene manifest)</span>
+        # The monitor (Lesson 18): background refresh, and the one task identifier it uses.
+<mark>        UIBackgroundModes: [fetch]</mark>
+<mark>        BGTaskSchedulerPermittedIdentifiers: [com.example.devicemonitor.monitor]</mark></code></pre>
+  </figure>
+  <p>Run <code>xcodegen generate</code> in <code>iosApp/</code> afterwards, and check that both keys are in the generated <code>Info.plist</code>. Nothing else in the Xcode project changes: the new adapter is in the Kotlin framework.</p>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · NSLog from Kotlin crashed the app</span>
+    Our first version logged the failure with <code>NSLog("Monitor: no background refresh: %@", message)</code>, a Kotlin <code>String</code> passed to Foundation's variadic <code>NSLog</code>. The app crashed the moment it went to the background (<code>EXC_BAD_ACCESS</code> inside <code>NSLog</code>, the crash report's address made of the message's own characters): the string didn't arrive as the object <code>%@</code> expects. Kotlin's <code>println</code> takes no format, and on iOS it writes to the app's standard output: Xcode's console, or <code>xcrun simctl launch --console-pty</code>.
+  </div>
+
+  <h2>6. Start it where the app starts</h2>
+  <p>Something must call <code>start(interval)</code>, and in m13 there's no button yet. The obvious place, a screen appearing, is the wrong one: a screen can go away while the app keeps running, and the launches the monitor depends on, Android starting the process for WorkManager and iOS launching the app for a refresh task, show no screen at all. The hook that runs in every process is the app's start:</p>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/AppLaunch.kt</figcaption>
+<pre><code>// How often the monitor reads the phone's status: the shortest period Android allows for
+// repeating background work, used on both platforms.
+<mark>private val MONITOR_INTERVAL = 15.minutes</mark>
+
+// Inbound adapter: the app's launch. Both app starts call this once per process, right after
+// initKoin: on every launch, including the ones the OS makes in the background to run the
+// monitor, which never show a screen. Each new process needs the monitor's tick handed to the
+// scheduler again, and a screen is the wrong place for that: it may never appear, and it goes
+// away while the app keeps running.
+<mark>fun onAppLaunch() {</mark>
+<mark>    KoinPlatform.getKoin().get&lt;DeviceMonitoring&gt;().start(MONITOR_INTERVAL)</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>An inbound adapter that isn't a ViewModel.</strong> It drives the app through an inbound port, which is what makes it an inbound adapter (Lesson 10); the screens' ViewModels are the other kind. It lives in the shared code so the interval is written once and Swift needs no <code>Duration</code>.</li>
+    <li><strong>On every launch, and that's safe.</strong> The Android adapter's <code>UPDATE</code> keeps one schedule; the iOS adapter only stores the tick and, if the app is already active, restarts its timer. What each new process needs is the tick: the lambda the service handed the old process died with it.</li>
+    <li><strong>Always on, for now.</strong> m13's monitor runs whenever the app has run once. Lesson 20's screen adds Start and Stop, which call the same port.</li>
+  </ol>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 300" role="img" aria-labelledby="l18-life-title">
+      <title id="l18-life-title">Lifetimes compared, over time from left to right. The top bar is the app's process, from its launch to its end; the app start runs once at its beginning and hands the monitor its tick. Below it, a screen is shown for a while, hidden while the user is in another app, shown again, then gone, while the process lives on. A second process, started by the OS in the background for the monitor, runs the app start again but shows no screen at all. Hooks tied to a screen, such as onAppear, viewWillAppear or a composable's effect, run only while that screen exists; the app start runs in both processes.</title>
+      <defs><marker id="l18-life-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <text class="small" x="20" y="62">process 1</text>
+      <g data-part="inbound">
+        <rect class="box" x="120" y="44" width="360" height="30" rx="4"/>
+        <text class="small" x="132" y="64">app start: initKoin, onAppLaunch()</text>
+      </g>
+      <text class="small" x="20" y="112">its screen</text>
+      <g data-part="android">
+        <rect class="box" x="150" y="94" width="110" height="30" rx="4"/>
+        <text class="small" x="160" y="114">shown</text>
+        <rect class="box" x="320" y="94" width="90" height="30" rx="4"/>
+        <text class="small" x="330" y="114">shown</text>
+      </g>
+      <text class="small muted" x="266" y="114">hidden</text>
+      <text class="small muted" x="414" y="114">gone</text>
+      <text class="small" x="20" y="182">process 2</text>
+      <g data-part="inbound">
+        <rect class="box" x="540" y="164" width="200" height="30" rx="4"/>
+        <text class="small" x="550" y="184">app start, again</text>
+      </g>
+      <text class="small" x="20" y="232">its screen</text>
+      <text class="small muted" x="550" y="232">none: the OS launched it for the monitor</text>
+      <path class="edge dashed" d="M480,60 L538,176" marker-end="url(#l18-life-arrow)"/>
+      <text class="small muted" x="486" y="140">process ends</text>
+      <text class="small muted" x="20" y="280">Screen hooks (onAppear, viewWillAppear, a composable's effect) follow the middle rows; the app start follows the top rows.</text>
+    </svg>
+    <figcaption>The monitor needs a hook that runs once in every process, including the ones without a screen.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="inbound">App start (the inbound adapter)</li>
+    <li data-part="android">A screen</li>
+  </ul>
+  <p>The app starts gain two adapters and one call. Android's is the same on both Android tracks:</p>
+  <figure class="excerpt" data-part="android">
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt</figcaption>
+<pre><code><span class="elide">⋯  permissionChecker, then initKoin(… the six adapters from Lesson 17,</span>
+<mark>            logStore = AndroidLogStore(File(filesDir, "status-log.jsonl")),</mark>
+<mark>            monitorScheduler = AndroidMonitorScheduler(this),</mark>
+        )
+<mark>        onAppLaunch()</mark>
+    }</code></pre>
+  </figure>
+  <div class="tracks">
+  <div data-track="swiftui">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/iOSApp.swift</figcaption>
+<pre><code>    // Runs once per launch, before the app finishes launching, whether the user opened it or
+    // iOS launched it in the background for the monitor: the place for app-level work.
+<mark>    init() {</mark>
+        AppModuleKt.doInitKoin(
+<span class="elide">⋯            the six adapters from Lesson 17,</span>
+<mark>            logStore: IosLogStore(),</mark>
+<mark>            monitorScheduler: IosMonitorScheduler()</mark>
+        )
+<mark>        AppLaunchKt.onAppLaunch()</mark>
+    }</code></pre>
+  </figure>
+  <p>The SwiftUI <code>App</code>'s <code>init</code> already started Koin (Lesson 11), and it runs early enough to register a background task: the crash trace in section 8 shows SwiftUI's <code>App.main()</code> calling <code>iOSApp.init()</code>, the very start of the launch sequence.</p>
+  </div>
+  <div data-track="uikit">
+  <figure class="excerpt" data-part="ios">
+    <figcaption class="path">iosApp/iosApp/AppDelegate.swift</figcaption>
+<pre><code>    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        AppModuleKt.doInitKoin(
+<span class="elide">⋯            the six adapters from Lesson 17,</span>
+<mark>            logStore: IosLogStore(),</mark>
+<mark>            monitorScheduler: IosMonitorScheduler()</mark>
+        )
+<mark>        AppLaunchKt.onAppLaunch()</mark>
+        return true
+    }</code></pre>
+  </figure>
+  <p><code>didFinishLaunchingWithOptions</code> is the deadline itself: registration must be complete "before the end of" it, and building the adapter inside it meets that.</p>
+  </div>
+  </div>
+  <div data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>The same two adapters and the same call, in each track's app start: the SwiftUI <code>App</code>'s <code>init</code>, or the app delegate's <code>didFinishLaunchingWithOptions</code>. Neither is a scene or a view: <code>SceneDelegate</code>, <code>ContentView</code> and the view controllers stay as they are.</div>
+  <p>In <code>di/AppModule.kt</code>, <code>initKoin</code> and <code>platformModule</code> take <code>logStore</code> and <code>monitorScheduler</code>, and <code>appModule</code> gains one line:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</figcaption>
+<pre><code><span class="elide">⋯  imports; appModule's other bindings, the bridge included</span>
+    // The monitor reads the same four status ports, and writes to the log store.
+<mark>    single&lt;DeviceMonitoring&gt; { MonitoringService(get(), get(), get(), get(), get(), get()) }</mark></code></pre>
+  </figure>
+  <p><code>LogStore</code> is finally bound, as Lesson 17 planned: Android's in the app's private storage, <code>File(filesDir, "status-log.jsonl")</code>; iOS's with the no-argument constructor, in Application Support.</p>
+
+  <h2>7. Tests: the platform's timer, played by the test</h2>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeMonitorScheduler.kt</figcaption>
+<pre><code><mark>class FakeMonitorScheduler : MonitorScheduler {</mark>
+<span class="elide">⋯  interval and cancelled (read by the tests); the tick it was handed</span>
+    override fun schedule(interval: Duration, tick: suspend () -&gt; Unit) {
+        this.interval = interval
+<mark>        this.tick = tick</mark>
+        cancelled = false
+    }
+<span class="elide">⋯  cancel(): cancelled = true</span>
+    // What the platform does when the time comes. Keeps the tick after cancel(), so a test can
+    // play a late tick that was already on its way.
+<mark>    suspend fun fire() {</mark>
+        checkNotNull(tick) { "Nothing was scheduled." }.invoke()
+    }
+}</code></pre>
+  </figure>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/core/MonitoringServiceTest.kt</figcaption>
+<pre><code><span class="elide">⋯  the four status fakes, FakeLogStore, FakeMonitorScheduler, and a clock the test sets</span>
+    @Test
+    fun eachTickAppendsTheStatusAndTheTime() = runTest {
+        monitor.start(15.minutes)
+        battery.percent = 47
+
+<mark>        scheduler.fire()</mark>
+<mark>        clock.now = Instant.parse("2026-09-11T10:45:00Z")</mark>
+        battery.percent = 46
+        scheduler.fire()
+
+        assertEquals(listOf("2026-09-11T10:30:00Z", "2026-09-11T10:45:00Z"), log.records.map { it.timestamp.toString() })
+<mark>        assertEquals(listOf(47, 46), log.records.map { it.status.battery })</mark>
+<span class="elide">⋯        and the status's lastRecord is the second record</span>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Fifteen minutes in no time.</strong> The test doesn't wait for a timer, real or virtual: it <em>is</em> the timer, and calls <code>fire()</code> when it likes. The clock is an object the test sets, so the timestamps are exact.</li>
+    <li><strong>Seven tests</strong>, through the inbound port: <code>startAsksTheSchedulerForTheInterval</code>, <code>eachTickAppendsTheStatusAndTheTime</code>, <code>theRecordFollowsTheStatusRules</code> (Wi-Fi rule, and <code>Connecting</code> isn't connected), <code>stopCancelsAndALateTickWritesNothing</code>, <code>aFileErrorIsReportedAndTheNextTickTriesAgain</code> (with <code>FakeLogStore.failNextAppend</code>), <code>logsAndClearLogsUseTheLogStore</code>, and <code>anIntervalMustBePositive</code>.</li>
+    <li><strong>The graph.</strong> <code>AppModuleTest</code> gains <code>theMonitorLogsWhatTheAppsOneSessionSays</code>: it connects through the graph's session, starts the graph's <code>DeviceMonitoring</code>, fires the fake scheduler, and finds <code>bluetoothConnected = true</code> in the fake log store. A wrong binding, or a bridge on a second session, fails it.</li>
+    <li><strong>Mutation checks we ran</strong>, each failing exactly the named test: no late-tick guard; no <code>require</code>; catching another exception type than <code>LogStoreException</code>; counting <code>Connecting</code> as connected in the record; and the Wi-Fi rule removed from <code>readStatus</code>, which fails one test in each service.</li>
+  </ol>
+  <p>The two scheduler adapters have no unit tests: there's no rule in them to test, only calls to the platform, and the platform's timer is what they're for. They are checked by running them (section 8), and the parts only a phone can show are device checks.</p>
+
+  <h2>8. What actually happens</h2>
+  <p>We built m13 on all four tracks (Kotlin 2.4.20, WorkManager 2.12.0, Xcode 26.2). <code>allTests</code> passed 95 of 95 on the JVM and 95 of 95 on the iOS simulator, with no compiler warning from our code.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Run</th><th>What we saw</th></tr>
+    <tr><td>Android API 36 emulator, Compose and XML, fresh install, launch</td><td>one record within a second of <code>am start</code>, and "Monitor tick" in logcat; <code>dumpsys jobscheduler</code>: the next run in about 15 minutes (<code>TIME=+14m58s</code>)</td></tr>
+    <tr><td>the same, then Home, <code>am kill</code>, launch again</td><td>still one record, and the next run still counting down from where it was (<code>+14m50s</code>)</td></tr>
+    <tr><td>Compose: Home, <code>am kill</code>, wait</td><td>15 min 42 s after the first record, Android started the process "for service {…/androidx.work.impl.background.systemjob.SystemJobService}", and the second record came 2.3 s later, from that new process</td></tr>
+    <tr><td>a throwaway build with <code>CANCEL_AND_REENQUEUE</code>, relaunched</td><td>a second record at once (section 4)</td></tr>
+    <tr><td><code>cmd jobscheduler run -f</code> on our job</td><td>"Delaying execution … because it is being executed before schedule.", no record (section 4)</td></tr>
+    <tr><td>iOS 26.2 Simulator, SwiftUI and UIKit, fresh install, launch, then another app</td><td>no crash; on going to the background, "Monitor: no background refresh: The operation couldn’t be completed. (BGTaskSchedulerErrorDomain error 1.)"</td></tr>
+    <tr><td>back to the app, then 15 minutes in the foreground</td><td>"Monitor tick (foreground)", and one record in Application Support with <code>"battery":null</code> and <code>"bluetoothEnabled":null</code> (the Simulator reports no battery level, and Bluetooth hasn't been allowed: Lesson 17)</td></tr>
+    <tr><td>a throwaway SwiftUI build at 1 minute</td><td>a tick about a minute after launch; none during 75 s in the background; the next about a minute after coming back</td></tr>
+    <tr><td>a throwaway SwiftUI build without the permitted identifier</td><td>a crash at launch: "Uncaught Kotlin exception: kotlin.IllegalStateException: com.example.devicemonitor.monitor isn't in BGTaskSchedulerPermittedIdentifiers (project.yml)", the trace running from SwiftUI's <code>App.main()</code> through <code>iOSApp.init()</code> to <code>IosMonitorScheduler</code>'s constructor</td></tr>
+  </table>
+  </div>
+  <p>What a phone does in the background, and for how long, is the subject of Lesson 19; the agent brief lists what only a phone can show as device checks. <strong>m13 is a natural stop</strong> when <code>allTests</code> is green on both platforms, a fresh Android install writes its first record at once and another about 15 minutes later, and the iOS app writes a record after 15 minutes in the foreground. Commit it.</p>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent to trace one WorkManager run in a process Android started for it: which code runs first, where the tick comes from, which thread runs <code>MonitoringService.tick()</code>, and what happens if the monitor had been stopped. Then ask it to list everything that happens on iOS, in order, from the user pressing Home to the next refresh task finishing, and to say which steps the Simulator skips.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">Why does the monitor start in the app start, and not when the list screen appears?</p>
+    <div class="opts">
+      <button class="opt">the list screen's ViewModel can't reach Koin</button>
+      <button class="opt" data-correct>the launches the monitor depends on (Android starting the process for WorkManager, iOS launching the app for a refresh task) show no screen, and each new process needs the tick handed to the scheduler again</button>
+      <button class="opt">starting it twice would schedule two timers</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A screen hook runs only while that screen exists. The app start runs once in every process, with or without a screen, and starting the monitor again is safe: <code>UPDATE</code> keeps one schedule on Android, and the iOS adapter only stores the new tick.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">How does <code>MonitorWorker</code> get the tick it calls?</p>
+    <div class="opts">
+      <button class="opt">WorkManager passes it in the worker's constructor</button>
+      <button class="opt">it is saved with the work request in WorkManager's database</button>
+      <button class="opt" data-correct>from <code>AndroidMonitorScheduler</code>'s companion object, set by <code>schedule</code> in the same process; a process Android starts for the work runs <code>Application.onCreate</code>, and so <code>onAppLaunch()</code>, first</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">WorkManager's default factory builds a worker by reflection with only a <code>Context</code> and <code>WorkerParameters</code>, and a lambda can't be stored in its database. The process is what the adapter and the worker share.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">The iOS adapter sets a refresh request's <code>earliestBeginDate</code> 15 minutes ahead. When will iOS run it?</p>
+    <div class="opts">
+      <button class="opt">15 minutes later, give or take a few seconds</button>
+      <button class="opt">every 15 minutes, until the app cancels it</button>
+      <button class="opt" data-correct>not before then; when, or whether, is iOS's choice, based on system conditions and app usage, and never on the Simulator</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>BGTaskRequest.h</code>: "the system doesn't guarantee launching the task at the specified date, but only that it won't begin sooner". One request runs once; the handler submits the next one.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>MonitoringService</code> take a <code>Clock</code> instead of calling <code>Clock.System.now()</code>?</p>
+    <div class="opts">
+      <button class="opt"><code>Clock.System</code> isn't available on iOS</button>
+      <button class="opt" data-correct>so a test can pass a clock it sets and check exact timestamps; Kotlin's reference recommends passing a <code>Clock</code> rather than using <code>Clock.System</code> directly</button>
+      <button class="opt">the platform's clock is an outbound adapter, so it must be bound in <code>platformModule</code></button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The default argument keeps the Koin binding short; <code>MonitoringServiceTest</code> passes an object whose <code>now</code> it moves from 10:30 to 10:45.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Both services need the Wi-Fi rule and the "only <code>Connected</code> counts" rule. Where do the rules live in m13?</p>
+    <div class="opts">
+      <button class="opt"><code>MonitoringService</code> calls <code>StatusReport.current()</code></button>
+      <button class="opt" data-correct>in <code>readStatus</code>, a function in the app core that both services call with their own ports</button>
+      <button class="opt">a copy in each service, so neither depends on the other</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A service doesn't call another capability's inbound port, and a rule written twice drifts. A bridge is for state another capability holds, like the session's connection; the battery and the network belong to the platform, so both services ask the ports and share the rules.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why doesn't the Android adapter use a foreground service to tick every minute?</p>
+    <div class="opts">
+      <button class="opt">foreground services can't read the battery level</button>
+      <button class="opt" data-correct>a foreground service is for a task the user notices, shows a notification while it runs, needs a declared type from Android 14, and can't be started from the background by apps targeting Android 12 or later; an invisible monitor that can wait belongs to WorkManager</button>
+      <button class="opt">WorkManager can't run while a foreground service exists</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Using a foreground service only to keep the process alive would be bypassing the limits the course says not to bypass. It's the right tool for a monitor the user starts and watches.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">On the Simulator, the app goes to the background and the console says "BGTaskSchedulerErrorDomain error 1". What does it mean?</p>
+    <div class="opts">
+      <button class="opt" data-correct>unavailable: the Simulator doesn't support background processing (on a phone: background refresh turned off)</button>
+      <button class="opt">the identifier is missing from <code>BGTaskSchedulerPermittedIdentifiers</code></button>
+      <button class="opt">too many pending requests</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>BGTaskScheduler.h</code> documents code 1, <code>Unavailable</code>, for the Simulator and for a user who disabled background refresh. A missing mode or identifier is code 3, and too many requests is code 2.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">The iOS adapter is Kotlin calling Apple's frameworks, like <code>IosLogStore</code>. What does <code>error.ptr</code> give <code>submitTaskRequest</code>? (Lesson 17)</p>
+    <div class="opts">
+      <button class="opt">a Kotlin exception to throw on failure</button>
+      <button class="opt" data-correct>the address of a variable, allocated in <code>memScoped</code>, where the framework writes an <code>NSError</code> if the call returns <code>NO</code></button>
+      <button class="opt">a callback the framework calls with the error</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Objective-C errors aren't imported as Kotlin exceptions; the Kotlin code checks the return value, then reads <code>error.value</code>, inside the <code>memScoped</code> block that owns the memory.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does the test fire the fake scheduler instead of waiting 15 minutes of virtual time with <code>runTest</code>? (Lesson 11)</p>
+    <div class="opts">
+      <button class="opt">virtual time can't go past one minute</button>
+      <button class="opt" data-correct>the service has no timer of its own: the timer is behind the <code>MonitorScheduler</code> port, so the fake that stands in for it decides when the tick runs</button>
+      <button class="opt"><code>runTest</code> doesn't support <code>suspend</code> lambdas</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Virtual time controls <code>delay</code>s on the test dispatcher. Here no <code>delay</code> is in the service at all; the adapters own the clock, and the fake plays them.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Which lifecycle does each Android hook follow? (Lessons 03 and 11)</p>
+    <div class="opts">
+      <button class="opt"><code>Application.onCreate</code> runs each time an Activity is created</button>
+      <button class="opt" data-correct><code>Application.onCreate</code> runs once per process, before any Activity or service; an Activity's callbacks follow that one screen</button>
+      <button class="opt">both run once per install</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">A process can start without any Activity, for a WorkManager job; then only the <code>Application</code> runs, which is why the monitor starts there.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your m13 build)</span>
+    <ol>
+      <li><strong>Predict, then read the log.</strong> Uninstall the Android app, install it, launch it, and read <code>adb shell run-as com.example.devicemonitor cat files/status-log.jsonl</code>. How many records do you expect, and why? Press Home, launch it again: how many now? Which line of which adapter explains the answer?</li>
+      <li><strong>Test first: the interval in the status.</strong> Write <code>startAgainChangesTheInterval</code> in <code>MonitoringServiceTest</code>: start at 15 minutes, then at 30; the scheduler and the status must both say 30, and a fired tick must still write one record. Does it pass already? If it does, which lines made it pass?</li>
+      <li><strong>A rule in the service, not the adapter.</strong> The monitor shouldn't write two records less than a minute apart (a platform may run a late tick just before the next one). Where does the rule go, and which port gives the service what it needs? Write the test with the fake clock first, watch it fail, then make it pass. Did any adapter change?</li>
+      <li><strong>Break the configuration on purpose.</strong> Remove the identifier from <code>BGTaskSchedulerPermittedIdentifiers</code> in <code>project.yml</code>, run <code>xcodegen generate</code>, build and launch. Predict what happens, and which line reports it. Put it back.</li>
+      <li><strong>Read the header.</strong> Open <code>BGTaskScheduler.h</code> in Xcode (Open Quickly, ⇧⌘O) and find the three error codes. For each, write one sentence on what the monitor does when it gets it today.</li>
+      <li><strong>On your phones</strong>: install, open the app, then leave each phone alone for an hour, locked. How many records did each write, and at what times? Keep the numbers for Lesson 19.</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent, telling it your tracks. Then read its code against the walkthroughs above, run the tests and both apps yourself, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/18-background-monitor.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/18-background-monitor.html" -o .course/lesson-18.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/architecture-di-testing-cheatsheet.html" -o .course/ref-architecture-di-testing-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/platform-lifecycles-cheatsheet.html" -o .course/ref-platform-lifecycles-cheatsheet.html
+Lesson 17, which this lesson builds on; skipped if it's already there:
+  [ -f .course/lesson-17.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/17-device-status-and-log-store.html" -o .course/lesson-17.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" for my tracks exactly,
+except where the brief below says otherwise.
+
+Lesson 18 (Background monitor: build it): build milestone m13 on top of m12: the DeviceMonitoring
+inbound port (start(interval), stop(), status: StateFlow&lt;MonitorStatus&gt;, logs(), clearLogs()),
+implemented by MonitoringService over the four status ports of Lesson 17 (ConnectionStatus
+included, never DeviceSession), LogStore and a new MonitorScheduler outbound port
+(schedule(interval, tick), cancel()); the status rules move from StatusService into readStatus
+(core/ReadStatus.kt), which both services call. Adapters: AndroidMonitorScheduler + MonitorWorker
+(WorkManager 2.12.0 periodic work, unique, UPDATE, never under 15 minutes) and IosMonitorScheduler
+(Kotlin in iosMain: a coroutine timer while the app is active, a BGAppRefreshTask request in the
+background). onAppLaunch() (adapter/inbound/AppLaunch.kt) starts the monitor at 15 minutes; each
+app start calls it right after initKoin. LogStore is now bound. No screen changes.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI).
+Starting point: my m12 project in demo/ (Lesson 17). Use exactly the file contents shown in the
+lesson's "Full files" section for my tracks, including package lines, imports and comments. All
+paths are relative to demo/. Touch no file that isn't listed here.
+
+1. Shared code, all tracks.
+     replaced: shared/build.gradle.kts (androidx.work:work-runtime:2.12.0 in androidMain)
+   Under shared/src/commonMain/kotlin/com/example/devicemonitor/:
+     add: core/MonitorStatus.kt, core/ReadStatus.kt, core/MonitoringService.kt,
+       core/inbound/DeviceMonitoring.kt, core/outbound/MonitorScheduler.kt,
+       adapter/inbound/AppLaunch.kt
+     replaced: core/StatusService.kt, di/AppModule.kt
+   add: shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidMonitorScheduler.kt
+   add: shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosMonitorScheduler.kt
+   Under shared/src/commonTest/kotlin/com/example/devicemonitor/:
+     add: doubles/FakeMonitorScheduler.kt, doubles/FakeLogStore.kt, core/MonitoringServiceTest.kt
+     replaced: di/AppModuleTest.kt
+   Every other file in shared/ stays as in m12.
+
+2. Android, both tracks: androidApp/src/main/java/com/example/devicemonitor/android/
+   DeviceMonitorApplication.kt: replaced. The manifest, androidApp/build.gradle.kts and every
+   screen stay as in m12.
+   iOS: iosApp/project.yml for my track: replaced (UIBackgroundModes and
+   BGTaskSchedulerPermittedIdentifiers). Then run `xcodegen generate` in iosApp/, which rewrites
+   iosApp/iosApp/Info.plist and the Xcode project. Do NOT edit Info.plist or the .xcodeproj by hand.
+     SwiftUI: iOSApp.swift: replaced.
+     UIKit: AppDelegate.swift: replaced.
+   Every other Android and iOS file stays as in m12.
+
+3. Test, then build both apps. From demo/:
+     ./gradlew :shared:allTests
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Android: run on an emulator with Android 12 or newer (API 31+), a fresh install:
+     adb uninstall com.example.devicemonitor   (ignore "Unknown package" the first time)
+     adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+     adb shell pm grant com.example.devicemonitor android.permission.BLUETOOTH_SCAN
+     adb shell pm grant com.example.devicemonitor android.permission.BLUETOOTH_CONNECT
+     adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl uninstall booted com.example.devicemonitor` (a fresh install), then
+     `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`, then
+     `xcrun simctl launch --console-pty booted com.example.devicemonitor` in a second terminal
+     (or in the background, its output to a file): it shows the adapter's println lines.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- ./gradlew :shared:allTests runs BOTH testAndroidHostTest and iosSimulatorArm64Test (show me
+  the task lines), and all 95 tests pass on each: 24 in SessionServiceTest, 13 in
+  DeviceDetailViewModelTest, 10 in DeviceListViewModelTest, 8 in ValueDecoderTest, 8 in
+  ScanningServiceTest, 7 in MonitoringServiceTest, 5 in StatusServiceTest, 4 in JsonLinesTest,
+  4 in PermissionServiceTest, 3 in DeviceServiceTest, 3 in AppModuleTest, 1 in
+  SessionConnectionStatusTest, and 5 in AndroidLogStoreTest (JVM results) or 5 in
+  IosLogStoreTest (iOS results). Show the counts from the XML files in shared/build/test-results/.
+- All builds succeed with no compiler warnings (w: / warning:) from our own Kotlin or Swift
+  code, test code included (never use -q: it hides w: lines; read the output). Not from our
+  code, and expected: SKIE's "Configuration '…' was resolved during configuration time",
+  SLF4J "Failed to load class", Gradle's "Deprecated Gradle features … Gradle 10", "Unable to
+  strip the following libraries", Xcode's "appintentsmetadataprocessor … warning: Metadata
+  extraction skipped", xcodebuild's "WARNING: Using the first of multiple matching
+  destinations", and Gradle's "The Daemon will expire …". Xcode "note:" lines are not warnings.
+- The app core stays platform-free, and services don't know each other:
+    grep -rn 'import android\|import platform\.\|import org.koin\|import kotlinx.serialization\|import androidx.work' shared/src/commonMain/kotlin/com/example/devicemonitor/core
+  finds nothing, and
+    grep -n 'DeviceSession\|SessionService\|StatusReport\|StatusService' shared/src/commonMain/kotlin/com/example/devicemonitor/core/MonitoringService.kt
+  finds nothing. In the exported header (build it first with
+  ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64):
+    grep -c 'doInitKoin(permissionChecker:bleScanner:bleConnection:batteryProvider:networkProvider:bluetoothProvider:logStore:monitorScheduler:)' shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h
+  prints 1, grep -c 'swift_name("onAppLaunch()")' on the same file prints 1, and
+  grep -c 'Koin_core' prints 0. The generated iosApp/iosApp/Info.plist contains
+  UIBackgroundModes with fetch, and BGTaskSchedulerPermittedIdentifiers with
+  com.example.devicemonitor.monitor.
+- Android emulator (API 31+), after the fresh install and launch above:
+  1. Within 10 s: adb shell run-as com.example.devicemonitor cat files/status-log.jsonl prints
+     exactly one line of JSON with the seven fields of Lesson 17 ("timestamp" … "bluetoothConnected"),
+     and adb logcat -d -s DeviceMonitor:I shows "Monitor tick".
+  2. adb shell dumpsys jobscheduler | grep 'JobStatus{.*devicemonitor' shows our job with
+     TIME=+14m… (or a little less). adb shell input keyevent KEYCODE_HOME, launch again with
+     the am start command: still one line in the log, and TIME= still counts down from where
+     it was (no new 15 minutes).
+  3. adb shell input keyevent KEYCODE_HOME; adb shell am kill com.example.devicemonitor;
+     adb shell pidof com.example.devicemonitor prints nothing. Wait until TIME= has passed (up
+     to 20 minutes; check every minute): the log has two lines, the second about 15 minutes
+     after the first, and logcat shows a second "Monitor tick" from a new process id.
+- iOS Simulator, my track, after the fresh install and launch above:
+  1. No crash at launch (a missing permitted identifier would crash it with "… isn't in
+     BGTaskSchedulerPermittedIdentifiers (project.yml)").
+  2. Switch to another app (xcrun simctl launch booted com.apple.Preferences): the console
+     shows "Monitor: no background refresh: The operation couldn’t be completed.
+     (BGTaskSchedulerErrorDomain error 1.)": the Simulator doesn't support background tasks.
+  3. Launch the app again (xcrun simctl launch booted com.example.devicemonitor) and leave it in
+     the foreground for 16 minutes. Then the console shows "Monitor tick (foreground)", and
+       cat "$(xcrun simctl get_app_container booted com.example.devicemonitor data)/Library/Application Support/status-log.jsonl"
+     prints one line of JSON beginning {"timestamp": and containing "battery":null.
+- Device checks (list them for me, don't try to run them), on a physical Android phone and an
+  iPhone on my track:
+  1. Android: install, open the app once, lock the phone and leave it for an hour: the log has
+     records about every 15 minutes or more (Doze can stretch the gaps).
+  2. iPhone, Xcode attached: open the app, press Home; pause in the debugger after submit and run
+       e -l objc -- (void)[[BGTaskScheduler sharedScheduler] _simulateLaunchForTaskWithIdentifier:@"com.example.devicemonitor.monitor"]
+     then continue: the console shows "Monitor tick (background)" and the log gains a record.
+  3. iPhone, no debugger: open the app, press Home, leave it for a few hours: count the
+     background records (it may be none: iOS decides).
+  4. iPhone: Settings → General → Background App Refresh off for the app, press Home: the
+     console says error 1 (unavailable).
+Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
+numbers, and show me which process runs each tick on each platform.
+Do NOT do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li>Android: <a href="https://developer.android.com/topic/libraries/architecture/workmanager">Task scheduling</a> (WorkManager: persistence across restarts and reboots; how it relates to coroutines and alarms), <a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a> ("Schedule periodic work": the 15-minute minimum, flex intervals), <a href="https://developer.android.com/reference/androidx/work/ExistingPeriodicWorkPolicy">ExistingPeriodicWorkPolicy</a> (<code>UPDATE</code> preserves enqueue time), <a href="https://developer.android.com/develop/background-work/background-tasks/persistent/threading/coroutineworker">Threading in CoroutineWorker</a>, and the <a href="https://developer.android.com/jetpack/androidx/releases/work">WorkManager release notes</a>.</li>
+    <li>Android, choosing: <a href="https://developer.android.com/develop/background-work/background-tasks">Background tasks overview</a> (when WorkManager, when a foreground service), <a href="https://developer.android.com/develop/background-work/services/fgs">Foreground services overview</a>, <a href="https://developer.android.com/develop/background-work/services/fgs/service-types">Foreground service types</a> and <a href="https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start">Restrictions on starting a foreground service from the background</a>.</li>
+    <li>iOS: <a href="https://developer.apple.com/documentation/uikit/using-background-tasks-to-update-your-app">Using background tasks to update your app</a> (primary source: the two settings, register, submit, the handler), <a href="https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler">BGTaskScheduler</a> (the header's comments are fuller: error codes, one refresh task at a time), <a href="https://developer.apple.com/documentation/backgroundtasks/bgtaskscheduler/register(fortaskwithidentifier:using:launchhandler:)">register(forTaskWithIdentifier:using:launchHandler:)</a>, <a href="https://developer.apple.com/documentation/backgroundtasks/starting-and-terminating-tasks-during-development">Starting and terminating tasks during development</a> (the debugger commands; "The debug functions work only on devices"), and <a href="https://developer.apple.com/documentation/uikit/about-the-background-execution-sequence">About the background execution sequence</a>.</li>
+    <li>Apple's rules: <a href="https://developer.apple.com/app-store/review/guidelines/">App Review Guidelines</a> 2.5.4 (background services only for their intended purposes).</li>
+    <li>Kotlin: <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-clock/">kotlin.time.Clock</a> (pass a clock; don't call <code>Clock.System</code> directly).</li>
+    <li><a href="../reference/platform-lifecycles-cheatsheet.html">Cheatsheet: platform lifecycles</a>: Activity, scene and view callbacks, and its rule that app-level work such as this monitor hooks the app or scene level, never a view's. <a href="../reference/architecture-di-testing-cheatsheet.html">Cheatsheet: architecture, DI and testing</a>: inbound and outbound ports, fakes, and Koin bindings.</li>
+    <li>Wisdom: Apple's Developer Forums, tag <a href="https://developer.apple.com/forums/tags/backgroundtasks">Background Tasks</a>, for refresh tasks on real iPhones; Stack Overflow's <a href="https://stackoverflow.com/questions/tagged/android-workmanager">android-workmanager</a> tag.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this lesson adds or changes, complete. Nothing is deleted, and everything else stays as in m12: every screen, both manifests, <code>androidApp/build.gradle.kts</code> and the root build files. <code>iosApp/iosApp/Info.plist</code> and <code>iosApp/iosApp.xcodeproj</code> are generated by <code>xcodegen generate</code> from <code>project.yml</code>. Each file is in the colour of its part of the app; the build files and the composition root carry none. Files that only one track has carry that track's switcher; where two tracks change a file with the same path, its title names the track.</p>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/MonitorStatus.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import kotlin.time.Duration
+
+// Where the background monitor stands, in the app's terms.
+sealed interface MonitorStatus {
+    data object Stopped : MonitorStatus
+
+    // Started, at this interval. lastRecord is the newest reading this process saved; lastError
+    // is set when the newest attempt couldn't be saved, and cleared by the next one that is.
+    data class Running(
+        val interval: Duration,
+        val lastRecord: LogRecord? = null,
+        val lastError: String? = null,
+    ) : MonitorStatus
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/inbound/DeviceMonitoring.kt</summary>
+<pre><code>package com.example.devicemonitor.core.inbound
+
+import com.example.devicemonitor.core.LogRecord
+import com.example.devicemonitor.core.MonitorStatus
+import kotlinx.coroutines.flow.StateFlow
+import kotlin.time.Duration
+
+// Inbound port: what the app offers for watching the phone over time. MonitoringService
+// implements it; the app's launch (adapter/inbound/AppLaunch.kt) and the tests call it.
+interface DeviceMonitoring {
+    // Starts the monitor, or changes its interval: about every interval, as often as the
+    // platform allows, it reads the phone's status and appends it to the log.
+    fun start(interval: Duration)
+
+    // Stops the monitor. The log is kept.
+    fun stop()
+
+    // Stopped, or running with its newest reading and error.
+    val status: StateFlow&lt;MonitorStatus&gt;
+
+    // Every record in the log, oldest first.
+    suspend fun logs(): List&lt;LogRecord&gt;
+
+    // Removes every record from the log.
+    suspend fun clearLogs()
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/MonitorScheduler.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import kotlin.time.Duration
+
+// Outbound port: the platform's way to run the monitor's tick on a timer, inside the limits the
+// platform sets. One adapter per platform: WorkManager on Android, a timer and BGTaskScheduler
+// on iOS. Neither promises an exact time: the interval is "about", and in the background the
+// platform decides when.
+interface MonitorScheduler {
+    // Calls tick about every interval until cancel(). Calling it again replaces both.
+    fun schedule(interval: Duration, tick: suspend () -&gt; Unit)
+
+    // Stops calling tick.
+    fun cancel()
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/ReadStatus.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.outbound.BatteryProvider
+import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+import com.example.devicemonitor.core.outbound.NetworkProvider
+
+// The app's rules for the phone's status, written once: StatusService answers the screen with
+// them, and MonitoringService logs them. A plain function in the app core, not a third service:
+// it applies rules to what the ports report, and holds no state.
+internal suspend fun readStatus(
+    battery: BatteryProvider,
+    network: NetworkProvider,
+    bluetooth: BluetoothProvider,
+    connection: ConnectionStatus,
+): DeviceStatus {
+    val net = network.current()
+    return DeviceStatus(
+        battery = battery.level(),
+        // Connected over Wi-Fi means Wi-Fi is on, even where the platform can't say so (iOS).
+        wifiEnabled = net.wifiEnabled ?: if (net.wifiConnected) true else null,
+        wifiConnected = net.wifiConnected,
+        cellularAvailable = net.cellularAvailable,
+        bluetoothEnabled = bluetooth.isEnabled(),
+        bluetoothConnected = connection.current() is ConnectionState.Connected,
+    )
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/StatusService.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.inbound.StatusReport
+import com.example.devicemonitor.core.outbound.BatteryProvider
+import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+import com.example.devicemonitor.core.outbound.NetworkProvider
+
+// Service: the phone's status, from the three providers and from what the app core already
+// knows. "Bluetooth connected" means this app holds a link to a device: the session's to say,
+// not a platform's, so it asks through its own ConnectionStatus port, never the session itself.
+// The rules are in readStatus (ReadStatus.kt), which the monitor applies too.
+class StatusService(
+    private val battery: BatteryProvider,
+    private val network: NetworkProvider,
+    private val bluetooth: BluetoothProvider,
+    private val connection: ConnectionStatus,
+) : StatusReport {
+    override suspend fun current(): DeviceStatus = readStatus(battery, network, bluetooth, connection)
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/MonitoringService.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import com.example.devicemonitor.core.outbound.BatteryProvider
+import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+import com.example.devicemonitor.core.outbound.LogStore
+import com.example.devicemonitor.core.outbound.MonitorScheduler
+import com.example.devicemonitor.core.outbound.NetworkProvider
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlin.time.Clock
+import kotlin.time.Duration
+
+// Service: the background monitor's rules. Each tick reads the phone's status through Lesson 17's
+// four status ports (ConnectionStatus included, never the session), stamps it with the time,
+// and appends it to the log. When it runs is the scheduler's business, not this class's.
+class MonitoringService(
+    private val battery: BatteryProvider,
+    private val network: NetworkProvider,
+    private val bluetooth: BluetoothProvider,
+    private val connection: ConnectionStatus,
+    private val log: LogStore,
+    private val scheduler: MonitorScheduler,
+    private val clock: Clock = Clock.System,
+) : DeviceMonitoring {
+    private val _status = MutableStateFlow&lt;MonitorStatus&gt;(MonitorStatus.Stopped)
+    override val status: StateFlow&lt;MonitorStatus&gt; = _status.asStateFlow()
+
+    override fun start(interval: Duration) {
+        require(interval.isPositive()) { "The monitor's interval must be positive, not $interval." }
+        _status.value = MonitorStatus.Running(interval)
+        scheduler.schedule(interval) { tick() }
+    }
+
+    override fun stop() {
+        scheduler.cancel()
+        _status.value = MonitorStatus.Stopped
+    }
+
+    override suspend fun logs(): List&lt;LogRecord&gt; = log.read()
+
+    override suspend fun clearLogs() = log.clear()
+
+    // One reading. A tick that comes after stop() writes nothing. A file error doesn't stop the
+    // monitor: it shows in the status, and the next tick tries again.
+    private suspend fun tick() {
+        if (_status.value !is MonitorStatus.Running) return
+        val record = LogRecord(clock.now(), readStatus(battery, network, bluetooth, connection))
+        val error = try {
+            log.append(record)
+            null
+        } catch (e: LogStoreException) {
+            e.message
+        }
+        _status.update { current -&gt;
+            when (current) {
+                is MonitorStatus.Running -&gt;
+                    if (error == null) current.copy(lastRecord = record, lastError = null)
+                    else current.copy(lastError = error)
+                MonitorStatus.Stopped -&gt; current
+            }
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/AppLaunch.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.inbound
+
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import org.koin.mp.KoinPlatform
+import kotlin.time.Duration.Companion.minutes
+
+// How often the monitor reads the phone's status: the shortest period Android allows for
+// repeating background work, used on both platforms.
+private val MONITOR_INTERVAL = 15.minutes
+
+// Inbound adapter: the app's launch. Both app starts call this once per process, right after
+// initKoin: on every launch, including the ones the OS makes in the background to run the
+// monitor, which never show a screen. Each new process needs the monitor's tick handed to the
+// scheduler again, and a screen is the wrong place for that: it may never appear, and it goes
+// away while the app keeps running.
+fun onAppLaunch() {
+    KoinPlatform.getKoin().get&lt;DeviceMonitoring&gt;().start(MONITOR_INTERVAL)
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.outbound.SessionConnectionStatus
+import com.example.devicemonitor.core.MonitoringService
+import com.example.devicemonitor.core.PermissionService
+import com.example.devicemonitor.core.ScanningService
+import com.example.devicemonitor.core.SessionService
+import com.example.devicemonitor.core.StatusService
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.inbound.PermissionAccess
+import com.example.devicemonitor.core.inbound.StatusReport
+import com.example.devicemonitor.core.outbound.BatteryProvider
+import com.example.devicemonitor.core.outbound.BleConnection
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+import com.example.devicemonitor.core.outbound.LogStore
+import com.example.devicemonitor.core.outbound.MonitorScheduler
+import com.example.devicemonitor.core.outbound.NetworkProvider
+import com.example.devicemonitor.core.outbound.PermissionChecker
+import org.koin.core.context.startKoin
+import org.koin.core.module.dsl.viewModelOf
+import org.koin.dsl.module
+
+// The composition root, as a Koin module: which service implements each inbound port,
+// which adapter implements each outbound port, and how to build each ViewModel.
+internal val appModule = module {
+    single&lt;DeviceScanning&gt; { ScanningService(get(), get()) }
+    // One session for the whole app: every screen sees the same connection state.
+    single&lt;DeviceSession&gt; { SessionService(get(), get()) }
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    single&lt;StatusReport&gt; { StatusService(get(), get(), get(), get()) }
+    // The bridge adapter: the status asks ConnectionStatus, and the one session answers.
+    single&lt;ConnectionStatus&gt; { SessionConnectionStatus(get()) }
+    // The monitor reads the same four status ports, and writes to the log store.
+    single&lt;DeviceMonitoring&gt; { MonitoringService(get(), get(), get(), get(), get(), get()) }
+    viewModelOf(::DeviceListViewModel)
+    viewModelOf(::DeviceDetailViewModel)
+}
+
+// The outbound adapters that each platform builds itself and passes to initKoin.
+internal fun platformModule(
+    permissionChecker: PermissionChecker,
+    bleScanner: BleScanner,
+    bleConnection: BleConnection,
+    batteryProvider: BatteryProvider,
+    networkProvider: NetworkProvider,
+    bluetoothProvider: BluetoothProvider,
+    logStore: LogStore,
+    monitorScheduler: MonitorScheduler,
+) = module {
+    single { permissionChecker }
+    single { bleScanner }
+    single { bleConnection }
+    single { batteryProvider }
+    single { networkProvider }
+    single { bluetoothProvider }
+    single { logStore }
+    single { monitorScheduler }
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+fun initKoin(
+    permissionChecker: PermissionChecker,
+    bleScanner: BleScanner,
+    bleConnection: BleConnection,
+    batteryProvider: BatteryProvider,
+    networkProvider: NetworkProvider,
+    bluetoothProvider: BluetoothProvider,
+    logStore: LogStore,
+    monitorScheduler: MonitorScheduler,
+) {
+    startKoin {
+        modules(
+            appModule,
+            platformModule(
+                permissionChecker, bleScanner, bleConnection, batteryProvider, networkProvider, bluetoothProvider,
+                logStore, monitorScheduler,
+            ),
+        )
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidMonitorScheduler.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import android.content.Context
+import android.util.Log
+import androidx.work.CoroutineWorker
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.PeriodicWorkRequest
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import androidx.work.WorkerParameters
+import com.example.devicemonitor.core.outbound.MonitorScheduler
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.toJavaDuration
+
+// Outbound adapter: the monitor's timer on Android, behind the MonitorScheduler port. WorkManager
+// runs MonitorWorker about every interval, with the app open or not, and keeps the schedule
+// when the process ends and across reboots. Android picks the moment within each period.
+class AndroidMonitorScheduler(context: Context) : MonitorScheduler {
+    private val workManager = WorkManager.getInstance(context)
+
+    override fun schedule(interval: Duration, tick: suspend () -&gt; Unit) {
+        currentTick = tick
+        // Android's floor for periodic work is 15 minutes: never ask for less.
+        val period = interval.coerceAtLeast(PeriodicWorkRequest.MIN_PERIODIC_INTERVAL_MILLIS.milliseconds)
+        val request = PeriodicWorkRequestBuilder&lt;MonitorWorker&gt;(period.toJavaDuration()).build()
+        // One schedule however many launches call this: UPDATE keeps the work that is already
+        // scheduled, with its timing, and only changes its period.
+        workManager.enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
+    }
+
+    override fun cancel() {
+        currentTick = null
+        workManager.cancelUniqueWork(WORK_NAME)
+    }
+
+    internal companion object {
+        const val WORK_NAME = "status-monitor"
+
+        // WorkManager builds MonitorWorker itself, so the worker can't be handed the tick: it
+        // finds it here, in the process they share. A new process gets it from onAppLaunch.
+        @Volatile
+        var currentTick: (suspend () -&gt; Unit)? = null
+    }
+}
+
+// What WorkManager runs each period, in the app's process: Android starts the process for it
+// if it isn't running, and Application.onCreate runs first.
+class MonitorWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    override suspend fun doWork(): Result {
+        val tick = AndroidMonitorScheduler.currentTick
+        Log.i("DeviceMonitor", if (tick == null) "Monitor work ran, but the monitor is stopped" else "Monitor tick")
+        tick?.invoke()
+        return Result.success()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosMonitorScheduler.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.outbound.MonitorScheduler
+import kotlinx.cinterop.BetaInteropApi
+import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.ObjCObjectVar
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.value
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import platform.BackgroundTasks.BGAppRefreshTask
+import platform.BackgroundTasks.BGAppRefreshTaskRequest
+import platform.BackgroundTasks.BGTaskScheduler
+import platform.Foundation.NSDate
+import platform.Foundation.NSError
+import platform.Foundation.NSNotificationCenter
+import platform.Foundation.NSOperationQueue
+import platform.Foundation.dateWithTimeIntervalSinceNow
+import platform.UIKit.UIApplication
+import platform.UIKit.UIApplicationDidBecomeActiveNotification
+import platform.UIKit.UIApplicationDidEnterBackgroundNotification
+import platform.UIKit.UIApplicationState
+import platform.darwin.dispatch_get_main_queue
+import kotlin.time.Duration
+
+// Outbound adapter: the monitor's timer on iOS, behind the MonitorScheduler port. In the
+// foreground the app runs as it likes, so a coroutine ticks every interval. In the background
+// iOS suspends the app, so the adapter asks BGTaskScheduler to launch it again in about one
+// interval, at the earliest; iOS decides when, or whether. Build it in the app start: its
+// launch handler must be registered before the app finishes launching.
+@OptIn(ExperimentalForeignApi::class, BetaInteropApi::class)
+class IosMonitorScheduler : MonitorScheduler {
+    private val scope = MainScope() // ticks run on the main thread, like the status adapters
+    private val scheduler = BGTaskScheduler.sharedScheduler
+    private var tick: (suspend () -&gt; Unit)? = null
+    private var interval = Duration.ZERO
+    private var timer: Job? = null
+
+    init {
+        // Once per process, and during launch: registering after launch is an error, and a second
+        // registration of the same identifier ends the app. false: the identifier isn't permitted.
+        val registered = scheduler.registerForTaskWithIdentifier(TASK_ID, dispatch_get_main_queue()) { task -&gt;
+            refresh(task as BGAppRefreshTask)
+        }
+        check(registered) { "$TASK_ID isn't in BGTaskSchedulerPermittedIdentifiers (project.yml)." }
+        // App-level lifecycle, not a screen's: these fire whichever screen is showing.
+        val center = NSNotificationCenter.defaultCenter
+        center.addObserverForName(UIApplicationDidBecomeActiveNotification, null, NSOperationQueue.mainQueue) { _ -&gt;
+            scheduler.cancelTaskRequestWithIdentifier(TASK_ID) // the timer takes over
+            startTimer()
+        }
+        center.addObserverForName(UIApplicationDidEnterBackgroundNotification, null, NSOperationQueue.mainQueue) { _ -&gt;
+            // Leaving the foreground: iOS will suspend the app, so hand over from the timer to
+            // BGTaskScheduler. A launch straight into the background posts this too, with no
+            // timer running: the refresh task that launched the app then submits the next one.
+            if (timer?.isActive == true) {
+                timer?.cancel()
+                submit()
+            }
+        }
+    }
+
+    override fun schedule(interval: Duration, tick: suspend () -&gt; Unit) {
+        this.tick = tick
+        this.interval = interval
+        // At launch the app isn't active yet, and the notification starts the timer; later, start it now.
+        if (UIApplication.sharedApplication.applicationState == UIApplicationState.UIApplicationStateActive) {
+            startTimer()
+        }
+    }
+
+    override fun cancel() {
+        tick = null
+        timer?.cancel()
+        scheduler.cancelTaskRequestWithIdentifier(TASK_ID)
+    }
+
+    private fun startTimer() {
+        val tick = tick ?: return
+        timer?.cancel()
+        timer = scope.launch {
+            while (true) {
+                delay(interval)
+                println("Monitor tick (foreground)")
+                tick()
+            }
+        }
+    }
+
+    // Asks iOS to launch the app in the background, not before one interval from now.
+    private fun submit() {
+        val request = BGAppRefreshTaskRequest(identifier = TASK_ID)
+        request.earliestBeginDate = NSDate.dateWithTimeIntervalSinceNow(interval.inWholeSeconds.toDouble())
+        memScoped {
+            val error = alloc&lt;ObjCObjectVar&lt;NSError?&gt;&gt;()
+            if (!scheduler.submitTaskRequest(request, error.ptr)) {
+                // On the Simulator, always: it "doesn't support background processing".
+                println("Monitor: no background refresh: ${error.value?.localizedDescription}")
+            }
+        }
+    }
+
+    // iOS launched (or woke) the app in the background for the refresh task.
+    private fun refresh(task: BGAppRefreshTask) {
+        val tick = tick
+        if (tick == null) {
+            task.setTaskCompletedWithSuccess(true)
+            return
+        }
+        submit() // the next one first: this one may be cut short
+        val work = scope.launch {
+            println("Monitor tick (background)")
+            tick()
+            task.setTaskCompletedWithSuccess(true)
+        }
+        task.expirationHandler = {
+            work.cancel()
+            task.setTaskCompletedWithSuccess(false)
+        }
+    }
+
+    private companion object {
+        // Also listed in Info.plist, under BGTaskSchedulerPermittedIdentifiers (project.yml).
+        const val TASK_ID = "com.example.devicemonitor.monitor"
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeMonitorScheduler.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.outbound.MonitorScheduler
+import kotlin.time.Duration
+
+// Fake: an outbound adapter written for tests, behind the MonitorScheduler port. The test plays
+// the platform's timer: it fires the tick when it likes, as often as it likes.
+class FakeMonitorScheduler : MonitorScheduler {
+    var interval: Duration? = null
+        private set
+    var cancelled = false
+        private set
+    private var tick: (suspend () -&gt; Unit)? = null
+
+    override fun schedule(interval: Duration, tick: suspend () -&gt; Unit) {
+        this.interval = interval
+        this.tick = tick
+        cancelled = false
+    }
+
+    override fun cancel() {
+        cancelled = true
+    }
+
+    // What the platform does when the time comes. Keeps the tick after cancel(), so a test can
+    // play a late tick that was already on its way.
+    suspend fun fire() {
+        checkNotNull(tick) { "Nothing was scheduled." }.invoke()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeLogStore.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.LogRecord
+import com.example.devicemonitor.core.LogStoreException
+import com.example.devicemonitor.core.outbound.LogStore
+
+// Fake: an outbound adapter written for tests, behind the LogStore port: a list in memory. The
+// test can make the next append fail, as a full disk would.
+class FakeLogStore : LogStore {
+    val records = mutableListOf&lt;LogRecord&gt;()
+    var failNextAppend: String? = null
+
+    override suspend fun append(record: LogRecord) {
+        failNextAppend?.let {
+            failNextAppend = null
+            throw LogStoreException(it)
+        }
+        records += record
+    }
+
+    override suspend fun read(): List&lt;LogRecord&gt; = records.toList()
+
+    override suspend fun clear() = records.clear()
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/core/MonitoringServiceTest.kt</summary>
+<pre><code>package com.example.devicemonitor.core
+
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import com.example.devicemonitor.doubles.FakeBatteryProvider
+import com.example.devicemonitor.doubles.FakeBluetoothProvider
+import com.example.devicemonitor.doubles.FakeConnectionStatus
+import com.example.devicemonitor.doubles.FakeLogStore
+import com.example.devicemonitor.doubles.FakeMonitorScheduler
+import com.example.devicemonitor.doubles.FakeNetworkProvider
+import kotlinx.coroutines.test.runTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
+import kotlin.time.Clock
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Instant
+
+class MonitoringServiceTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val battery = FakeBatteryProvider()
+    private val network = FakeNetworkProvider()
+    private val bluetooth = FakeBluetoothProvider()
+    private val connection = FakeConnectionStatus()
+    private val log = FakeLogStore()
+    private val scheduler = FakeMonitorScheduler()
+    private val clock = object : Clock {
+        var now = Instant.parse("2026-09-11T10:30:00Z")
+        override fun now() = now
+    }
+
+    // Through the inbound port, as the app's launch calls it.
+    private val monitor: DeviceMonitoring =
+        MonitoringService(battery, network, bluetooth, connection, log, scheduler, clock)
+
+    @Test
+    fun startAsksTheSchedulerForTheInterval() {
+        monitor.start(15.minutes)
+
+        assertEquals(15.minutes, scheduler.interval)
+        assertEquals(MonitorStatus.Running(15.minutes), monitor.status.value)
+    }
+
+    @Test
+    fun eachTickAppendsTheStatusAndTheTime() = runTest {
+        monitor.start(15.minutes)
+        battery.percent = 47
+
+        scheduler.fire()
+        clock.now = Instant.parse("2026-09-11T10:45:00Z")
+        battery.percent = 46
+        scheduler.fire()
+
+        assertEquals(listOf("2026-09-11T10:30:00Z", "2026-09-11T10:45:00Z"), log.records.map { it.timestamp.toString() })
+        assertEquals(listOf(47, 46), log.records.map { it.status.battery })
+        assertEquals(MonitorStatus.Running(15.minutes, lastRecord = log.records.last()), monitor.status.value)
+    }
+
+    @Test
+    fun theRecordFollowsTheStatusRules() = runTest {
+        monitor.start(15.minutes)
+        network.status = NetworkStatus(wifiEnabled = null, wifiConnected = true, cellularAvailable = false)
+        connection.state = ConnectionState.Connecting(obd)
+        scheduler.fire()
+        connection.state = ConnectionState.Connected(obd)
+        scheduler.fire()
+
+        assertEquals(listOf(true, true), log.records.map { it.status.wifiEnabled })
+        assertEquals(listOf(false, true), log.records.map { it.status.bluetoothConnected })
+    }
+
+    @Test
+    fun stopCancelsAndALateTickWritesNothing() = runTest {
+        monitor.start(15.minutes)
+        monitor.stop()
+
+        scheduler.fire() // a tick that was already on its way
+
+        assertTrue(scheduler.cancelled)
+        assertEquals(MonitorStatus.Stopped, monitor.status.value)
+        assertEquals(emptyList(), log.records)
+    }
+
+    @Test
+    fun aFileErrorIsReportedAndTheNextTickTriesAgain() = runTest {
+        monitor.start(15.minutes)
+        log.failNextAppend = "Couldn't write to the log: No space left on device"
+
+        scheduler.fire()
+        assertEquals(
+            MonitorStatus.Running(15.minutes, lastError = "Couldn't write to the log: No space left on device"),
+            monitor.status.value,
+        )
+
+        scheduler.fire()
+        assertEquals(1, log.records.size)
+        assertEquals(MonitorStatus.Running(15.minutes, lastRecord = log.records.single()), monitor.status.value)
+    }
+
+    @Test
+    fun logsAndClearLogsUseTheLogStore() = runTest {
+        monitor.start(15.minutes)
+        scheduler.fire()
+        assertEquals(log.records, monitor.logs())
+
+        monitor.clearLogs()
+
+        assertEquals(emptyList(), monitor.logs())
+    }
+
+    @Test
+    fun anIntervalMustBePositive() {
+        assertFailsWith&lt;IllegalArgumentException&gt; { monitor.start(0.minutes) }
+        assertEquals(null, scheduler.interval)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.Permission
+import com.example.devicemonitor.core.PermissionStatus
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.inbound.StatusReport
+import com.example.devicemonitor.doubles.FakeBatteryProvider
+import com.example.devicemonitor.doubles.FakeBleConnection
+import com.example.devicemonitor.doubles.FakeBleScanner
+import com.example.devicemonitor.doubles.FakeBluetoothProvider
+import com.example.devicemonitor.doubles.FakeLogStore
+import com.example.devicemonitor.doubles.FakeMonitorScheduler
+import com.example.devicemonitor.doubles.FakeNetworkProvider
+import com.example.devicemonitor.doubles.FakePermissionChecker
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import org.koin.dsl.koinApplication
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
+
+class AppModuleTest {
+    // Fakes stand in for the adapters each platform passes to initKoin.
+    private val radio = FakeBleConnection()
+    private val os = FakePermissionChecker()
+    private val log = FakeLogStore()
+    private val timer = FakeMonitorScheduler()
+    private val app = koinApplication {
+        modules(
+            appModule,
+            platformModule(
+                os, FakeBleScanner(), radio,
+                FakeBatteryProvider(), FakeNetworkProvider(), FakeBluetoothProvider(),
+                log, timer,
+            ),
+        )
+    }
+    private val koin = app.koin
+
+    // A single's instance is kept in the module, and appModule is one object for every test:
+    // without close(), the next test's koinApplication would get this test's session.
+    @AfterTest
+    fun closeKoin() {
+        app.close()
+    }
+
+    // Koin checks the graph only when something asks for an instance, at run time. This
+    // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
+    @Test
+    fun buildsEveryViewModel() {
+        assertNotNull(koin.get&lt;DeviceListViewModel&gt;())
+        assertNotNull(koin.get&lt;DeviceDetailViewModel&gt;())
+    }
+
+    // The bridge must reach the session the screens connect through, not a second one.
+    @Test
+    fun theStatusSeesTheAppsOneSession() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Granted
+        val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+        val call = launch { koin.get&lt;DeviceSession&gt;().connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        assertTrue(koin.get&lt;StatusReport&gt;().current().bluetoothConnected)
+        call.cancelAndJoin()
+    }
+
+    // The monitor reaches the same session through the same bridge, and writes to the log store
+    // the platform passed in.
+    @Test
+    fun theMonitorLogsWhatTheAppsOneSessionSays() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Granted
+        val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+        val call = launch { koin.get&lt;DeviceSession&gt;().connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        koin.get&lt;DeviceMonitoring&gt;().start(15.minutes)
+        timer.fire()
+
+        assertEquals(listOf(true), log.records.map { it.status.bluetoothConnected })
+        call.cancelAndJoin()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/build.gradle.kts</summary>
+<pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+    id("org.jetbrains.kotlin.plugin.serialization")
+    id("co.touchlab.skie")
+}
+
+kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+        compileSdk = 37
+        minSdk = 26
+        withHostTest {}
+    }
+
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target -&gt;
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            binaryOption("bundleId", "com.example.devicemonitor.shared")
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("io.insert-koin:koin-core:4.2.2")
+            implementation("io.insert-koin:koin-core-viewmodel:4.2.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+        }
+        androidMain.dependencies {
+            implementation("androidx.activity:activity:1.13.0")
+            implementation("androidx.work:work-runtime:2.12.0")
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+            implementation("app.cash.turbine:turbine:1.2.1")
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.app.Application
+import com.example.devicemonitor.adapter.inbound.onAppLaunch
+import com.example.devicemonitor.adapter.outbound.AndroidBatteryProvider
+import com.example.devicemonitor.adapter.outbound.AndroidBleConnection
+import com.example.devicemonitor.adapter.outbound.AndroidBleScanner
+import com.example.devicemonitor.adapter.outbound.AndroidBluetoothProvider
+import com.example.devicemonitor.adapter.outbound.AndroidLogStore
+import com.example.devicemonitor.adapter.outbound.AndroidMonitorScheduler
+import com.example.devicemonitor.adapter.outbound.AndroidNetworkProvider
+import com.example.devicemonitor.adapter.outbound.AndroidPermissionChecker
+import com.example.devicemonitor.di.initKoin
+import java.io.File
+
+// Runs once per process, before any Activity, and before any background work WorkManager runs
+// in it: the place to start Koin and to hand the monitor its tick.
+class DeviceMonitorApplication : Application() {
+    // The Android permission adapter, one for the process. Koin hands it to the app core as
+    // its PermissionChecker, and an Activity or a Fragment lends it a result launcher.
+    lateinit var permissionChecker: AndroidPermissionChecker
+        private set
+
+    override fun onCreate() {
+        super.onCreate()
+        permissionChecker = AndroidPermissionChecker(this)
+        initKoin(
+            permissionChecker = permissionChecker,
+            bleScanner = AndroidBleScanner(this),
+            bleConnection = AndroidBleConnection(this),
+            batteryProvider = AndroidBatteryProvider(this),
+            networkProvider = AndroidNetworkProvider(this),
+            bluetoothProvider = AndroidBluetoothProvider(this),
+            logStore = AndroidLogStore(File(filesDir, "status-log.jsonl")),
+            monitorScheduler = AndroidMonitorScheduler(this),
+        )
+        onAppLaunch()
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui">
+      <summary>iosApp/project.yml · SwiftUI track</summary>
+<pre><code>name: iosApp
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    sources: [iosApp]
+    info:
+      path: iosApp/Info.plist
+      properties:
+        CFBundleDisplayName: Device Monitor
+        UILaunchScreen: {}
+        NSBluetoothAlwaysUsageDescription: Device Monitor uses Bluetooth to find and connect to nearby devices.
+        # The monitor (Lesson 18): background refresh, and the one task identifier it uses.
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [com.example.devicemonitor.monitor]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.devicemonitor
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    preBuildScripts:
+      - name: Compile Kotlin Framework
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            echo "Skipping Gradle build task invocation due to OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED environment variable set to \"YES\""
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :shared:embedAndSignAppleFrameworkForXcode</code></pre>
+    </details>
+    <details class="full-file" data-track="swiftui" data-part="ios">
+      <summary>iosApp/iosApp/iOSApp.swift</summary>
+<pre><code>import SwiftUI
+import Shared
+
+@main
+struct iOSApp: App {
+    // Runs once per launch, before the app finishes launching, whether the user opened it or
+    // iOS launched it in the background for the monitor: the place for app-level work.
+    init() {
+        AppModuleKt.doInitKoin(
+            permissionChecker: IosPermissionChecker(),
+            bleScanner: IosBleScanner(),
+            bleConnection: LinkedBleConnection(link: IosBleConnection()),
+            batteryProvider: IosBatteryProvider(),
+            networkProvider: IosNetworkProvider(),
+            bluetoothProvider: IosBluetoothProvider(),
+            logStore: IosLogStore(),
+            monitorScheduler: IosMonitorScheduler()
+        )
+        AppLaunchKt.onAppLaunch()
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit">
+      <summary>iosApp/project.yml · UIKit track</summary>
+<pre><code>name: iosApp
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+targets:
+  iosApp:
+    type: application
+    platform: iOS
+    sources: [iosApp]
+    info:
+      path: iosApp/Info.plist
+      properties:
+        CFBundleDisplayName: "Device Monitor"
+        UILaunchScreen: {}
+        NSBluetoothAlwaysUsageDescription: "Device Monitor uses Bluetooth to find and connect to nearby devices."
+        # The monitor (Lesson 18): background refresh, and the one task identifier it uses.
+        UIBackgroundModes: [fetch]
+        BGTaskSchedulerPermittedIdentifiers: [com.example.devicemonitor.monitor]
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: "Default Configuration"
+                UISceneDelegateClassName: "$(PRODUCT_MODULE_NAME).SceneDelegate"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.devicemonitor
+        SWIFT_VERSION: "6.0"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+    preBuildScripts:
+      - name: "Compile Kotlin Framework"
+        basedOnDependencyAnalysis: false
+        script: |
+          if [ "YES" = "$OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED" ]; then
+            echo "Skipping Gradle build task invocation due to OVERRIDE_KOTLIN_BUILD_IDE_SUPPORTED environment variable set to \"YES\""
+            exit 0
+          fi
+          cd "$SRCROOT/.."
+          ./gradlew :shared:embedAndSignAppleFrameworkForXcode</code></pre>
+    </details>
+    <details class="full-file" data-track="uikit" data-part="ios">
+      <summary>iosApp/iosApp/AppDelegate.swift</summary>
+<pre><code>import UIKit
+import Shared
+
+@main
+final class AppDelegate: UIResponder, UIApplicationDelegate {
+    // Runs once per launch, whether the user opened the app or iOS launched it in the background
+    // for the monitor, and the launch isn't finished until it returns: the place for app-level
+    // work, and the last moment to register a background task.
+    func application(_ application: UIApplication,
+                     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -&gt; Bool {
+        AppModuleKt.doInitKoin(
+            permissionChecker: IosPermissionChecker(),
+            bleScanner: IosBleScanner(),
+            bleConnection: LinkedBleConnection(link: IosBleConnection()),
+            batteryProvider: IosBatteryProvider(),
+            networkProvider: IosNetworkProvider(),
+            bluetoothProvider: IosBluetoothProvider(),
+            logStore: IosLogStore(),
+            monitorScheduler: IosMonitorScheduler()
+        )
+        AppLaunchKt.onAppLaunch()
+        return true
+    }
+
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -&gt; UISceneConfiguration {
+        UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="17-device-status-and-log-store.html">← 17 Device status and the log store</a>
+    <span class="muted">Next: 19 Background monitor: platform behaviour table</span>
+  </nav>
+</main>
+</body>
+</html>
