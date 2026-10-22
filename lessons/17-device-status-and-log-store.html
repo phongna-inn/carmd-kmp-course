@@ -24,23 +24,23 @@
   </div>
 
   <div class="mission-tie">
-    <strong>Why this matters:</strong> so far the app has watched other devices. A device monitor also needs the phone's own state: how much battery is left, whether Wi-Fi and a cellular network are up, whether Bluetooth is on and the app holds a link. Today that becomes a capability of its own, the <code>StatusReport</code> inbound port, read by the list screen and answered by a service over three small outbound ports, one adapter each per platform. Then the app gets somewhere to keep what it sees: a <code>LogStore</code> outbound port with a JSON Lines file behind it. Its iOS adapter is the course's <code>iosMain</code> Kotlin/Native example: an outbound adapter that does all its work through Apple's Foundation, called from Kotlin, pointers and all. Lesson 18's monitor reads the status on a timer and writes each reading to this log. That's milestone <strong>m12</strong>: live status on screen, and log lines written and read back on both platforms.
+    <strong>Why this matters:</strong> so far the app has watched other devices. A device monitor also needs the phone's own state: how much battery is left, whether Wi-Fi and a cellular network are up, whether Bluetooth is on and the app holds a link. Today that becomes a capability of its own, the <code>StatusReport</code> inbound port, read by the list screen and answered by a service over three small outbound ports, one adapter each per platform. One answer, whether the app holds a link, belongs to another capability, the BLE session, and how one service asks another without knowing it is a lesson of its own: a bridge adapter. Then the app gets somewhere to keep what it sees: a <code>LogStore</code> outbound port with a JSON Lines file behind it. Its iOS adapter is the course's <code>iosMain</code> Kotlin/Native example: an outbound adapter that does all its work through Apple's Foundation, called from Kotlin, pointers and all. Lesson 18's monitor reads the status on a timer and writes each reading to this log. That's milestone <strong>m12</strong>: live status on screen, and log lines written and read back on both platforms.
   </div>
 
-  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/develop/connectivity/network-ops/reading-network-state">Read network state</a> before section 3. For iOS, Apple's <a href="https://developer.apple.com/documentation/network/nwpathmonitor">NWPathMonitor</a> and <a href="https://developer.apple.com/documentation/uikit/uidevice/batterylevel">UIDevice.batteryLevel</a> before section 4. For the log store, <a href="https://jsonlines.org/">JSON Lines</a> before section 6, and Kotlin's <a href="https://kotlinlang.org/docs/native-c-interop.html">Interoperability with C</a> ("Memory allocation") and <a href="https://kotlinlang.org/docs/native-objc-interop.html">Interoperability with Swift/Objective-C</a> ("Errors and exceptions") before section 8.</p>
-  <p><span class="tag">Tracks</span> The ports, the service, the adapters, the log store and the tests (sections 1–4 and 6–9) are the same on every track; only the app start differs between SwiftUI and UIKit, and the XML track's root build file gains one line (section 6). The tracks differ in the list screen (section 5), which gets one line of status and a Refresh button. Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+  <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/develop/connectivity/network-ops/reading-network-state">Read network state</a> before section 4. For iOS, Apple's <a href="https://developer.apple.com/documentation/network/nwpathmonitor">NWPathMonitor</a> and <a href="https://developer.apple.com/documentation/uikit/uidevice/batterylevel">UIDevice.batteryLevel</a> before section 5. For the log store, <a href="https://jsonlines.org/">JSON Lines</a> before section 7, and Kotlin's <a href="https://kotlinlang.org/docs/native-c-interop.html">Interoperability with C</a> ("Memory allocation") and <a href="https://kotlinlang.org/docs/native-objc-interop.html">Interoperability with Swift/Objective-C</a> ("Errors and exceptions") before section 9.</p>
+  <p><span class="tag">Tracks</span> The ports, the service, the bridge, the adapters, the log store and the tests (sections 1–5 and 7–10) are the same on every track; only the app start differs between SwiftUI and UIKit, and the XML track's root build file gains one line (section 7). The tracks differ in the list screen (section 6), which gets one line of status and a Refresh button. Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
 
   <h2>What changes from m11</h2>
   <div class="table-wrap">
   <table>
     <tr><th>What</th><th>m11</th><th>m12</th></tr>
-    <tr><td>app core</td><td>scanning, permissions, the BLE session</td><td>new models <code>DeviceStatus</code>, <code>NetworkStatus</code>, <code>LogRecord</code> and <code>LogStoreException</code>; a new inbound port, <code>StatusReport</code>, implemented by <code>StatusService</code>; four new outbound ports: <code>BatteryProvider</code>, <code>NetworkProvider</code>, <code>BluetoothProvider</code> and <code>LogStore</code></td></tr>
+    <tr><td>app core</td><td>scanning, permissions, the BLE session</td><td>new models <code>DeviceStatus</code>, <code>NetworkStatus</code>, <code>LogRecord</code> and <code>LogStoreException</code>; a new inbound port, <code>StatusReport</code>, implemented by <code>StatusService</code>; five new outbound ports: <code>BatteryProvider</code>, <code>NetworkProvider</code>, <code>BluetoothProvider</code>, <code>ConnectionStatus</code> and <code>LogStore</code></td></tr>
     <tr><td>Android adapters</td><td>BLE radio, permissions</td><td>three status adapters in <code>AndroidStatusProviders.kt</code>, and <code>AndroidLogStore</code>; the manifest asks for <code>ACCESS_NETWORK_STATE</code> and <code>ACCESS_WIFI_STATE</code></td></tr>
     <tr><td>iOS adapters</td><td>Swift BLE and permission classes, Kotlin halves in <code>iosMain</code></td><td>three Swift status adapters in <code>IosStatusProviders.swift</code>, and <code>IosLogStore</code>, Kotlin in <code>iosMain</code> over Foundation</td></tr>
-    <tr><td>shared adapter code</td><td>the simulated radio</td><td><code>JsonLines</code>, the log file's format, used by both log stores; <code>shared/build.gradle.kts</code> applies the kotlinx.serialization plugin and adds its JSON library</td></tr>
-    <tr><td>Koin</td><td>three adapters passed to <code>initKoin</code></td><td>six: the three status adapters join them, and <code>StatusReport</code> is bound to <code>StatusService</code>. <code>LogStore</code> isn't bound yet: nothing uses it until Lesson 18</td></tr>
+    <tr><td>shared adapter code</td><td>the simulated radio</td><td><code>SessionConnectionStatus</code>, a bridge adapter that answers <code>ConnectionStatus</code> from the session; <code>JsonLines</code>, the log file's format, used by both log stores; <code>shared/build.gradle.kts</code> applies the kotlinx.serialization plugin and adds its JSON library</td></tr>
+    <tr><td>Koin</td><td>three adapters passed to <code>initKoin</code></td><td>six: the three status adapters join them. <code>StatusReport</code> is bound to <code>StatusService</code>, and <code>ConnectionStatus</code> to <code>SessionConnectionStatus</code>. <code>LogStore</code> isn't bound yet: nothing uses it until Lesson 18</td></tr>
     <tr><td>the list screen</td><td>filter, permission, Scan</td><td>plus one line of phone status, read when the screen appears, when the app comes back to the foreground, and on Refresh</td></tr>
-    <tr><td>tests</td><td>68 per platform</td><td>85 per platform: 5 for the status service, 3 more for the list ViewModel, 4 for the file format, and 5 that every log store must pass, run against the Android adapter on the JVM and the iOS adapter in the simulator</td></tr>
+    <tr><td>tests</td><td>68 per platform</td><td>87 per platform: 5 for the status service, 1 for the bridge, 1 more for the Koin graph, 3 more for the list ViewModel, 4 for the file format, and 5 that every log store must pass, run against the Android adapter on the JVM and the iOS adapter in the simulator</td></tr>
   </table>
   </div>
 
@@ -56,7 +56,7 @@
     val wifiConnected: Boolean,
     val cellularAvailable: Boolean, // a cellular network is up that this app can use
 <mark>    val bluetoothEnabled: Boolean?,</mark>
-    val bluetoothConnected: Boolean, // this app holds a link to a device (DeviceSession)
+    val bluetoothConnected: Boolean, // this app holds a link to a device (ConnectionStatus)
 )
 <span class="elide">⋯  NetworkStatus: wifiEnabled, wifiConnected and cellularAvailable, the network half</span></code></pre>
   </figure>
@@ -68,7 +68,7 @@
 }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>Three nullable fields</strong>, because "I can't tell" is an honest answer the app must be able to give, and it isn't <code>false</code>. A battery level of <code>-1</code> or <code>0</code> would be a lie the screen and the log would repeat. Sections 3 and 4 show where each <code>null</code> comes from.</li>
+    <li><strong>Three nullable fields</strong>, because "I can't tell" is an honest answer the app must be able to give, and it isn't <code>false</code>. A battery level of <code>-1</code> or <code>0</code> would be a lie the screen and the log would repeat. Sections 4 and 5 show where each <code>null</code> comes from.</li>
     <li><strong><code>suspend</code></strong>, because one of the answers takes a moment on iOS: a new <code>CBCentralManager</code> learns the radio's state in a callback (Lesson 13). The other two are instant reads.</li>
   </ol>
   <p>The service needs three things from the platform, each a small outbound port named for what it answers:</p>
@@ -91,11 +91,11 @@ interface BluetoothProvider {
   </figure>
   <ol class="walk">
     <li><strong>Why not reuse <code>BleScanner.isEnabled()</code>?</strong> It answers the scanning service's question and lives with the scan; it would drag the scanner into the status report, and its iOS adapter creates a <code>CBCentralManager</code> the first time it's asked, which shows the permission prompt to a user who hasn't answered yet. One port per question keeps each adapter small and each rule where it belongs.</li>
-    <li><strong>"As the system last reported them."</strong> Both platforms push network changes to the app (section 3 and 4), so the adapter keeps the latest and <code>current()</code> only reads it. That's why it isn't <code>suspend</code>.</li>
+    <li><strong>"As the system last reported them."</strong> Both platforms push network changes to the app (sections 4 and 5), so the adapter keeps the latest and <code>current()</code> only reads it. That's why it isn't <code>suspend</code>.</li>
   </ol>
   <figure class="diagram">
-    <svg class="dg" viewBox="0 0 760 400" role="img" aria-labelledby="l17-hex-title">
-      <title id="l17-hex-title">Who answers "what is the phone's status?". The list screen's DeviceListViewModel, an inbound adapter, calls the inbound port StatusReport. StatusService in the app core implements it. It asks three outbound ports, BatteryProvider, NetworkProvider and BluetoothProvider, and reads one thing the app core already knows: the connection state of the DeviceSession inbound port. On Android, three Kotlin adapters in androidMain implement the three outbound ports over BatteryManager, ConnectivityManager with WifiManager, and BluetoothAdapter. On iOS, three Swift adapters in the iOS app implement them over UIDevice, NWPathMonitor and CBCentralManager. In the tests, three fakes stand in for the adapters.</title>
+    <svg class="dg" viewBox="0 0 760 490" role="img" aria-labelledby="l17-hex-title">
+      <title id="l17-hex-title">Who answers "what is the phone's status?". The list screen's DeviceListViewModel, an inbound adapter, calls the inbound port StatusReport. StatusService in the app core implements it. It asks four outbound ports: BatteryProvider, NetworkProvider and BluetoothProvider about the phone, and ConnectionStatus about whether this app holds a link to a device. On Android, three Kotlin adapters in androidMain implement the three phone ports over BatteryManager, ConnectivityManager with WifiManager, and BluetoothAdapter. On iOS, three Swift adapters in the iOS app implement them over UIDevice, NWPathMonitor and CBCentralManager. ConnectionStatus is implemented in the shared code by SessionConnectionStatus, a bridge adapter that asks the DeviceSession inbound port (section 3). In the tests, fakes stand in for the adapters.</title>
       <defs><marker id="l17-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <g data-part="inbound">
         <rect class="box" x="10" y="150" width="150" height="60" rx="6"/>
@@ -109,21 +109,20 @@ interface BluetoothProvider {
       <g data-part="inbound">
         <rect class="box" x="204" y="150" width="120" height="40" rx="6"/>
         <text class="mono small" x="214" y="175">StatusReport</text>
-        <rect class="box" x="204" y="280" width="120" height="50" rx="6"/>
-        <text class="mono small" x="214" y="302">DeviceSession</text>
-        <text class="small muted" x="214" y="320">connectionState</text>
       </g>
       <g data-part="core">
         <rect class="box" x="204" y="210" width="120" height="40" rx="6"/>
         <text class="mono small" x="214" y="235">StatusService</text>
       </g>
       <g data-part="outbound">
-        <rect class="box" x="350" y="90" width="128" height="40" rx="6"/>
-        <text class="mono small" x="358" y="115">BatteryProvider</text>
-        <rect class="box" x="350" y="170" width="128" height="40" rx="6"/>
-        <text class="mono small" x="358" y="195">NetworkProvider</text>
-        <rect class="box" x="350" y="250" width="128" height="40" rx="6"/>
-        <text class="mono small" x="358" y="275">BluetoothProvider</text>
+        <rect class="box" x="350" y="60" width="128" height="40" rx="6"/>
+        <text class="mono small" x="358" y="85">BatteryProvider</text>
+        <rect class="box" x="350" y="130" width="128" height="40" rx="6"/>
+        <text class="mono small" x="358" y="155">NetworkProvider</text>
+        <rect class="box" x="350" y="200" width="128" height="40" rx="6"/>
+        <text class="mono small" x="358" y="225">BluetoothProvider</text>
+        <rect class="box" x="350" y="290" width="128" height="40" rx="6"/>
+        <text class="mono small" x="358" y="315">ConnectionStatus</text>
       </g>
       <g data-part="android">
         <rect class="box" x="520" y="40" width="230" height="140" rx="6"/>
@@ -141,17 +140,23 @@ interface BluetoothProvider {
         <text class="small" x="530" y="302">CBCentralManager</text>
         <text class="small muted" x="530" y="330">IosStatusProviders.swift</text>
       </g>
+      <g data-part="outbound">
+        <rect class="box" x="300" y="390" width="290" height="56" rx="6"/>
+        <text class="title small" x="312" y="412">SessionConnectionStatus</text>
+        <text class="small muted" x="312" y="433">bridge adapter (commonMain): asks DeviceSession</text>
+      </g>
       <path class="edge" d="M160,175 L202,172" marker-end="url(#l17-hex-arrow)"/>
       <path class="edge" d="M264,190 L264,208" marker-end="url(#l17-hex-arrow)"/>
-      <path class="edge" d="M324,224 L348,115" marker-end="url(#l17-hex-arrow)"/>
-      <path class="edge" d="M324,230 L348,192" marker-end="url(#l17-hex-arrow)"/>
-      <path class="edge" d="M324,236 L348,268" marker-end="url(#l17-hex-arrow)"/>
-      <path class="edge" d="M264,250 L264,278" marker-end="url(#l17-hex-arrow)"/>
-      <path class="edge dashed" d="M518,110 L482,180" marker-end="url(#l17-hex-arrow)"/>
-      <path class="edge dashed" d="M518,280 L482,200" marker-end="url(#l17-hex-arrow)"/>
-      <text class="small muted" x="10" y="388">Solid: calls. Dashed: adapters implement the outbound ports. In the tests, fakes take the adapters' place.</text>
+      <path class="edge" d="M324,220 L348,84" marker-end="url(#l17-hex-arrow)"/>
+      <path class="edge" d="M324,226 L348,154" marker-end="url(#l17-hex-arrow)"/>
+      <path class="edge" d="M324,232 L348,222" marker-end="url(#l17-hex-arrow)"/>
+      <path class="edge" d="M324,242 L348,306" marker-end="url(#l17-hex-arrow)"/>
+      <path class="edge dashed" d="M518,110 L482,150" marker-end="url(#l17-hex-arrow)"/>
+      <path class="edge dashed" d="M518,280 L482,226" marker-end="url(#l17-hex-arrow)"/>
+      <path class="edge dashed" d="M440,388 L420,334" marker-end="url(#l17-hex-arrow)"/>
+      <text class="small muted" x="10" y="476">Solid: calls. Dashed: adapters implement the outbound ports. In the tests, fakes take the adapters' place.</text>
     </svg>
-    <figcaption>One inbound port, three outbound ports, six adapters, and one answer the app core already has.</figcaption>
+    <figcaption>One inbound port and four outbound ports: three answered by six platform adapters, one by a bridge adapter to the session.</figcaption>
   </figure>
   <ul class="legend">
     <li data-part="core">App core</li>
@@ -161,14 +166,14 @@ interface BluetoothProvider {
     <li data-part="ios">iOS adapters</li>
   </ul>
 
-  <h2>2. The status service: what the app core already knows</h2>
+  <h2>2. The status service: the app's rules for the status</h2>
   <figure class="excerpt" data-part="core">
     <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/StatusService.kt</figcaption>
 <pre><code><mark>class StatusService(</mark>
     private val battery: BatteryProvider,
     private val network: NetworkProvider,
     private val bluetooth: BluetoothProvider,
-<mark>    private val session: DeviceSession,</mark>
+<mark>    private val connection: ConnectionStatus,</mark>
 ) : StatusReport {
     override suspend fun current(): DeviceStatus {
         val net = network.current()
@@ -179,23 +184,138 @@ interface BluetoothProvider {
             wifiConnected = net.wifiConnected,
             cellularAvailable = net.cellularAvailable,
             bluetoothEnabled = bluetooth.isEnabled(),
-<mark>            bluetoothConnected = session.connectionState.value is ConnectionState.Connected,</mark>
+<mark>            bluetoothConnected = connection.current() is ConnectionState.Connected,</mark>
         )
     }
 }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>The Wi-Fi rule</strong> is the app's, not a platform's: a phone connected over Wi-Fi has Wi-Fi switched on. On iOS, where the adapter can't say whether Wi-Fi is on (section 4), this turns most <code>null</code>s into an honest <code>true</code>. Only "not connected, and the platform can't say" stays unknown. <code>aWifiConnectionMeansWifiIsOn</code> checks it; with the <code>?:</code> part removed it fails with "expected:&lt;true&gt; but was:&lt;null&gt;" (we tried).</li>
+    <li><strong>The Wi-Fi rule</strong> is the app's, not a platform's: a phone connected over Wi-Fi has Wi-Fi switched on. On iOS, where the adapter can't say whether Wi-Fi is on (section 5), this turns most <code>null</code>s into an honest <code>true</code>. Only "not connected, and the platform can't say" stays unknown. <code>aWifiConnectionMeansWifiIsOn</code> checks it; with the <code>?:</code> part removed it fails with "expected:&lt;true&gt; but was:&lt;null&gt;" (we tried).</li>
     <li><strong>"Bluetooth connected" is the session's to say.</strong> What a device monitor cares about is whether <em>this app</em> holds a link to its device, and Lesson 14 made <code>SessionService</code> the one owner of that state. Asking a platform instead wouldn't even give the same answer on both: CoreBluetooth's <code>retrieveConnectedPeripherals(withServices:)</code> "Retrieves all peripherals that are connected to the system and implement any of the services listed" (<code>CBCentralManager.h</code>), so it needs service UUIDs to search for, and it includes other apps' links.</li>
-    <li><strong>A service reading another capability's inbound port.</strong> <code>StatusService</code> takes <code>DeviceSession</code>, not <code>SessionService</code>, and reads <code>connectionState.value</code>, the <code>StateFlow</code> the detail screen already watches. It still touches no adapter: everything it knows comes through ports. Koin hands it the one session the app has (Lesson 14: "One session for the whole app").</li>
-    <li><strong><code>.value</code>, not a collection</strong>: a status is a snapshot, read once per call. Each call reads everything again, which is what "live" means here: <code>eachCallReadsAgain</code> checks it.</li>
+    <li><strong>But the service asks its own port.</strong> <code>StatusService</code> takes a fourth outbound port, <code>ConnectionStatus</code>, not <code>DeviceSession</code> and not <code>SessionService</code>. How the session's answer reaches that port is the next section.</li>
+    <li><strong>Connecting isn't connected.</strong> The port hands over the whole <code>ConnectionState</code>, and the rule "only an open link counts" is this line, in this service. <code>onlyAnOpenLinkCountsAsConnected</code> walks it through <code>Connecting</code>, <code>Connected</code> and <code>Disconnected</code>; with <code>!is ConnectionState.Disconnected</code> in place of <code>is ConnectionState.Connected</code> it fails (we tried).</li>
+    <li><strong>A snapshot, read once per call.</strong> Each call reads everything again, which is what "live" means here: <code>eachCallReadsAgain</code> checks it.</li>
   </ol>
   <div class="callout gotcha">
     <span class="label">Gotcha · you won't see "device connected" on the list screen yet</span>
-    The status line lives on the list screen, and leaving the detail screen clears its ViewModel, which ends the connection (Lesson 14). So whenever the list reads the status, no link is up. The rule is still right, and <code>bluetoothConnectedFollowsTheSession</code> proves it with each connection state. The record Lesson 18's monitor writes on a timer is where it starts to matter.
+    The status line lives on the list screen, and leaving the detail screen clears its ViewModel, which ends the connection (Lesson 14). So whenever the list reads the status, no link is up. The rule is still right, and <code>onlyAnOpenLinkCountsAsConnected</code> proves it with each connection state. The record Lesson 18's monitor writes on a timer is where it starts to matter.
   </div>
 
-  <h2>3. Android: three adapters, two install-time permissions</h2>
+  <h2>3. Services meet through a bridge adapter</h2>
+  <p>The status needs one fact the session holds. The shortest code would hand <code>StatusService</code> the session's inbound port and read <code>session.connectionState.value</code>. It compiles, and it breaks a rule every lesson since Lesson 10 has kept: a service calls outbound ports. The app's answer, from today on, is one sentence:</p>
+  <div class="callout">
+    <span class="label">The rule</span>
+    <strong>Services don't know each other.</strong> When one capability needs something another capability holds, its service asks through an outbound port named in its own terms, and a small <strong>bridge adapter</strong> in the shared code implements that port by calling the other capability's inbound port.
+  </div>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 410" role="img" aria-labelledby="l17-bridge-title">
+      <title id="l17-bridge-title">Two capabilities meet through a bridge adapter. On the left, the phone status: DeviceListViewModel calls the inbound port StatusReport, which StatusService implements, and StatusService calls its outbound port ConnectionStatus. On the right, the BLE session: DeviceDetailViewModel calls the inbound port DeviceSession, which SessionService implements, and SessionService calls its outbound port BleConnection, implemented by the radio adapters. Below the app core, in the shared code, the bridge adapter SessionConnectionStatus implements ConnectionStatus and calls DeviceSession. StatusService never sees DeviceSession or SessionService, and SessionService never sees the status.</title>
+      <defs><marker id="l17-bridge-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="inbound">
+        <rect class="box" x="40" y="14" width="200" height="40" rx="6"/>
+        <text class="mono small" x="52" y="39">DeviceListViewModel</text>
+        <rect class="box" x="520" y="14" width="200" height="40" rx="6"/>
+        <text class="mono small" x="532" y="39">DeviceDetailViewModel</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="20" y="80" width="720" height="220" rx="6"/>
+        <text class="title" x="320" y="104">App core</text>
+        <text class="small muted" x="40" y="104">phone status</text>
+        <text class="small muted" x="520" y="104">BLE session</text>
+      </g>
+      <g data-part="inbound">
+        <rect class="box" x="40" y="116" width="200" height="40" rx="6"/>
+        <text class="mono small" x="52" y="141">StatusReport</text>
+        <rect class="box" x="520" y="116" width="200" height="40" rx="6"/>
+        <text class="mono small" x="532" y="141">DeviceSession</text>
+      </g>
+      <g data-part="core">
+        <rect class="box" x="40" y="176" width="200" height="40" rx="6"/>
+        <text class="mono small" x="52" y="201">StatusService</text>
+        <rect class="box" x="520" y="176" width="200" height="40" rx="6"/>
+        <text class="mono small" x="532" y="201">SessionService</text>
+      </g>
+      <g data-part="outbound">
+        <rect class="box" x="40" y="236" width="200" height="40" rx="6"/>
+        <text class="mono small" x="52" y="261">ConnectionStatus</text>
+        <rect class="box" x="520" y="236" width="200" height="40" rx="6"/>
+        <text class="mono small" x="532" y="261">BleConnection</text>
+        <rect class="box" x="250" y="326" width="260" height="56" rx="6"/>
+        <text class="title small" x="262" y="348">SessionConnectionStatus</text>
+        <text class="small muted" x="262" y="369">bridge adapter, adapter/outbound</text>
+      </g>
+      <text class="small muted" x="250" y="196">no line between the</text>
+      <text class="small muted" x="250" y="212">two services</text>
+      <path class="edge" d="M140,54 L140,114" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge" d="M620,54 L620,114" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge" d="M140,156 L140,174" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge" d="M620,156 L620,174" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge" d="M140,216 L140,234" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge" d="M620,216 L620,234" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge dashed" d="M270,324 L200,280" marker-end="url(#l17-bridge-arrow)"/>
+      <path class="edge" d="M480,324 L518,142" marker-end="url(#l17-bridge-arrow)"/>
+      <text class="small muted" x="20" y="402">Solid: calls. Dashed: implements. The radio adapters behind BleConnection are left out.</text>
+    </svg>
+    <figcaption>The status asks its own port; the bridge answers it by asking the session's inbound port. Neither service knows the other.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">App core</li>
+    <li data-part="inbound">Inbound</li>
+    <li data-part="outbound">Outbound ports and adapters</li>
+  </ul>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/ConnectionStatus.kt</figcaption>
+<pre><code><mark>interface ConnectionStatus {</mark>
+    // Where the app's connection to a device stands right now.
+<mark>    fun current(): ConnectionState</mark>
+}</code></pre>
+  </figure>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SessionConnectionStatus.kt</figcaption>
+<pre><code><mark>class SessionConnectionStatus(private val session: DeviceSession) : ConnectionStatus {</mark>
+<mark>    override fun current(): ConnectionState = session.connectionState.value</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>A port in the asking service's terms.</strong> <code>ConnectionStatus</code> has the one call the status needs, in the app core's own model, <code>ConnectionState</code>. Its fake, <code>FakeConnectionStatus</code>, is one property and one method; a stand-in for <code>DeviceSession</code> would also need <code>connect</code>, <code>disconnect</code>, <code>services</code>, <code>read</code> and <code>subscribe</code> (<code>TestDeviceSession</code>, grown over Lessons 14–16, is 72 lines).</li>
+    <li><strong>The bridge holds no rules.</strong> It passes the session's state on as it is: what counts as connected stays in <code>StatusService</code> (section 2), and the connection-state machine stays in <code>SessionService</code> (Lesson 16). If a bridge ever seems to need an <code>if</code>, that rule belongs in one of the two services, where their tests can see it.</li>
+    <li><strong>An outbound adapter, in the shared code.</strong> It sits in <code>adapter/outbound</code> next to the simulated radio: an outbound adapter whose "outside world" is another capability. It touches no platform API, so one copy in <code>commonMain</code> serves both platforms.</li>
+    <li><strong>One definition widens.</strong> Lesson 10's table says inbound adapters call an inbound port; from today, a bridge adapter can too. Everything else still holds: every port is implemented by an adapter, and a service calls only outbound ports.</li>
+  </ol>
+  <p>Why not something nearer? Each of these is shorter or more familiar, and each breaks a rule the course leans on:</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Instead of the bridge</th><th>What it breaks</th></tr>
+    <tr><td><code>StatusService</code> takes <code>DeviceSession</code> and calls it directly</td><td>"A service calls outbound ports" stops being true, and the status depends on connect, read and subscribe to read one value; its test double grows with them.</td></tr>
+    <tr><td><code>SessionService</code> also implements <code>ConnectionStatus</code></td><td>An outbound port would be implemented by a service instead of an adapter, and "outbound" would no longer mean "outside this capability".</td></tr>
+    <tr><td>a small read-only inbound port on the session</td><td>An inbound port used only inside the app core is no longer "what the app offers".</td></tr>
+    <tr><td>a shared state holder in the app core that the session writes and the status reads</td><td>A new kind of thing in the app core, and "who may write it" lives only in convention.</td></tr>
+    <tr><td>domain events: the session publishes, other services subscribe</td><td>Built for reacting to things that happen, but the status needs the current state, so the bus would have to replay the latest event: a state flow with an extra layer. It also adds event, bus and publish/subscribe to the course's words.</td></tr>
+    <tr><td>the list ViewModel combines <code>StatusReport</code> and <code>DeviceSession</code></td><td>"Connected" would leave the app core's status, and Lesson 18's background monitor, which runs without any screen, would need the rule again somewhere else.</td></tr>
+  </table>
+  </div>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</figcaption>
+<pre><code><span class="elide">⋯  imports; appModule's other bindings</span>
+    // One session for the whole app: every screen sees the same connection state.
+<mark>    single&lt;DeviceSession&gt; { SessionService(get(), get()) }</mark>
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    single&lt;StatusReport&gt; { StatusService(get(), get(), get(), get()) }
+    // The bridge adapter: the status asks ConnectionStatus, and the one session answers.
+<mark>    single&lt;ConnectionStatus&gt; { SessionConnectionStatus(get()) }</mark></code></pre>
+  </figure>
+  <p>The bridge is bound in <code>appModule</code>, not in <code>platformModule</code>: it's shared code, so no platform builds it. Its <code>get()</code> finds the one <code>DeviceSession</code> the screens use, so the status reads the same connection the detail screen holds. Three tests cover the three parts:</p>
+  <ol class="walk">
+    <li><strong>The rule</strong>: <code>StatusServiceTest</code> builds the service with <code>FakeConnectionStatus</code> and sets each state (section 2).</li>
+    <li><strong>The bridge</strong>: <code>SessionConnectionStatusTest</code> drives it through the outbound port, the way <code>StatusService</code> calls it, with the <code>TestDeviceSession</code> from Lessons 14–16 behind it: every state the test sets comes back unchanged. A bridge that always answered <code>Disconnected</code> fails it.</li>
+    <li><strong>The wiring</strong>: <code>AppModuleTest</code> gains <code>theStatusSeesTheAppsOneSession</code>. It connects through the graph's <code>DeviceSession</code>, with <code>FakeBleConnection</code> answering, then asks the graph's <code>StatusReport</code>: <code>bluetoothConnected</code> must be <code>true</code>. With the bridge built on a second session, <code>SessionConnectionStatus(SessionService(get(), get()))</code>, it fails (we tried): that session never connects.</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · two graph tests on one module need close()</span>
+    Our first run of the new graph test failed with "Connecting needs the Bluetooth permission." although the test had granted it. <code>appModule</code> is one object, shared by every test, and Koin 4.2.2 keeps a <code>single</code>'s instance with its definition in the module (a <code>SingleInstanceFactory</code> holds the value), so the second test's <code>koinApplication</code> got the session the first test had built, with the first test's permission fake. Calling <code>app.close()</code> in an <code>@AfterTest</code> drops those instances; Koin's testing guide gives the same rule for <code>startKoin</code>: "Each test should start its own container and stop it at the end." Until now <code>AppModuleTest</code> held one test, so it never met this.
+  </div>
+
+  <h2>4. Android: three adapters, two install-time permissions</h2>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidStatusProviders.kt</figcaption>
 <pre><code>class AndroidBatteryProvider(context: Context) : BatteryProvider {
@@ -306,7 +426,7 @@ class AndroidBluetoothProvider(context: Context) : BluetoothProvider {
     Android's Read network state guide says "Using <code>NetworkCallback</code> and other ways of finding out about the connectivity state of the device doesn't require any particular permission." The API reference annotation and our crash say otherwise for <code>registerNetworkCallback</code>. When a guide and a method's own reference page disagree, trust the reference, then run it.
   </div>
 
-  <h2>4. iOS: three Swift adapters</h2>
+  <h2>5. iOS: three Swift adapters</h2>
   <p>On iOS the three status adapters are Swift classes in the iOS app implementing the Kotlin protocols, Lesson 12's pattern. They share one file, used by both iOS tracks:</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">iosApp/iosApp/IosStatusProviders.swift</figcaption>
@@ -357,7 +477,7 @@ final class IosNetworkProvider: @preconcurrency NetworkProvider {
   <ol class="walk">
     <li><strong>One monitor per kind of interface.</strong> <code>NWPathMonitor</code> is "An observer that you use to monitor and react to network changes"; <code>init(requiredInterfaceType:)</code> "Initializes a path monitor to observe a specific interface type"; <code>currentPath</code> is "The currently available network path observed by the path monitor"; and <code>start(queue:)</code> "Starts monitoring path changes" (<a href="https://developer.apple.com/documentation/network/nwpathmonitor">NWPathMonitor</a>). A <code>.satisfied</code> path over Wi-Fi means connected; over cellular, a cellular network the app can use. Like the Android adapter, it keeps listening and <code>current()</code> reads.</li>
     <li><strong>No "Wi-Fi switched on".</strong> An <code>NWPath</code> has a status, the interfaces it uses, gateways, and whether it's expensive or constrained, among other topics in Apple's reference, but no property that says whether the Wi-Fi radio is on. The nearest is <code>unsatisfiedReason</code>, whose <code>wifiDenied</code> case the header describes as "The user has disabled Wi-Fi"; but a reason comes only with an unsatisfied path, and "In many cases, the path may be unsatisfied with no reason available" (<code>path.h</code>), so it can't answer "on or off". So the adapter says <code>nil</code>, and section 2's rule fills in <code>true</code> whenever Wi-Fi is connected.</li>
-    <li><strong>On the Simulator</strong>, with our Mac on Wi-Fi, the Wi-Fi monitor was satisfied ("Wi-Fi connected") and the cellular one wasn't ("no cellular"). What an iPhone on Wi-Fi reports for cellular is a device check: don't assume it matches Android's answer in section 3.</li>
+    <li><strong>On the Simulator</strong>, with our Mac on Wi-Fi, the Wi-Fi monitor was satisfied ("Wi-Fi connected") and the cellular one wasn't ("no cellular"). What an iPhone on Wi-Fi reports for cellular is a device check: don't assume it matches Android's answer in section 4.</li>
   </ol>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">iosApp/iosApp/IosStatusProviders.swift</figcaption>
@@ -412,9 +532,9 @@ final class IosNetworkProvider: @preconcurrency NetworkProvider {
   </figure>
   </div>
   </div>
-  <p><code>IosStatusProviders.swift</code> is a new file, so run <code>xcodegen generate</code> in <code>iosApp/</code> (Lesson 13): <code>project.yml</code> lists the folder, not the files. In <code>di/AppModule.kt</code>, <code>initKoin</code> and <code>platformModule</code> take the three new adapters, and <code>appModule</code> gains <code>single&lt;StatusReport&gt; { StatusService(get(), get(), get(), get()) }</code>. Lesson 11's graph test already asks for <code>DeviceListViewModel</code>, which now needs a <code>StatusReport</code>, so a missing binding fails it.</p>
+  <p><code>IosStatusProviders.swift</code> is a new file, so run <code>xcodegen generate</code> in <code>iosApp/</code> (Lesson 13): <code>project.yml</code> lists the folder, not the files. In <code>di/AppModule.kt</code>, <code>initKoin</code> and <code>platformModule</code> take the three new adapters, and <code>appModule</code> gains <code>single&lt;StatusReport&gt; { StatusService(get(), get(), get(), get()) }</code> and section 3's bridge. Lesson 11's graph test already asks for <code>DeviceListViewModel</code>, which now needs a <code>StatusReport</code>, so a missing binding fails it.</p>
 
-  <h2>5. One line on the list screen</h2>
+  <h2>6. One line on the list screen</h2>
   <p>The list ViewModel gets the inbound port and turns each <code>DeviceStatus</code> into one line of text, the same on every track:</p>
   <figure class="excerpt" data-part="inbound">
     <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/inbound/DeviceListViewModel.kt</figcaption>
@@ -520,7 +640,7 @@ private fun PhoneStatusRow(text: String, onRefresh: () -&gt; Unit) {
   <div data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>The same row in both: text that takes the spare width, and a borderless Refresh button. Compose says it with <code>Modifier.weight(1f)</code> in a <code>Row</code>; XML with <code>layout_weight="1"</code> and <code>layout_width="0dp"</code> in a horizontal <code>LinearLayout</code>. Both refresh on resume, which on both comes back after the detail screen.</div>
   <div data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>SwiftUI needs two hooks, <code>onAppear</code> and <code>scenePhase</code>; UIKit the same two, <code>viewWillAppear</code> and the scene notification it already observed. UIKit also needs the hugging and compression priorities that SwiftUI's frame modifier makes unnecessary.</div>
 
-  <h2>6. The log store: a port, and a file format</h2>
+  <h2>7. The log store: a port, and a file format</h2>
   <p>A monitor that reads the status every few minutes needs somewhere to keep each reading, across launches. In the app's terms that's an outbound port with three calls:</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/LogStore.kt</figcaption>
@@ -645,7 +765,7 @@ interface LogStore {
   </ol>
   <p>The plugin goes into <code>shared/build.gradle.kts</code> as <code>id("org.jetbrains.kotlin.plugin.serialization")</code>, next to <code>implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")</code> in <code>commonMain</code>. The Compose track's root <code>build.gradle.kts</code> already declares the plugin, <code>version "2.4.20" apply false</code>, for Lesson 07's navigation routes; the XML track's root file gains that one line, or Gradle can't find the plugin.</p>
 
-  <h2>7. Android: java.io and a lock</h2>
+  <h2>8. Android: java.io and a lock</h2>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidLogStore.kt</figcaption>
 <pre><code><mark>class AndroidLogStore(private val file: File) : LogStore {</mark>
@@ -674,7 +794,7 @@ interface LogStore {
     <li><strong>Lesson 15's <code>Mutex</code></strong> again: two appends at once on a thread pool could interleave their bytes. Holding the lock around each whole call keeps every line whole.</li>
   </ol>
 
-  <h2>8. iOS: Kotlin calling Foundation</h2>
+  <h2>9. iOS: Kotlin calling Foundation</h2>
   <p>Every iOS adapter so far did its platform work in Swift; their Kotlin halves in <code>iosMain</code> build the <code>Flow</code>s and pass calls across. The log store needs nothing a Swift class does better: no delegate, no main thread, just files. And in Kotlin it shares <code>JsonLines</code> with Android and runs in <code>iosSimulatorArm64Test</code> from Gradle. Lesson 05 showed the idea in one line, <code>import platform.UIKit.UIDevice</code>: Kotlin/Native ships Apple's frameworks as Kotlin packages, and "system frameworks are imported by default" (<a href="https://kotlinlang.org/docs/native-objc-interop.html">Interoperability with Swift/Objective-C</a>).</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosLogStore.kt</figcaption>
@@ -766,7 +886,7 @@ interface LogStore {
   </div>
   <p><code>read()</code> uses <code>NSString.stringWithContentsOfFile(path, NSUTF8StringEncoding, error.ptr)</code> and hands the text to <code>JsonLines.decode</code>; <code>clear()</code> uses <code>removeItemAtPath(path, error.ptr)</code>. Both return early when <code>fileExistsAtPath</code> says there's no file: an empty log isn't an error.</p>
 
-  <h2>9. Tests: one contract, two platforms</h2>
+  <h2>10. Tests: one contract, two platforms</h2>
   <p>The status service is tested like Lesson 11's services, through its inbound port with fakes behind its outbound ports. The log store's adapters can't be faked away, because they <em>are</em> the code under test, so they're tested on real files: once on each platform, from one set of tests.</p>
   <figure class="excerpt" data-part="inbound">
     <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/outbound/LogStoreContract.kt</figcaption>
@@ -797,19 +917,19 @@ interface LogStore {
     <li><strong>The iOS half runs in the simulator</strong>, against the real iOS file system: Gradle's <code>iosSimulatorArm64Test</code> runs the test binary there. That's the other reason the iOS adapter is Kotlin: a Swift adapter can't run in Gradle's tests, and this project has no Xcode test target.</li>
     <li><strong>A file error, on purpose.</strong> <code>storeWhereAFileBlocksTheFolder</code> makes a file named <code>logs</code> and asks for <code>logs/status-log.jsonl</code>. Apple: the folder call "also fails if any of the intermediate path elements corresponds to a file and not a directory"; <code>java.io</code> fails to open the file. Both must end as <code>LogStoreException</code>.</li>
   </ol>
-  <p>The other new tests: <code>StatusServiceTest</code> (5) uses <code>FakeBatteryProvider</code>, <code>FakeNetworkProvider</code> and <code>FakeBluetoothProvider</code> (one small file, <code>doubles/FakeStatusProviders.kt</code>), with <code>TestDeviceSession</code> from Lesson 14 setting the connection state. <code>JsonLinesTest</code> (4) checks the exact line, <code>null</code>s both ways, order, and the line number in the error. <code>DeviceListViewModelTest</code> gains 3, with <code>TestStatusReport</code>, a test implementation of the inbound port. Mutation checks we ran: removing the Wi-Fi rule fails <code>aWifiConnectionMeansWifiIsOn</code>; removing the seek or the folder call fails the iOS contract tests (section 8).</p>
+  <p>The other new tests: <code>StatusServiceTest</code> (5) uses <code>FakeBatteryProvider</code>, <code>FakeNetworkProvider</code> and <code>FakeBluetoothProvider</code> (one small file, <code>doubles/FakeStatusProviders.kt</code>), with <code>FakeConnectionStatus</code> setting the connection state; <code>SessionConnectionStatusTest</code> (1) and the second <code>AppModuleTest</code> are in section 3. <code>JsonLinesTest</code> (4) checks the exact line, <code>null</code>s both ways, order, and the line number in the error. <code>DeviceListViewModelTest</code> gains 3, with <code>TestStatusReport</code>, a test implementation of the inbound port. Mutation checks we ran: removing the Wi-Fi rule fails <code>aWifiConnectionMeansWifiIsOn</code>; removing the seek or the folder call fails the iOS contract tests (section 9).</p>
 
-  <h2>10. What actually happens</h2>
-  <p>We built m12 on all four tracks (Kotlin 2.4.20, SKIE 0.10.15, kotlinx.serialization 1.12.0, Xcode 26.2). <code>allTests</code> passed 85 of 85 on the JVM and 85 of 85 on the iOS simulator, with no compiler warning from our code.</p>
+  <h2>11. What actually happens</h2>
+  <p>We built m12 on all four tracks (Kotlin 2.4.20, SKIE 0.10.15, kotlinx.serialization 1.12.0, Xcode 26.2). <code>allTests</code> passed 87 of 87 on the JVM and 87 of 87 on the iOS simulator, with no compiler warning from our code.</p>
   <div class="table-wrap">
   <table>
     <tr><th>Run</th><th>What we saw</th></tr>
     <tr><td>Android API 36 emulator, Compose and XML, launch</td><td>"Battery 77 % · Wi-Fi connected · no cellular · Bluetooth on" under the title (the XML button reads REFRESH)</td></tr>
     <tr><td>the same, then <code>adb emu power capacity 47</code>, <code>adb shell svc wifi disable</code>, <code>adb shell cmd bluetooth_manager disable</code>, Refresh</td><td>"Battery 47 % · Wi-Fi off · cellular available · Bluetooth off"; nothing changed before Refresh</td></tr>
-    <tr><td>Wi-Fi and Bluetooth back on, Refresh after 6 s, then after 46 s</td><td>"… Wi-Fi connected · cellular available …", then "… Wi-Fi connected · no cellular …" (section 3's diagram). The first answer depends on timing: in a later run, "no cellular" came within 6 s of Wi-Fi connecting</td></tr>
+    <tr><td>Wi-Fi and Bluetooth back on, Refresh after 6 s, then after 46 s</td><td>"… Wi-Fi connected · cellular available …", then "… Wi-Fi connected · no cellular …" (section 4's diagram). The first answer depends on timing: in a later run, "no cellular" came within 6 s of Wi-Fi connecting</td></tr>
     <tr><td>Home, change the battery level and Bluetooth, open the app again</td><td>the new values without Refresh (<code>ON_RESUME</code> / <code>onResume</code>)</td></tr>
     <tr><td>Android API 30 emulator, Compose, launch</td><td>"Battery 100 % · Wi-Fi connected · no cellular · Bluetooth on"</td></tr>
-    <tr><td>API 36, the manifest without <code>ACCESS_NETWORK_STATE</code> / without <code>ACCESS_WIFI_STATE</code></td><td>a crash at launch with a <code>SecurityException</code> naming the missing permission (section 3)</td></tr>
+    <tr><td>API 36, the manifest without <code>ACCESS_NETWORK_STATE</code> / without <code>ACCESS_WIFI_STATE</code></td><td>a crash at launch with a <code>SecurityException</code> naming the missing permission (section 4)</td></tr>
     <tr><td>iOS 26.2 Simulator, SwiftUI and UIKit (XCUITest), fresh install, launch</td><td>"Battery unknown · Wi-Fi connected · no cellular · Bluetooth unknown", and no system alert. The same after Refresh, and after allowing Bluetooth</td></tr>
   </table>
   </div>
@@ -825,11 +945,31 @@ interface LogStore {
     <p class="q">Where does "Bluetooth connected" in <code>DeviceStatus</code> come from?</p>
     <div class="opts">
       <button class="opt">from <code>BluetoothProvider</code>, which asks the OS for connected devices</button>
-      <button class="opt" data-correct>from the session: <code>StatusService</code> reads <code>DeviceSession.connectionState.value</code> and checks for <code>Connected</code></button>
+      <button class="opt" data-correct>from the session, through <code>StatusService</code>'s own <code>ConnectionStatus</code> port, which the bridge adapter answers from <code>DeviceSession.connectionState</code>; the service checks for <code>Connected</code></button>
       <button class="opt">from the list ViewModel, which remembers the last connection</button>
     </div>
     <p class="feedback"></p>
     <p class="why">It means "this app holds a link", and the session service owns that state. iOS can only list connected peripherals for service UUIDs you name, including other apps' links, so a platform answer wouldn't mean the same on both.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">A new capability's service needs one fact that another capability's service holds. What does the new service depend on?</p>
+    <div class="opts">
+      <button class="opt">the other capability's inbound port, since it's already "what the app offers"</button>
+      <button class="opt">the other service's class, so it can read the state directly</button>
+      <button class="opt" data-correct>an outbound port of its own, named in its own terms, which a bridge adapter in the shared code implements by calling the other capability's inbound port</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Services don't know each other: a service calls only outbound ports, and every port is implemented by an adapter. The bridge is that adapter, and it holds no rules.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why doesn't <code>SessionService</code> simply implement <code>ConnectionStatus</code> as well, and save the bridge file?</p>
+    <div class="opts">
+      <button class="opt" data-correct>an outbound port would then be implemented by a service, not an adapter, and "outbound" would no longer mean "outside this capability"</button>
+      <button class="opt">Koin can't bind one class to two interfaces</button>
+      <button class="opt">a Kotlin class can implement only one interface</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The bridge keeps both definitions true. The other near options break a rule too: a direct call breaks "a service calls outbound ports", a shared holder leaves "who may write" to convention, and domain events would need replay to give the current state.</p>
   </div>
   <div class="quiz mcq">
     <p class="q">On the API 36 emulator, <code>dumpsys connectivity</code> still lists a connected cellular network, but a minute after Wi-Fi came back the status says "no cellular". Why?</p>
@@ -900,6 +1040,7 @@ interface LogStore {
     <ol>
       <li><strong>Predict, then watch.</strong> On the emulator, write down what the status line will say after each step, then do it and tap Refresh: <code>adb shell svc wifi disable</code>; <code>adb emu power capacity 5</code>; <code>adb shell svc wifi enable</code> (Refresh at once, then again a minute later); <code>adb shell cmd bluetooth_manager disable</code>. Which line of which adapter explains each answer?</li>
       <li><strong>Test first: a low battery.</strong> Add <code>val batteryLow: Boolean</code> to <code>DeviceStatus</code>, true at 15 % or less, false when the level is unknown. Which file holds the rule, and why not the adapters? Write <code>aBatteryAt15PercentIsLow</code> and <code>anUnknownBatteryIsNotLow</code> in <code>StatusServiceTest</code>, watch them fail, then make them pass. What else had to change to compile, and did <code>JsonLinesTest</code> notice?</li>
+      <li><strong>Through the bridge.</strong> Add <code>connectedDevice: String?</code> to <code>DeviceStatus</code>: the device's name while the app holds a link, <code>null</code> otherwise (connecting included). Write <code>namesTheDeviceOnlyWhileConnected</code> in <code>StatusServiceTest</code> with <code>FakeConnectionStatus</code> first. Did <code>ConnectionStatus</code> or <code>SessionConnectionStatus</code> have to change? If you were tempted to put the <code>if</code> in the bridge, which service should hold it instead, and which test would have missed it?</li>
       <li><strong>A change no test catches.</strong> In <code>AndroidLogStore.append</code>, delete <code>file.parentFile?.mkdirs()</code>. Predict which contract tests fail, then run <code>./gradlew :shared:testAndroidHostTest</code>. Why does nothing fail? Add a contract test that would have caught it (hint: <code>storeAt</code> takes a file name, and a name can contain a folder), watch it fail on the JVM, restore the line, and run it on iOS too: which line of <code>IosLogStore</code> makes it pass there?</li>
       <li><strong>Read the Objective-C.</strong> Open <code>NSFileManager.h</code> in Xcode (Open Quickly, ⇧⌘O) and find <code>removeItemAtPath:error:</code>. Write its Kotlin call from memory, with the <code>memScoped</code> block, and compare with <code>clear()</code>.</li>
       <li><strong>On your phones</strong>: compare the status line with the system's battery percentage, then turn Bluetooth off in the system controls and come back to the app. On the iPhone, before you allow Bluetooth on a fresh install, what does the line say, and does any prompt appear? With Wi-Fi on and mobile data on, what does each phone say about cellular?</li>
@@ -925,8 +1066,9 @@ except where the brief below says otherwise.
 Lesson 17 (Device status and the log store): build milestone m12 on top of m11: the StatusReport
 inbound port (current(): DeviceStatus), implemented by StatusService over three outbound ports,
 BatteryProvider, NetworkProvider and BluetoothProvider (Kotlin adapters in androidMain, Swift
-adapters in IosStatusProviders.swift), with "Bluetooth connected" read from DeviceSession; one
-line of phone status with a Refresh button on the list screen; and a LogStore outbound port
+adapters in IosStatusProviders.swift), with "Bluetooth connected" read through a fourth outbound
+port, ConnectionStatus, that a bridge adapter in commonMain, SessionConnectionStatus, answers from
+DeviceSession (StatusService knows no other service or inbound port); one line of phone status with a Refresh button on the list screen; and a LogStore outbound port
 (append / read / clear, LogStoreException) with JSON Lines adapters: AndroidLogStore (java.io,
 androidMain) and IosLogStore (Kotlin over Foundation, iosMain), sharing JsonLines
 (kotlinx.serialization), tested by one LogStoreContract on the JVM and in the iOS simulator.
@@ -944,15 +1086,17 @@ paths are relative to demo/. Touch no file that isn't listed here.
      add: core/DeviceStatus.kt, core/LogRecord.kt, core/LogStoreException.kt,
        core/StatusService.kt, core/inbound/StatusReport.kt, core/outbound/BatteryProvider.kt,
        core/outbound/NetworkProvider.kt, core/outbound/BluetoothProvider.kt,
-       core/outbound/LogStore.kt, adapter/outbound/JsonLines.kt
+       core/outbound/ConnectionStatus.kt, core/outbound/LogStore.kt,
+       adapter/outbound/SessionConnectionStatus.kt, adapter/outbound/JsonLines.kt
      replaced: adapter/inbound/DeviceListUiState.kt, adapter/inbound/DeviceListViewModel.kt,
        di/AppModule.kt
    Under shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/:
      add: AndroidStatusProviders.kt, AndroidLogStore.kt
    add: shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/IosLogStore.kt
    Under shared/src/commonTest/kotlin/com/example/devicemonitor/:
-     add: doubles/FakeStatusProviders.kt, doubles/TestStatusReport.kt,
-       core/StatusServiceTest.kt, adapter/outbound/JsonLinesTest.kt,
+     add: doubles/FakeStatusProviders.kt, doubles/FakeConnectionStatus.kt,
+       doubles/TestStatusReport.kt, core/StatusServiceTest.kt,
+       adapter/outbound/SessionConnectionStatusTest.kt, adapter/outbound/JsonLinesTest.kt,
        adapter/outbound/LogStoreContract.kt
      replaced: adapter/inbound/DeviceListViewModelTest.kt, di/AppModuleTest.kt
    add (new test source set folders, no build change needed):
@@ -991,11 +1135,11 @@ paths are relative to demo/. Touch no file that isn't listed here.
 
 Acceptance checks (run every one you can, on an emulator and a simulator):
 - ./gradlew :shared:allTests runs BOTH testAndroidHostTest and iosSimulatorArm64Test (show me
-  the task lines), and all 85 tests pass on each: 24 in SessionServiceTest, 13 in
+  the task lines), and all 87 tests pass on each: 24 in SessionServiceTest, 13 in
   DeviceDetailViewModelTest, 10 in DeviceListViewModelTest, 8 in ValueDecoderTest, 8 in
   ScanningServiceTest, 5 in StatusServiceTest, 4 in JsonLinesTest, 4 in PermissionServiceTest,
-  3 in DeviceServiceTest, 1 in AppModuleTest, and 5 in AndroidLogStoreTest (JVM results) or
-  5 in IosLogStoreTest (iOS results). Show the counts from the XML files in
+  3 in DeviceServiceTest, 2 in AppModuleTest, 1 in SessionConnectionStatusTest, and 5 in
+  AndroidLogStoreTest (JVM results) or 5 in IosLogStoreTest (iOS results). Show the counts from the XML files in
   shared/build/test-results/.
 - All builds succeed with no compiler warnings (w: / warning:) from our own Kotlin or Swift
   code, test code included (never use -q: it hides w: lines; read the output). Not from our
@@ -1006,6 +1150,8 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   destinations", and Gradle's "The Daemon will expire …". Xcode "note:" lines are not warnings.
 - The app core stays platform-free and format-free:
     grep -rn 'import android\|import platform\.\|import org.koin\|import kotlinx.serialization' shared/src/commonMain/kotlin/com/example/devicemonitor/core
+  finds nothing, and services don't know each other:
+    grep -n 'DeviceSession\|SessionService' shared/src/commonMain/kotlin/com/example/devicemonitor/core/StatusService.kt
   finds nothing. In the exported header (build it first with
   ./gradlew :shared:linkDebugFrameworkIosSimulatorArm64):
     grep -c 'doInitKoin(permissionChecker:bleScanner:bleConnection:batteryProvider:networkProvider:bluetoothProvider:)' shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h
@@ -1015,7 +1161,7 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   1. Make sure Wi-Fi and Bluetooth are on (adb shell svc wifi enable; adb shell cmd
      bluetooth_manager enable) and adb emu power capacity 77, then launch: under the title,
      "Battery 77 % · Wi-Fi connected · … · Bluetooth on" (the cellular part depends on how long
-     Wi-Fi has been up: section 3), next to a Refresh button.
+     Wi-Fi has been up: section 4), next to a Refresh button.
   2. adb emu power capacity 47; adb shell svc wifi disable; adb shell cmd bluetooth_manager
      disable; wait 5 s: the line hasn't changed. Tap Refresh: "Battery 47 % · Wi-Fi off ·
      cellular available · Bluetooth off".
@@ -1049,7 +1195,8 @@ Do NOT do the unaided exercise for me.</pre>
     <li>Kotlin/Native: <a href="https://kotlinlang.org/docs/native-objc-interop.html">Interoperability with Swift/Objective-C</a> (system frameworks imported by default; Objective-C errors aren't imported as exceptions) and <a href="https://kotlinlang.org/docs/native-c-interop.html">Interoperability with C</a> (<code>memScoped</code>, <code>alloc</code>, <code>.ptr</code>, <code>.value</code>).</li>
     <li>Kotlin: <a href="https://kotlinlang.org/api/core/kotlin-stdlib/kotlin.time/-instant/">kotlin.time.Instant</a>, <a href="https://kotlinlang.org/docs/serialization.html">Serialization</a> with <a href="https://kotlinlang.org/api/kotlinx.serialization/kotlinx-serialization-json/kotlinx.serialization.json/-json-builder/explicit-nulls.html">explicitNulls</a> and <a href="https://kotlinlang.org/api/kotlinx.serialization/kotlinx-serialization-core/kotlinx.serialization/-serialization-exception/">SerializationException</a>, and <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/-i-o.html">Dispatchers.IO</a>.</li>
     <li>The format: <a href="https://jsonlines.org/">JSON Lines</a>.</li>
-    <li><a href="../reference/architecture-di-testing-cheatsheet.html">Cheatsheet: architecture, DI and testing</a>: the hexagon's placement rules, Koin bindings and fakes that this lesson's new ports and tests follow.</li>
+    <li><a href="../reference/architecture-di-testing-cheatsheet.html">Cheatsheet: architecture, DI and testing</a>: the hexagon's placement rules (now with "services don't know each other" and the bridge adapter), Koin bindings and fakes that this lesson's new ports and tests follow.</li>
+    <li>Koin: <a href="https://insert-koin.io/docs/reference/koin-test/testing">Testing</a> ("Each test should start its own container and stop it at the end"), for section 3's gotcha.</li>
     <li>Wisdom: Kotlin Slack's #multiplatform channel for Kotlin/Native interop questions; Stack Overflow's <a href="https://stackoverflow.com/questions/tagged/kotlin-native">kotlin-native</a> tag.</li>
   </ul>
 
@@ -1068,7 +1215,7 @@ data class DeviceStatus(
     val wifiConnected: Boolean,
     val cellularAvailable: Boolean, // a cellular network is up that this app can use
     val bluetoothEnabled: Boolean?,
-    val bluetoothConnected: Boolean, // this app holds a link to a device (DeviceSession)
+    val bluetoothConnected: Boolean, // this app holds a link to a device (ConnectionStatus)
 )
 
 // What NetworkProvider reports: the network half of DeviceStatus.
@@ -1146,6 +1293,20 @@ interface BluetoothProvider {
 }</code></pre>
     </details>
     <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/ConnectionStatus.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import com.example.devicemonitor.core.ConnectionState
+
+// Outbound port: what the status needs to know about the app's own link to a device. It's
+// answered inside the app, by a bridge adapter to the session (SessionConnectionStatus), so
+// StatusService never knows DeviceSession or SessionService.
+interface ConnectionStatus {
+    // Where the app's connection to a device stands right now.
+    fun current(): ConnectionState
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
       <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/LogStore.kt</summary>
 <pre><code>package com.example.devicemonitor.core.outbound
 
@@ -1171,20 +1332,20 @@ interface LogStore {
       <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/StatusService.kt</summary>
 <pre><code>package com.example.devicemonitor.core
 
-import com.example.devicemonitor.core.inbound.DeviceSession
 import com.example.devicemonitor.core.inbound.StatusReport
 import com.example.devicemonitor.core.outbound.BatteryProvider
 import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
 import com.example.devicemonitor.core.outbound.NetworkProvider
 
 // Service: the phone's status, from the three providers and from what the app core already
-// knows. "Bluetooth connected" means this app holds a link to a device, and that is the
-// session's to say, not a platform's.
+// knows. "Bluetooth connected" means this app holds a link to a device: the session's to say,
+// not a platform's, so it asks through its own ConnectionStatus port, never the session itself.
 class StatusService(
     private val battery: BatteryProvider,
     private val network: NetworkProvider,
     private val bluetooth: BluetoothProvider,
-    private val session: DeviceSession,
+    private val connection: ConnectionStatus,
 ) : StatusReport {
     override suspend fun current(): DeviceStatus {
         val net = network.current()
@@ -1195,7 +1356,7 @@ class StatusService(
             wifiConnected = net.wifiConnected,
             cellularAvailable = net.cellularAvailable,
             bluetoothEnabled = bluetooth.isEnabled(),
-            bluetoothConnected = session.connectionState.value is ConnectionState.Connected,
+            bluetoothConnected = connection.current() is ConnectionState.Connected,
         )
     }
 }</code></pre>
@@ -1252,6 +1413,21 @@ internal object JsonLines {
                 throw LogStoreException("Line ${index + 1} of the log isn't a record: ${e.message}")
             }
         }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/SessionConnectionStatus.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+
+// Bridge adapter: implements the status's ConnectionStatus port by calling the session's inbound
+// port, so the two services never know each other. It only passes the answer on: what counts as
+// "connected" is StatusService's rule, and the state itself is SessionService's.
+class SessionConnectionStatus(private val session: DeviceSession) : ConnectionStatus {
+    override fun current(): ConnectionState = session.connectionState.value
 }</code></pre>
     </details>
     <details class="full-file" data-part="inbound">
@@ -1407,6 +1583,7 @@ class DeviceListViewModel(
 
 import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
 import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.outbound.SessionConnectionStatus
 import com.example.devicemonitor.core.PermissionService
 import com.example.devicemonitor.core.ScanningService
 import com.example.devicemonitor.core.SessionService
@@ -1419,6 +1596,7 @@ import com.example.devicemonitor.core.outbound.BatteryProvider
 import com.example.devicemonitor.core.outbound.BleConnection
 import com.example.devicemonitor.core.outbound.BleScanner
 import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
 import com.example.devicemonitor.core.outbound.NetworkProvider
 import com.example.devicemonitor.core.outbound.PermissionChecker
 import org.koin.core.context.startKoin
@@ -1433,6 +1611,8 @@ internal val appModule = module {
     single&lt;DeviceSession&gt; { SessionService(get(), get()) }
     single&lt;PermissionAccess&gt; { PermissionService(get()) }
     single&lt;StatusReport&gt; { StatusService(get(), get(), get(), get()) }
+    // The bridge adapter: the status asks ConnectionStatus, and the one session answers.
+    single&lt;ConnectionStatus&gt; { SessionConnectionStatus(get()) }
     viewModelOf(::DeviceListViewModel)
     viewModelOf(::DeviceDetailViewModel)
 }
@@ -1722,6 +1902,21 @@ class FakeBluetoothProvider : BluetoothProvider {
     override suspend fun isEnabled(): Boolean? = enabled
 }</code></pre>
     </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/FakeConnectionStatus.kt</summary>
+<pre><code>package com.example.devicemonitor.doubles
+
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+
+// Fake: an outbound adapter written for tests, behind the ConnectionStatus port. The test plays
+// the session: it sets where the connection stands.
+class FakeConnectionStatus : ConnectionStatus {
+    var state: ConnectionState = ConnectionState.Disconnected
+
+    override fun current(): ConnectionState = state
+}</code></pre>
+    </details>
     <details class="full-file" data-part="inbound">
       <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/doubles/TestStatusReport.kt</summary>
 <pre><code>package com.example.devicemonitor.doubles
@@ -1752,8 +1947,8 @@ class TestStatusReport : StatusReport {
 import com.example.devicemonitor.core.inbound.StatusReport
 import com.example.devicemonitor.doubles.FakeBatteryProvider
 import com.example.devicemonitor.doubles.FakeBluetoothProvider
+import com.example.devicemonitor.doubles.FakeConnectionStatus
 import com.example.devicemonitor.doubles.FakeNetworkProvider
-import com.example.devicemonitor.doubles.TestDeviceSession
 import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -1766,10 +1961,10 @@ class StatusServiceTest {
     private val battery = FakeBatteryProvider()
     private val network = FakeNetworkProvider()
     private val bluetooth = FakeBluetoothProvider()
-    private val session = TestDeviceSession() // the session's state is set by the test
+    private val connection = FakeConnectionStatus() // where the app's link stands is set by the test
 
     // Through the inbound port, as the ViewModel calls it.
-    private val status: StatusReport = StatusService(battery, network, bluetooth, session)
+    private val status: StatusReport = StatusService(battery, network, bluetooth, connection)
 
     @Test
     fun reportsWhatTheProvidersSay() = runTest {
@@ -1805,14 +2000,14 @@ class StatusServiceTest {
     }
 
     @Test
-    fun bluetoothConnectedFollowsTheSession() = runTest {
-        session.connectionState.value = ConnectionState.Connecting(obd)
+    fun onlyAnOpenLinkCountsAsConnected() = runTest {
+        connection.state = ConnectionState.Connecting(obd)
         assertFalse(status.current().bluetoothConnected)
 
-        session.connectionState.value = ConnectionState.Connected(obd)
+        connection.state = ConnectionState.Connected(obd)
         assertTrue(status.current().bluetoothConnected)
 
-        session.connectionState.value = ConnectionState.Disconnected
+        connection.state = ConnectionState.Disconnected
         assertFalse(status.current().bluetoothConnected)
     }
 
@@ -1823,6 +2018,39 @@ class StatusServiceTest {
 
         battery.percent = 81
         assertEquals(81, status.current().battery)
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/outbound/SessionConnectionStatusTest.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+import com.example.devicemonitor.doubles.TestDeviceSession
+import kotlin.test.Test
+import kotlin.test.assertEquals
+
+class SessionConnectionStatusTest {
+    private val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+    private val session = TestDeviceSession() // the session's state is set by the test
+
+    // Through the outbound port, as StatusService calls it.
+    private val connection: ConnectionStatus = SessionConnectionStatus(session)
+
+    @Test
+    fun answersWithTheSessionsStateAtEachCall() {
+        val states = listOf(
+            ConnectionState.Disconnected,
+            ConnectionState.Connecting(obd),
+            ConnectionState.Connected(obd),
+            ConnectionState.Disconnected,
+        )
+        for (state in states) {
+            session.connectionState.value = state
+            assertEquals(state, connection.current())
+        }
     }
 }</code></pre>
     </details>
@@ -2217,34 +2445,67 @@ class DeviceListViewModelTest {
 
 import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
 import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.Permission
+import com.example.devicemonitor.core.PermissionStatus
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.inbound.StatusReport
 import com.example.devicemonitor.doubles.FakeBatteryProvider
 import com.example.devicemonitor.doubles.FakeBleConnection
 import com.example.devicemonitor.doubles.FakeBleScanner
 import com.example.devicemonitor.doubles.FakeBluetoothProvider
 import com.example.devicemonitor.doubles.FakeNetworkProvider
 import com.example.devicemonitor.doubles.FakePermissionChecker
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import org.koin.dsl.koinApplication
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 class AppModuleTest {
+    // Fakes stand in for the adapters each platform passes to initKoin.
+    private val radio = FakeBleConnection()
+    private val os = FakePermissionChecker()
+    private val app = koinApplication {
+        modules(
+            appModule,
+            platformModule(
+                os, FakeBleScanner(), radio,
+                FakeBatteryProvider(), FakeNetworkProvider(), FakeBluetoothProvider(),
+            ),
+        )
+    }
+    private val koin = app.koin
+
+    // A single's instance is kept in the module, and appModule is one object for every test:
+    // without close(), the next test's koinApplication would get this test's session.
+    @AfterTest
+    fun closeKoin() {
+        app.close()
+    }
+
     // Koin checks the graph only when something asks for an instance, at run time. This
     // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
-    // Fakes stand in for the adapters each platform passes to initKoin.
     @Test
     fun buildsEveryViewModel() {
-        val koin = koinApplication {
-            modules(
-                appModule,
-                platformModule(
-                    FakePermissionChecker(), FakeBleScanner(), FakeBleConnection(),
-                    FakeBatteryProvider(), FakeNetworkProvider(), FakeBluetoothProvider(),
-                ),
-            )
-        }.koin
-
         assertNotNull(koin.get&lt;DeviceListViewModel&gt;())
         assertNotNull(koin.get&lt;DeviceDetailViewModel&gt;())
+    }
+
+    // The bridge must reach the session the screens connect through, not a second one.
+    @Test
+    fun theStatusSeesTheAppsOneSession() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Granted
+        val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+        val call = launch { koin.get&lt;DeviceSession&gt;().connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        assertTrue(koin.get&lt;StatusReport&gt;().current().bluetoothConnected)
+        call.cancelAndJoin()
     }
 }</code></pre>
     </details>

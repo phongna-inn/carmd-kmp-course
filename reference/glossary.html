@@ -182,7 +182,7 @@
     <dt><strong>App core</strong></dt>
     <dd>The part of the shared code that holds the app's models, ports and services, and imports nothing from Android, iOS or any framework (only Kotlin's standard library and kotlinx.coroutines). Package <code>core</code>. (10)</dd>
     <dt><strong>Inbound port</strong></dt>
-    <dd>An interface for what the app offers, one per capability (<code>DeviceScanning</code>), implemented by a service and called by inbound adapters. Package <code>core.inbound</code>. Elsewhere: driving or primary port, input boundary. (10)</dd>
+    <dd>An interface for what the app offers, one per capability (<code>DeviceScanning</code>), implemented by a service and called by inbound adapters and by bridge adapters. Package <code>core.inbound</code>. Elsewhere: driving or primary port, input boundary. (10, 17)</dd>
     <dt><strong>Outbound port</strong></dt>
     <dd>An interface for what the app needs from the outside world, named in the app's terms (<code>BleScanner</code>, never <code>ApiClient</code>), implemented by outbound adapters. Package <code>core.outbound</code>. Elsewhere: driven or secondary port; roughly a repository. (10)</dd>
     <dt><strong>Service</strong></dt>
@@ -191,6 +191,8 @@
     <dd>Code that drives the app through inbound ports: the shared ViewModels in <code>adapter.inbound</code>, and the tests in <code>commonTest</code>. (10, 11)</dd>
     <dt><strong>Outbound adapter</strong></dt>
     <dd>One concrete implementation of an outbound port for one platform or technology: the simulated scanner, an Android radio (Kotlin in <code>androidMain</code>), a Swift CoreBluetooth class, a Ktor HTTP client. Shared ones live in <code>adapter.outbound</code>. (10)</dd>
+    <dt><strong>Bridge adapter</strong> (architecture; not the interop bridge)</dt>
+    <dd>An outbound adapter in the shared code that implements one capability's outbound port by calling another capability's inbound port (for example <code>SessionConnectionStatus</code>, which gives <code>StatusService</code> the session's connection state), so services never know each other. It holds no rules. (17)</dd>
     <dt><strong>Dependency injection (DI)</strong> / <strong>constructor injection</strong></dt>
     <dd>A class receives its dependencies (through its constructor) instead of building them. The app decides what to pass. (10)</dd>
     <dt><strong>Composition root</strong></dt>

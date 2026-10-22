@@ -44,7 +44,8 @@ The app is built as **hexagonal architecture** (ports and adapters). The **app c
           │  models          Device · ConnectionState · DeviceStatus · LogRecord … │
           │  outbound ports  BleScanner · BleConnection · PermissionChecker ·      │
           │                  BatteryProvider · NetworkProvider ·                   │
-          │                  BluetoothProvider · LogStore · MonitorScheduler       │
+          │                  BluetoothProvider · ConnectionStatus ·                │
+          │                  LogStore · MonitorScheduler                           │
           └───────────────────────────────────┬────────────────────────────────────┘
                                               │  implemented by
              ┌────────────────────────────────┼──────────────────────────────┐
@@ -52,7 +53,8 @@ The app is built as **hexagonal architecture** (ports and adapters). The **app c
    OUTBOUND ADAPTERS, Android      OUTBOUND ADAPTERS, shared       OUTBOUND ADAPTERS, iOS
    Kotlin in androidMain           Kotlin in commonMain            Swift in the iOS app
    BluetoothGatt · ActivityResult  simulated scanner ·             CoreBluetooth · AVFoundation ·
-   · WorkManager                   Ktor HTTP client (E1)           BGTaskScheduler
+   · WorkManager                   session bridge (L17) ·          BGTaskScheduler
+                                   Ktor HTTP client (E1)
                                                                    (+ one Kotlin/Native adapter
                                                                    in iosMain: the log store)
 
@@ -61,6 +63,7 @@ The app is built as **hexagonal architecture** (ports and adapters). The **app c
 
 - **Shared code** (`shared/src/commonMain`) is organised as `core` (models, `inbound` ports, `outbound` ports, services), the inbound adapters (shared ViewModels), the shared outbound adapters, and the DI module. The packages are named `inbound` / `outbound` because `in` is a Kotlin keyword.
 - **Inbound ports** say what the app offers, one per capability. **Outbound ports** say what the app needs, named in the app's terms (never HTTP, GATT or files).
+- **Services don't know each other:** when one capability needs something another capability holds, its service asks through an outbound port named in its own terms, and a small **bridge adapter** in the shared code implements that port by calling the other capability's inbound port. The bridge holds no rules. So inbound ports are called by inbound adapters and by bridge adapters (Lesson 17).
 - **One rule for where code goes:** UI code goes in the screen; logic that is a rule of the app goes in a service; anything that talks to a platform, a library or the network goes in an outbound adapter behind an outbound port. ViewModels talk only to inbound ports.
 - **Tests** are inbound adapters too: they drive a service through its inbound port, with **fakes** (outbound adapters written for tests, in `commonTest`) behind its outbound ports.
 
@@ -107,7 +110,7 @@ Milestone tags (`m00`…`m15`) mark each lesson's finished app. Lessons 01–04 
 | Day | # | Lesson | Covers | Milestone | Est. |
 |---|---|---|---|---|---|
 | 16 | 16 | **BLE: notify, disconnect, errors** | subscribe/unsubscribe, notifications → `Flow` → session service → ViewModel → UI; manual vs unexpected disconnect, cleanup, a consistent connection-state machine in the session service, tested with a fake `BleConnection` | **m11** full BLE flow, with recovery from an unexpected disconnect | ~2.5 h · +0.5 h |
-| 17 | 17 | **Device status and the log store** | `StatusReport` inbound port; `BatteryProvider`, `NetworkProvider`, `BluetoothProvider` outbound ports; a `LogStore` outbound port with a JSONL file adapter (append / read / clear / file errors). The log store's iOS adapter is the course's **`iosMain` Kotlin/Native example** (`NSFileManager` from Kotlin) | **m12** live status reported; log lines written and read back | ~2.5 h |
+| 17 | 17 | **Device status and the log store** | `StatusReport` inbound port; `BatteryProvider`, `NetworkProvider`, `BluetoothProvider` outbound ports; services don't know each other: "connected" comes through a `ConnectionStatus` outbound port that the `SessionConnectionStatus` bridge adapter answers from `DeviceSession`; a `LogStore` outbound port with a JSONL file adapter (append / read / clear / file errors). The log store's iOS adapter is the course's **`iosMain` Kotlin/Native example** (`NSFileManager` from Kotlin) | **m12** live status reported; log lines written and read back | ~2.5 h |
 | 18 | 18 | **Background monitor: build it** | `DeviceMonitoring` inbound port (start(interval) / stop / status / logs / clear) + monitoring service; `MonitorScheduler` outbound port with Android WorkManager / foreground service and iOS `BGTaskScheduler` adapters; hooking app-level (not view-level) lifecycle; no bypassing OS limits | **m13** monitor logs status on an interval | ~2 h · +0.25 h |
 | 19 | 19 | **Background monitor: platform behaviour table** | run and record the monitor in foreground / background / return / OS kill / force-kill on both platforms; why iOS gives no fixed-interval guarantee; document what each platform allows | **m14** behaviour table written from observed runs | ~1.5 h · +0.25 h |
 | 20 | 20 | **Integration and end-to-end check** | one screen operates every feature; run the end-to-end and refactor checklists (Appendix B); fix the findings | **m15** finished core Native Device Monitor | ~2.5 h · +0.5 h |
@@ -169,7 +172,7 @@ Carried over from the team's original learning plan, restated for the hexagonal 
 | `DeviceScanning` | `BleScanner` | 10, 13 |
 | `DeviceSession` | `BleConnection` | 14–16 |
 | `PermissionAccess` | `PermissionChecker` | 12 |
-| `StatusReport` | `BatteryProvider`, `NetworkProvider`, `BluetoothProvider` | 17 |
+| `StatusReport` | `BatteryProvider`, `NetworkProvider`, `BluetoothProvider`, `ConnectionStatus` (a bridge adapter to `DeviceSession`) | 17 |
 | `DeviceMonitoring` | `MonitorScheduler`, `LogStore` (+ the three status ports) | 17–19 |
 
 ### A.1 UI (Lessons 06–08, 20)
@@ -218,10 +221,11 @@ GET, POST, headers, parameters, JSON request/response, HTTP status handling, net
 - **Outbound adapter:** the Ktor client lives inside one shared adapter in `commonMain`, with per-platform engines. Nothing outside that adapter imports Ktor.
 
 ### A.6 Device status and logging (Lesson 17)
-- **Inbound port `StatusReport`:** `current(): DeviceStatus`, built from three outbound ports:
+- **Inbound port `StatusReport`:** `current(): DeviceStatus`, built from four outbound ports:
   - `BatteryProvider`: battery level.
   - `NetworkProvider`: Wi-Fi enabled/connected, cellular available.
-  - `BluetoothProvider`: Bluetooth enabled, connected.
+  - `BluetoothProvider`: Bluetooth enabled.
+  - `ConnectionStatus`: Bluetooth connected, meaning this app holds a link to a device. The session owns that state, and services don't know each other, so the `SessionConnectionStatus` bridge adapter (shared code) implements this port by reading `DeviceSession.connectionState`; the status service decides that only `Connected` counts. The background monitor (A.7) reuses the port.
 - **Outbound port `LogStore`:** `append(record)`, `read()`, `clear()`, with file errors reported. Its adapters write **JSONL**; the iOS one is the course's `iosMain` Kotlin/Native example.
 
 ### A.7 Background monitor (Lessons 18–19)
@@ -249,6 +253,7 @@ Demonstrate and document the behaviour in foreground, in background, on return t
 - The app core imports nothing from Android, iOS, Ktor, Koin or any other framework.
 - Each inbound port is one capability; each outbound port has one clear responsibility and is named in the app's terms.
 - Every rule of the app lives in a service, not in a ViewModel or an adapter; no feature logic is duplicated across platforms.
+- Services don't know each other: a service calls only outbound ports, and one capability reaches another only through a bridge adapter, which holds no rules.
 - Koin binds each inbound port to its service and each outbound port to its adapter; swapping an adapter is one line, and the graph test is green.
 - Async work is scoped and cancelled correctly; errors reach the UI as state.
 - Resources are released (GATT closed, subscriptions cancelled, monitor stoppable).

@@ -8,9 +8,9 @@
 </head>
 <body>
 <main>
-  <p class="kicker">Reference · from Lessons 10–11</p>
+  <p class="kicker">Reference · from Lessons 10–11 and 17</p>
   <h1>The Hexagon, Koin and Tests</h1>
-  <p class="source">Compressed from <a href="../lessons/10-the-hexagon.html">Lesson 10</a> (the hexagon, DI by hand) and <a href="../lessons/11-testing-and-koin.html">Lesson 11</a> (tests, Koin). Built and checked with Kotlin 2.4.20, Koin 4.2.2, kotlinx-coroutines(-test) 1.11.0, Turbine 1.2.1, AGP 9.4.1, Xcode 26.2.</p>
+  <p class="source">Compressed from <a href="../lessons/10-the-hexagon.html">Lesson 10</a> (the hexagon, DI by hand) and <a href="../lessons/11-testing-and-koin.html">Lesson 11</a> (tests, Koin), plus <a href="../lessons/17-device-status-and-log-store.html">Lesson 17</a>'s rule for services that need each other. Built and checked with Kotlin 2.4.20, Koin 4.2.2, kotlinx-coroutines(-test) 1.11.0, Turbine 1.2.1, AGP 9.4.1, Xcode 26.2.</p>
 
   <h2>The rules</h2>
   <ol>
@@ -22,6 +22,7 @@
     <li><strong>Constructor injection everywhere.</strong> In the app's code, only the composition root (<code>di/</code>) calls the constructors or names a service or an adapter. Tests build what they test themselves (rule 8).</li>
     <li><strong>Lookups (<code>KoinComponent</code>, <code>get()</code>) only at the edges</strong>: classes Koin doesn't create (the iOS ViewModel factory). Never in the app core, ViewModels or adapters.</li>
     <li><strong>Tests drive inbound ports, with test doubles built by constructor</strong>, never through the container. One extra test checks that the Koin graph builds.</li>
+    <li><strong>Services don't know each other.</strong> When one capability needs something another capability holds, its service asks through an outbound port named in its own terms, and a small bridge adapter in the shared code (<code>adapter.outbound</code>) implements that port by calling the other capability's inbound port. The bridge holds no rules: a rule it seems to need belongs in one of the two services. (Lesson 17)</li>
   </ol>
 
   <h2>Packages at m06</h2>
@@ -56,6 +57,20 @@ class ScanningService(private val scanner: BleScanner) : DeviceScanning {
 
 class DeviceListViewModel(private val scanning: DeviceScanning) : ViewModel()   // the port, nothing else</code></pre>
 
+  <h2>Two capabilities: a bridge adapter (Lesson 17)</h2>
+<pre><code>interface ConnectionStatus { fun current(): ConnectionState }           // the status's own outbound port
+
+class StatusService(…, private val connection: ConnectionStatus) : StatusReport {
+    // the rule stays here: … = connection.current() is ConnectionState.Connected
+}
+
+class SessionConnectionStatus(private val session: DeviceSession) : ConnectionStatus {   // adapter.outbound
+    override fun current(): ConnectionState = session.connectionState.value       // passes it on, no rule
+}
+
+single&lt;ConnectionStatus&gt; { SessionConnectionStatus(get()) }          // in appModule: the one DeviceSession</code></pre>
+  <p>Not a direct call to <code>DeviceSession</code> (a service would call an inbound port), not <code>SessionService</code> implementing the port (an outbound port implemented by a service), not a shared state holder or domain events. Inbound ports are called by inbound adapters and by bridge adapters.</p>
+
   <h2>How to add…</h2>
   <div class="table-wrap">
   <table>
@@ -63,6 +78,7 @@ class DeviceListViewModel(private val scanning: DeviceScanning) : ViewModel()   
     <tr><td>a screen</td><td>a ViewModel + UI state in <code>adapter.inbound</code>, its binding, the screen per track, one line in <code>AppModuleTest</code></td><td>the app core</td></tr>
     <tr><td>a business rule</td><td>the service that owns the capability, plus a test through its inbound port</td><td>ports, adapters, ViewModels, screens</td></tr>
     <tr><td>a platform capability</td><td>an outbound port + an adapter per platform; an inbound port method + service code; the bindings</td><td>services that don't need it</td></tr>
+    <tr><td>a fact another capability holds</td><td>an outbound port in the asking service's terms, a bridge adapter in <code>adapter.outbound</code> that calls the other inbound port, the binding in <code>appModule</code></td><td>the other capability's service and port</td></tr>
     <tr><td>an API request</td><td>an outbound port named for the job (<code>LogUploader</code>), a shared HTTP adapter in <code>adapter.outbound</code>, the binding</td><td>the app core never mentions HTTP, JSON or URLs</td></tr>
   </table>
   </div>
@@ -125,6 +141,7 @@ class SomeViewModelTest {
     // testScheduler.advanceTimeBy(d): move the clock, running what's due before the new time
     // testScheduler.currentTime: virtual ms elapsed
 }</code></pre>
+  <p><strong>More than one graph test?</strong> Close each <code>koinApplication</code> after its test (<code>@AfterTest fun closeKoin() { app.close() }</code>). <code>appModule</code> is one object, and Koin 4.2.2 keeps a <code>single</code>'s instance in the module's definition, so without <code>close()</code> a later test can get an earlier test's instances (Lesson 17).</p>
   <p><code>./gradlew :shared:allTests</code> runs <code>testAndroidHostTest</code> (JVM, JUnit 4) and <code>iosSimulatorArm64Test</code> (Kotlin/Native's runner). Check that both tasks appear: a green build only means nothing failed.</p>
   <p><strong>Test doubles, not mocks.</strong> A <strong>fake</strong> is an outbound adapter written for tests, with controls (<code>hear(…)</code>, <code>failure</code>, <code>isScanning</code>). A test implementation of an inbound port (<code>TestDeviceScanning</code>: <code>find(…)</code>, <code>failure</code>, <code>filters</code>) stands in for the whole app core in a ViewModel test. Both use a <code>Channel(UNLIMITED)</code>, so nothing sent before the collector starts is lost, and both flows never complete, like a real scan.</p>
   <p><strong>Mutation check.</strong> Break one rule in the production code and run the tests. If they stay green, nothing protects that rule.</p>
