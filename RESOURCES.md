@@ -88,6 +88,12 @@
   A persistent store for app settings, not for sensitive data; writes update the in-memory copy at once and reach disk asynchronously; `bool(forKey:)` returns `false` for a missing key. Use for: Lesson 20 (where the user's Stop is kept on iOS).
 - [Android Developers: Compose layout basics](https://developer.android.com/develop/ui/compose/layouts/basics#slot-based-layouts) ("Slot-based layouts"), [kotlinx.coroutines: withTimeoutOrNull](https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines/with-timeout-or-null.html) and [Gradle: Viewing and debugging dependencies](https://docs.gradle.org/current/userguide/viewing_debugging_dependencies.html)
   Slot APIs: a composable parameter the caller fills, as Material components do. `withTimeoutOrNull` cancels its block on timeout and returns `null` instead of throwing. `dependencyInsight` shows why and at which version a library is on the classpath. Use for: Lesson 20 (the monitor slot, the scan's time limit in the service, and removing an unused dependency).
+- [Ktor: Client engines](https://ktor.io/docs/client-engines.html), [Content negotiation and serialization](https://ktor.io/docs/client-serialization.html), [Timeout](https://ktor.io/docs/client-timeout.html), [Response validation](https://ktor.io/docs/client-response-validation.html) and [Testing](https://ktor.io/docs/client-testing.html)
+  Official Ktor client docs: one engine per platform (OkHttp on Android, Darwin over `NSURLSession` on iOS), `install(ContentNegotiation) { json() }` with `setBody` and `body<T>()`, the request, connect and socket timeouts with a per-request `timeout { }` (and the engine table: Darwin has no connect timeout), no status validation unless `expectSuccess`, and `MockEngine` with the engine passed into the class under test. Use for: Extension E1 (primary source).
+- [Android Developers: Network security configuration](https://developer.android.com/privacy-and-security/security-config) and [Apple Developer: Preventing insecure network connections](https://developer.apple.com/documentation/security/preventing-insecure-network-connections)
+  Cleartext HTTP is disabled by default from Android 9 and blocked by App Transport Security on iOS; both let an app allow it for named domains. Use for: Extension E1 (why an `http://` URL is "couldn't reach the server" on both platforms).
+- [kotlinx.serialization: JSON guide](https://github.com/Kotlin/kotlinx.serialization/blob/master/docs/json.md) and [httpbin.org](https://httpbin.org/)
+  `JsonElement` for JSON of unknown shape and `prettyPrint` for indented output; httpbin is a public echo service (`/anything`, `/status/404`, `/delay/5`) to try requests against. Use for: Extension E1.
 - [Android Developers: Fragment lifecycle](https://developer.android.com/guide/fragments/lifecycle)
   Official Fragment lifecycle guide — states, callbacks, relationship to the host Activity's lifecycle. Use for: understanding the FirstFragment/SecondFragment + NavHostFragment setup in the demo project.
 - [Android Developers: Create a navigation controller](https://developer.android.com/guide/navigation/navcontroller) / [Design your navigation graph](https://developer.android.com/guide/navigation/design)
@@ -194,9 +200,11 @@
 - [r/swift](https://reddit.com/r/swift)
   Swift-focused subreddit. Use for: Swift/iOS troubleshooting and idiom questions.
 - [Kotlin Slack, #multiplatform channel](https://surveys.jetbrains.com/s3/kotlin-slack-sign-up)
-  Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 05 on). Channel #koin: Koin's maintainers (Lesson 11 on).
+  Official Kotlin community Slack; JetBrains engineers answer KMP questions. Use for: KMP build and interop questions (Lesson 05 on). Channel #koin: Koin's maintainers (Lesson 11 on). Channel #ktor: Ktor's client questions (Extension E1).
 - [Apple Developer Forums: Background Tasks](https://developer.apple.com/forums/tags/backgroundtasks) / [Stack Overflow — android-workmanager](https://stackoverflow.com/questions/tagged/android-workmanager)
   Questions about refresh tasks on real iPhones, and about WorkManager timing. Use for: Lessons 18–19.
+- [Stack Overflow — ktor](https://stackoverflow.com/questions/tagged/ktor) tag
+  Q&A on Ktor client engines, plugins and errors. Use for: Extension E1.
 - [Stack Overflow — android-bluetooth](https://stackoverflow.com/questions/tagged/android-bluetooth) / [core-bluetooth](https://stackoverflow.com/questions/tagged/core-bluetooth) tags
   High-signal Q&A for concrete BLE bugs on both platforms. Use for: debugging real device/peripheral issues.
 
