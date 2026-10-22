@@ -48,7 +48,7 @@
   <p>While it's on screen, an app can run whatever timer it likes. Once it leaves the screen, what runs and when is each platform's decision, made in its own way:</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="l18-clock-title">
-      <title id="l18-clock-title">Who runs the monitor's tick, in three situations from left to right: the app on screen, the app in the background, and the app's process gone. On Android, in all three, WorkManager runs the tick about every 15 minutes, never more often; when the process is gone it starts the process first, and Application.onCreate runs before the work. On iOS, with the app on screen, the app's own timer ticks every 15 minutes. In the background iOS suspends the app, and with the process gone nothing of the app runs; in both cases a background refresh task may launch or wake the app, not before the earliest date the app asked for, at a time iOS chooses, and never on the Simulator.</title>
+      <title id="l18-clock-title">Who runs the monitor's tick, in three situations from left to right: the app on screen, the app in the background, and the app's process gone. On Android, in all three, WorkManager runs the tick at most once every 15 minutes, often later, at a moment Android picks; when the process is gone it starts the process first, and Application.onCreate runs before the work. On iOS, with the app on screen, the app's own timer ticks every 15 minutes. In the background iOS suspends the app, and with the process gone nothing of the app runs; in both cases a background refresh task may launch or wake the app, not before the earliest date the app asked for, at a time iOS chooses, and never on the Simulator.</title>
       <defs><marker id="l18-clock-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <text class="title small" x="150" y="28">app on screen</text>
       <text class="title small" x="360" y="28">in the background</text>
@@ -57,7 +57,7 @@
       <g data-part="android">
         <text class="title" x="20" y="96">Android</text>
         <rect class="box" x="120" y="66" width="620" height="60" rx="6"/>
-        <text class="small" x="134" y="90">WorkManager: one tick about every 15 minutes, never more often; the moment is Android's</text>
+        <text class="small" x="134" y="90">WorkManager: one tick per 15 minutes at most, often later; the moment is Android's</text>
         <text class="small muted" x="134" y="112">the same with the app open or not; for the process-gone column it starts the process first</text>
       </g>
       <circle class="dot" cx="180" cy="150" r="5"/>
@@ -137,7 +137,7 @@
   <ol class="walk">
     <li><strong><code>start</code> isn't <code>suspend</code></strong>: it hands the tick to the platform and returns. The ticks come later, on the platform's schedule.</li>
     <li><strong>A <code>StateFlow</code>, like the session's <code>connectionState</code></strong> (Lesson 14): a screen can collect it, and a test can read <code>.value</code>. <code>MonitorStatus</code> is sealed for the same reason as <code>ConnectionState</code>: a <code>when</code> over it must handle both states.</li>
-    <li><strong>"This process".</strong> The status lives in memory, so each process has its own. On Android a tick may run in a process WorkManager started while nobody was looking, and the process that shows the screen later never sees that tick's <code>lastRecord</code>. The log file is what lasts.</li>
+    <li><strong>"This process".</strong> The status lives in memory, so each process has its own. On Android a tick may run in a process WorkManager started while nobody was looking; if that process ends and a new one shows the screen later, the new one never sees that tick's <code>lastRecord</code>. The log file is what lasts.</li>
   </ol>
   <p>What the service needs from the platform is a timer it can't build itself:</p>
   <figure class="excerpt" data-part="outbound">
@@ -364,7 +364,7 @@
   </ol>
   <div class="callout gotcha">
     <span class="label">Gotcha · you can't force a periodic run early</span>
-    JobScheduler can run a job on demand (<code>adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler com.example.devicemonitor &lt;job id&gt;</code>; on our API 36 emulator WorkManager's jobs sat in that namespace, and without <code>-n</code> the command said "Could not find job"). For our periodic work, WorkManager then refused: "Delaying execution for com.example.devicemonitor.adapter.outbound.MonitorWorker because it is being executed before schedule." (logcat, tag <code>WM-WorkerWrapper</code>), and wrote no record. To see a second tick, wait out the 15 minutes. The job id also changes when WorkManager reschedules, so read it from <code>dumpsys jobscheduler</code> each time.
+    JobScheduler can run a job on demand (<code>adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler com.example.devicemonitor &lt;job id&gt;</code>; on our API 36 emulator WorkManager's jobs sat in that namespace, and without <code>-n</code> the command said "Could not find job"). For our periodic work, run before its 15 minutes were up, WorkManager then refused: "Delaying execution for com.example.devicemonitor.adapter.outbound.MonitorWorker because it is being executed before schedule." (logcat, tag <code>WM-WorkerWrapper</code>), and wrote no record. To see a second tick, wait out the 15 minutes: once the job is due, the same command is accepted and the worker runs. The job id also changes when WorkManager reschedules, so read it from <code>dumpsys jobscheduler</code> each time.
   </div>
   <p><strong>And the foreground service?</strong> The course plan names it next to WorkManager, and it's the right tool for a different monitor: one the user starts and watches, such as live readings from a connected device every few seconds while a notification says so. Android's background-tasks guide puts it that way: "If the task is not invisible to the user, the correct solution may be to use a foreground service. These services run continuously once started", while for work that can wait, "In most cases, your best option for running background tasks is to use WorkManager" (<a href="https://developer.android.com/develop/background-work/background-tasks">Background tasks overview</a>). Our monitor is invisible and can wait a few minutes, so WorkManager it is. A foreground service would also need, from Android 14, "an appropriate service type for each foreground service" declared in the manifest with its permission (<a href="https://developer.android.com/develop/background-work/services/fgs/service-types">Foreground service types</a>), and couldn't be started from the background: "Apps that target Android 12 (API level 31) or higher can't start foreground services while the app is running in the background, except for a few special cases" (<a href="https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start">Restrictions on starting a foreground service from the background</a>).</p>
 
@@ -624,7 +624,7 @@
     <li><strong>Fifteen minutes in no time.</strong> The test doesn't wait for a timer, real or virtual: it <em>is</em> the timer, and calls <code>fire()</code> when it likes. The clock is an object the test sets, so the timestamps are exact.</li>
     <li><strong>Seven tests</strong>, through the inbound port: <code>startAsksTheSchedulerForTheInterval</code>, <code>eachTickAppendsTheStatusAndTheTime</code>, <code>theRecordFollowsTheStatusRules</code> (Wi-Fi rule, and <code>Connecting</code> isn't connected), <code>stopCancelsAndALateTickWritesNothing</code>, <code>aFileErrorIsReportedAndTheNextTickTriesAgain</code> (with <code>FakeLogStore.failNextAppend</code>), <code>logsAndClearLogsUseTheLogStore</code>, and <code>anIntervalMustBePositive</code>.</li>
     <li><strong>The graph.</strong> <code>AppModuleTest</code> gains <code>theMonitorLogsWhatTheAppsOneSessionSays</code>: it connects through the graph's session, starts the graph's <code>DeviceMonitoring</code>, fires the fake scheduler, and finds <code>bluetoothConnected = true</code> in the fake log store. A wrong binding, or a bridge on a second session, fails it.</li>
-    <li><strong>Mutation checks we ran</strong>, each failing exactly the named test: no late-tick guard; no <code>require</code>; catching another exception type than <code>LogStoreException</code>; counting <code>Connecting</code> as connected in the record; and the Wi-Fi rule removed from <code>readStatus</code>, which fails one test in each service.</li>
+    <li><strong>Mutation checks we ran</strong>, each failing exactly the named test: no late-tick guard; no <code>require</code>; catching another exception type than <code>LogStoreException</code>. Two more, in <code>readStatus</code>, each fail one test in each service: the Wi-Fi rule removed, and <code>Connecting</code> counted as connected.</li>
   </ol>
   <p>The two scheduler adapters have no unit tests: there's no rule in them to test, only calls to the platform, and the platform's timer is what they're for. They are checked by running them (section 8), and the parts only a phone can show are device checks.</p>
 
@@ -637,14 +637,14 @@
     <tr><td>the same, then Home, <code>am kill</code>, launch again</td><td>still one record, and the next run still counting down from where it was (<code>+14m50s</code>)</td></tr>
     <tr><td>Compose: Home, <code>am kill</code>, wait</td><td>15 min 42 s after the first record, Android started the process "for service {…/androidx.work.impl.background.systemjob.SystemJobService}", and the second record came 2.3 s later, from that new process</td></tr>
     <tr><td>a throwaway build with <code>CANCEL_AND_REENQUEUE</code>, relaunched</td><td>a second record at once (section 4)</td></tr>
-    <tr><td><code>cmd jobscheduler run -f</code> on our job</td><td>"Delaying execution … because it is being executed before schedule.", no record (section 4)</td></tr>
+    <tr><td><code>cmd jobscheduler run -f</code> on our job, before its 15 minutes were up</td><td>"Delaying execution … because it is being executed before schedule.", no record (section 4)</td></tr>
     <tr><td>iOS 26.2 Simulator, SwiftUI and UIKit, fresh install, launch, then another app</td><td>no crash; on going to the background, "Monitor: no background refresh: The operation couldn’t be completed. (BGTaskSchedulerErrorDomain error 1.)"</td></tr>
     <tr><td>back to the app, then 15 minutes in the foreground</td><td>"Monitor tick (foreground)", and one record in Application Support with <code>"battery":null</code> and <code>"bluetoothEnabled":null</code> (the Simulator reports no battery level, and Bluetooth hasn't been allowed: Lesson 17)</td></tr>
     <tr><td>a throwaway SwiftUI build at 1 minute</td><td>a tick about a minute after launch; none during 75 s in the background; the next about a minute after coming back</td></tr>
     <tr><td>a throwaway SwiftUI build without the permitted identifier</td><td>a crash at launch: "Uncaught Kotlin exception: kotlin.IllegalStateException: com.example.devicemonitor.monitor isn't in BGTaskSchedulerPermittedIdentifiers (project.yml)", the trace running from SwiftUI's <code>App.main()</code> through <code>iOSApp.init()</code> to <code>IosMonitorScheduler</code>'s constructor</td></tr>
   </table>
   </div>
-  <p>What a phone does in the background, and for how long, is the subject of Lesson 19; the agent brief lists what only a phone can show as device checks. <strong>m13 is a natural stop</strong> when <code>allTests</code> is green on both platforms, a fresh Android install writes its first record at once and another about 15 minutes later, and the iOS app writes a record after 15 minutes in the foreground. Commit it.</p>
+  <p>What a phone does in the background, and for how long, is the subject of Lesson 19; the agent brief lists what only a phone can show as device checks. <strong>m13 is a natural stop</strong> when <code>allTests</code> is green on both platforms, a fresh Android install writes its first record at once and another 15 minutes or more later, and the iOS app writes a record after 15 minutes in the foreground. Commit it.</p>
   <div class="callout ask-agent">
     <span class="label">Ask your agent</span>
     Ask your agent to trace one WorkManager run in a process Android started for it: which code runs first, where the tick comes from, which thread runs <code>MonitoringService.tick()</code>, and what happens if the monitor had been stopped. Then ask it to list everything that happens on iOS, in order, from the user pressing Home to the next refresh task finishing, and to say which steps the Simulator skips.
@@ -742,7 +742,7 @@
       <button class="opt"><code>runTest</code> doesn't support <code>suspend</code> lambdas</button>
     </div>
     <p class="feedback"></p>
-    <p class="why">Virtual time controls <code>delay</code>s on the test dispatcher. Here no <code>delay</code> is in the service at all; the adapters own the clock, and the fake plays them.</p>
+    <p class="why">Virtual time controls <code>delay</code>s on the test dispatcher. Here no <code>delay</code> is in the service at all; the adapters own the timer, and the fake plays them.</p>
   </div>
   <div class="quiz mcq">
     <p class="q">Which lifecycle does each Android hook follow? (Lessons 03 and 11)</p>
@@ -752,7 +752,7 @@
       <button class="opt">both run once per install</button>
     </div>
     <p class="feedback"></p>
-    <p class="why">A process can start without any Activity, for a WorkManager job; then only the <code>Application</code> runs, which is why the monitor starts there.</p>
+    <p class="why">A process can start without any Activity, for a WorkManager job; then the <code>Application</code> runs and no Activity does, which is why the monitor starts there.</p>
   </div>
 
   <h2 id="unaided-exercise">Unaided exercise</h2>
@@ -763,7 +763,7 @@
       <li><strong>Test first: the interval in the status.</strong> Write <code>startAgainChangesTheInterval</code> in <code>MonitoringServiceTest</code>: start at 15 minutes, then at 30; the scheduler and the status must both say 30, and a fired tick must still write one record. Does it pass already? If it does, which lines made it pass?</li>
       <li><strong>A rule in the service, not the adapter.</strong> The monitor shouldn't write two records less than a minute apart (a platform may run a late tick just before the next one). Where does the rule go, and which port gives the service what it needs? Write the test with the fake clock first, watch it fail, then make it pass. Did any adapter change?</li>
       <li><strong>Break the configuration on purpose.</strong> Remove the identifier from <code>BGTaskSchedulerPermittedIdentifiers</code> in <code>project.yml</code>, run <code>xcodegen generate</code>, build and launch. Predict what happens, and which line reports it. Put it back.</li>
-      <li><strong>Read the header.</strong> Open <code>BGTaskScheduler.h</code> in Xcode (Open Quickly, ⇧⌘O) and find the three error codes. For each, write one sentence on what the monitor does when it gets it today.</li>
+      <li><strong>Read the header.</strong> Open <code>BGTaskScheduler.h</code> in Xcode (Open Quickly, ⇧⌘O) and find the error codes: the iOS 26 SDK has four, and the fourth is only for continued-processing tasks, which the monitor doesn't use. For each of the first three, write one sentence on what the monitor does when it gets it today.</li>
       <li><strong>On your phones</strong>: install, open the app, then leave each phone alone for an hour, locked. How many records did each write, and at what times? Keep the numbers for Lesson 19.</li>
     </ol>
   </div>
