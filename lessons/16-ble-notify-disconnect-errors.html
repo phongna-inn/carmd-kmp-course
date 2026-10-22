@@ -844,8 +844,10 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      adb shell input motionevent DOWN x y, sleep 1.5, adb shell input motionevent UP x y.
      Temperature's button then says Unsubscribe and a value like "21.60 °C" appears.
   5. Rotate (adb shell settings put system accelerometer_rotation 0, then
-     adb shell settings put system user_rotation 1), scroll down a little (one short swipe: the
-     battery row must stay on screen): the battery value is still changing. Rotate back
+     adb shell settings put system user_rotation 1), scroll down just far enough to see the
+     battery value (one swipe of about 400 px on a 1080 x 2400 screen, such as
+     adb shell input swipe 1200 900 1200 500 300; a shorter one may leave the value below the
+     fold, a long one scrolls the row away): the battery value is still changing. Rotate back
      (user_rotation 0), scroll back to the top, and tap Disconnect: "Status: not connected", no
      alert, no "Service …" text, no Unsubscribe.
   6. Back, open "Tire Pressure Sensor", Connect, Subscribe to Battery Level: values arrive,
