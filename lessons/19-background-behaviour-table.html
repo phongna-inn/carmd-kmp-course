@@ -65,7 +65,7 @@
     <tr><td>return</td><td><code>am start</code></td><td>no new record; a minute later <code>TIME=+13m48s</code>: the next run kept its time</td></tr>
     <tr><td>OS ends the app</td><td>Home, <code>am kill</code> at 23:51:48</td><td><code>pidof</code> empty. At 00:06:29 Android started a new process (11710) "for service {…/androidx.work.impl.background.systemjob.SystemJobService}", and record 4 came at 00:06:32 (15 min 59 s after record 3)</td></tr>
     <tr><td>force-kill</td><td><code>am force-stop</code> at 00:06:37</td><td>our job gone from <code>dumpsys jobscheduler</code> at once; no process and no record for the next 30 minutes, though the next run had been due at about 00:21</td></tr>
-    <tr><td>open again</td><td><code>am start</code> at 00:36:42</td><td>a new process (11902) and <code>WM-ForceStopRunnable</code> "Application was force-stopped, rescheduling."; record 5 at 00:36:47, as the app opened (in two later runs, with the work 15 to 20 minutes overdue, the app wrote two records 1 to 2 s apart, and logcat showed <code>WM-Processor</code> "WorkerWrapper interrupted" after the first <code>Monitor tick</code>, then the work started again: expect one record or two); our job back in <code>dumpsys jobscheduler</code>, under a new id; record 6 at 00:53:53, 17 min 6 s later, with the app in the background</td></tr>
+    <tr><td>open again</td><td><code>am start</code> at 00:36:42</td><td>a new process (11902) and <code>WM-ForceStopRunnable</code> "Application was force-stopped, rescheduling."; record 5 at 00:36:47, as the app opened (in two later runs, with the app opened again about 16 and 20 minutes after the previous record, the app wrote two records 1 to 2 s apart, and logcat showed <code>WM-Processor</code> "WorkerWrapper interrupted" after the first <code>Monitor tick</code>, then the work started again: expect one record or two); our job back in <code>dumpsys jobscheduler</code>, under a new id; record 6 at 00:53:53, 17 min 6 s later, with the app in the background</td></tr>
     <tr><td>swipe away in Recents</td><td>the app on screen, then Recents, swipe its card up (00:54:54)</td><td>process ended; exit-info: <code>reason=10 (USER REQUESTED) subreason=22 (REMOVE TASK)</code>; <code>dumpsys package</code>: <code>stopped=false</code>, and our job still counting down. At 01:09:21 a new process for the job, record 7 at 01:09:23 (15 min 31 s after record 6), with "Application was force-stopped, rescheduling." again</td></tr>
   </table>
   </div>
@@ -81,7 +81,7 @@
   </figure>
   <ol class="walk">
     <li><strong>Foreground and background are one row on Android.</strong> WorkManager doesn't look at the screen: records 2 and 3 came from the same process, one with the app on screen and one behind the launcher. The gaps, 15 min 2 s and 16 min 59 s, are what "minimum" means: "The interval period is defined as the minimum time between repetitions" (<a href="https://developer.android.com/develop/background-work/background-tasks/persistent/getting-started/define-work">Define work requests</a>).</li>
-    <li><strong>Return writes nothing.</strong> The launch runs <code>onAppLaunch()</code> again in the same process, which calls <code>schedule</code>, and <code>UPDATE</code> keeps the work and its timing (Lesson 18, section 4). The countdown went on from where it was.</li>
+    <li><strong>Return writes nothing.</strong> The process was still running, so <code>Application.onCreate</code> didn't run again, and neither did <code>onAppLaunch()</code>: they run once per process, and <code>am start</code> only brought the Activity back. Nothing touched the work, and the countdown went on from where it was. A new process does call <code>schedule</code> again, and that's when <code>UPDATE</code> keeps the work and its timing (Lesson 18, section 4).</li>
     <li><strong>A killed process is started again for the work.</strong> The schedule lives in WorkManager's database and JobScheduler, not in the process. When the time came, Android started a new process for WorkManager's <code>JobService</code>; <code>Application.onCreate</code> handed over the tick, and the worker ran it 2.6 s after the process started, reading Wi-Fi as connected.</li>
   </ol>
   <figure class="excerpt" data-part="outbound">
@@ -493,7 +493,8 @@ Acceptance checks (run every one you can; the Android and iOS runs can go side b
   3. Android, swipe the app away in Recents: expect what the table's Recents row says, and
      write down what your phone does (some phone makers stop apps more aggressively).
   4. iPhone, background: open the app, press Home, leave it for a few hours on Wi-Fi with
-     Background App Refresh on: count the "Monitor tick (background)" records; zero is allowed.
+     Background App Refresh on: count the log's records written while the app was in the
+     background (read the log from the app's container); zero is allowed.
   5. iPhone, force quit: open the app, swipe it away in the app switcher, leave it for a few
      hours: expect no records until you open it again.
   6. iPhone, Background App Refresh off (Settings → General → Background App Refresh), or Low
@@ -539,7 +540,7 @@ each platform's documentation for what only a phone can show.
 | Foreground | A record a moment after the first launch, then one per period, 15 minutes or more apart, from the same process. Being on screen changes nothing. | emulator |
 | Background (Home, process alive) | The same: WorkManager runs the work in the running process. | emulator |
 | Background, phone locked and still, on battery | Doze defers the work to maintenance windows, which come less often the longer the phone is still; standby buckets limit how often jobs run. Expect gaps longer than 15 minutes. | phone, not yet run |
-| Return to foreground | No extra record. The next run keeps its time (UPDATE keeps the schedule). | emulator |
+| Return to foreground | No extra record. The next run keeps its time: the process is still running, so nothing schedules the work again. | emulator |
 | OS ends the process | At the next run Android starts a new process for the work; Application.onCreate hands over the tick, and the record is written. The schedule is kept. | emulator (am kill) |
 | OS ends the process under real memory pressure | Expected the same as the row above; Android records the exit as LOW_MEMORY. | phone, not yet run |
 | Force stop (Settings &gt; Apps &gt; Force stop) | No records until the user opens the app again: Android removes the work's job at once. When the app opens, WorkManager reschedules and runs the overdue work: a record at once (sometimes two, a second or two apart: the first run is interrupted and started again), then one per period. | emulator |
