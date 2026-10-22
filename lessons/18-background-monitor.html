@@ -880,6 +880,11 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      am kill skipped the process because it wasn't in the background yet: run am kill again).
      Wait until TIME= has passed (up to 20 minutes; check every minute): the log has two lines, the second about 15 minutes
      after the first, and logcat shows a second "Monitor tick" from a new process id.
+     If TIME= is negative (the job is due) and the log still has one line five minutes later, the emulator's
+     JobScheduler is slow to start it: run the job once by hand (WorkManager accepts that only after the
+     15 minutes are up): the job id is the number after the slash in the "JobStatus{… u0aNNN/<id> …" line, and
+       adb shell cmd jobscheduler run -f -n androidx.work.systemjobscheduler -u 0 com.example.devicemonitor <id>
+     writes the second line from a new process id. Say in your report that you had to do this.
 - iOS Simulator, my track, after the fresh install and launch above:
   1. No crash at launch (a missing permitted identifier would crash it with "… isn't in
      BGTaskSchedulerPermittedIdentifiers (project.yml)").
