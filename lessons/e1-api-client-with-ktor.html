@@ -860,7 +860,10 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      Device Monitor" and a "sentAt" ending in Z.
   4. GET https://httpbin.org/status/404: "GET · HTTP error 404", in red.
   5. GET https://10.255.255.1/: "Sending…" with GET and POST disabled, then about 10 s later
-     "GET · no answer within 10 s".
+     "GET · no answer within 10 s". (In the Compose track's uiautomator dump the GET and POST
+     label text always reads enabled="true"; the disabled flag is on the clickable
+     android.view.View around each, so read that node's enabled attribute, or look at a
+     screenshot: both buttons are greyed.)
   6. GET https://no-such-host.invalid/: "GET · couldn't reach the server" and "Unable to resolve
      host "no-such-host.invalid"…".
   7. Type http://httpbin.org/get and check the field still says http:// (not https://), then GET:
