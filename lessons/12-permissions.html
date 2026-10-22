@@ -360,7 +360,7 @@
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidPermissionChecker.kt</figcaption>
 <pre><code>    override suspend fun request(permissions: List&lt;Permission&gt;): Map&lt;Permission, PermissionStatus&gt; {
-        val launcher = checkNotNull(launcher) { "No screen has attached a permission launcher." }
+        val launcher = checkNotNull(launcher) { "No Activity or Fragment has attached a permission launcher." }
 <mark>        val answered = CompletableDeferred&lt;Unit&gt;()</mark>
         answer = answered
 <mark>        launcher.launch(permissions.flatMap { it.androidNames() }.toTypedArray())</mark>
@@ -449,7 +449,7 @@
   </figure>
   <ol class="walk">
     <li><strong>A property initializer</strong> is the safe place: "<code>registerForActivityResult()</code> is safe to call before your fragment or activity is created, letting it be used directly when declaring member variables" (<a href="https://developer.android.com/training/basics/intents/result">Get a result from an activity</a>). A rotation creates a new <code>MainActivity</code>, which registers again, as the rule asks, and its callback passes that new <code>Activity</code> to <code>onResult</code>.</li>
-    <li><strong><code>attach</code> comes before <code>setContent</code></strong>, because the first read of the permission happens inside it: <code>koinViewModel()</code> builds the list screen's ViewModel when the screen is first composed, and the ViewModel's constructor reads the status (section 8). Attached first, that read already has the <code>Activity</code>, so it can tell <code>Denied</code> apart.</li>
+    <li><strong><code>attach</code> comes before <code>setContent</code></strong>, because the first read of the permission happens in the content it composes: <code>koinViewModel()</code> builds the list screen's ViewModel when the screen is first composed, and the ViewModel's constructor reads the status (section 8). Attached first, that read already has the <code>Activity</code>, so it can tell <code>Denied</code> apart.</li>
     <li><strong><code>onCreate</code>/<code>onDestroy</code></strong> bracket the <code>Activity</code>'s whole life, so the adapter never holds a destroyed one. Its <code>application</code> is our <code>DeviceMonitorApplication</code>, which owns the adapter (section 7); <code>by lazy</code> reads it only when <code>onCreate</code> first needs it. Android's manual DI page reaches its container the same way: <code>(application as MyApplication).appContainer</code>.</li>
   </ol>
   <div class="callout gotcha">
@@ -1407,8 +1407,8 @@ import com.example.devicemonitor.core.outbound.PermissionChecker
 import kotlinx.coroutines.CompletableDeferred
 
 // Outbound adapter: Android's runtime permissions behind the PermissionChecker port.
-// Android lets only an Activity or a Fragment register for a result, so the screen on show
-// lends this adapter its launcher (attach), and tells it when the user answered (onResult).
+// Android lets only an Activity or a Fragment register for a result, so one of them lends
+// this adapter its launcher (attach), and tells it when the user answered (onResult).
 class AndroidPermissionChecker(private val context: Context) : PermissionChecker {
     private var activity: Activity? = null
     private var launcher: ActivityResultLauncher&lt;Array&lt;String&gt;&gt;? = null
@@ -1456,7 +1456,7 @@ class AndroidPermissionChecker(private val context: Context) : PermissionChecker
     }
 
     override suspend fun request(permissions: List&lt;Permission&gt;): Map&lt;Permission, PermissionStatus&gt; {
-        val launcher = checkNotNull(launcher) { "No screen has attached a permission launcher." }
+        val launcher = checkNotNull(launcher) { "No Activity or Fragment has attached a permission launcher." }
         val answered = CompletableDeferred&lt;Unit&gt;()
         answer = answered
         launcher.launch(permissions.flatMap { it.androidNames() }.toTypedArray())
