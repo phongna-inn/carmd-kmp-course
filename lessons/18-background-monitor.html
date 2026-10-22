@@ -875,9 +875,10 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      TIME=+14m… (or a little less). adb shell input keyevent KEYCODE_HOME, launch again with
      the am start command: still one line in the log, and TIME= still counts down from where
      it was (no new 15 minutes).
-  3. adb shell input keyevent KEYCODE_HOME; adb shell am kill com.example.devicemonitor;
-     adb shell pidof com.example.devicemonitor prints nothing. Wait until TIME= has passed (up
-     to 20 minutes; check every minute): the log has two lines, the second about 15 minutes
+  3. adb shell input keyevent KEYCODE_HOME; wait 3 seconds; adb shell am kill com.example.devicemonitor;
+     adb shell pidof com.example.devicemonitor prints nothing (if it still prints a number,
+     am kill skipped the process because it wasn't in the background yet: run am kill again).
+     Wait until TIME= has passed (up to 20 minutes; check every minute): the log has two lines, the second about 15 minutes
      after the first, and logcat shows a second "Monitor tick" from a new process id.
 - iOS Simulator, my track, after the fresh install and launch above:
   1. No crash at launch (a missing permitted identifier would crash it with "… isn't in
