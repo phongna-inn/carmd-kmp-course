@@ -304,9 +304,7 @@
 <mark>        scanner.startScan(null, settings, callback)</mark>
 
 <mark>        awaitClose {</mark>
-            context.unregisterReceiver(bluetoothOff)
-            // stopScan throws once Bluetooth is off; by then the scan has ended anyway.
-<mark>            if (adapter.isEnabled) scanner.stopScan(callback)</mark>
+<span class="elide">⋯  unregister the receiver and stop the scan: below</span>
         }
     }</code></pre>
   </figure>
@@ -334,12 +332,25 @@
 <mark>        ContextCompat.registerReceiver(</mark>
             context, bluetoothOff, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED),
 <mark>            ContextCompat.RECEIVER_EXPORTED,</mark>
-        )</code></pre>
+        )
+<span class="elide">⋯  the settings and startScan: above</span>
+
+        awaitClose {
+<mark>            context.unregisterReceiver(bluetoothOff)</mark>
+            // Stop even when isEnabled is false: it's false while Bluetooth is turning off, and in
+            // the BLE-only mode some phones keep for location's "Bluetooth scanning".
+<mark>            try {</mark>
+<mark>                scanner.stopScan(callback)</mark>
+<mark>            } catch (e: IllegalStateException) {</mark>
+                // Bluetooth is fully off, and going fully off drops every app's scan.
+            }
+        }</code></pre>
   </figure>
   <ol class="walk">
     <li><strong>Registered in the flow, unregistered in <code>awaitClose</code></strong>: the receiver lives exactly as long as the scan. Android: "always unregister your broadcast receiver" (<a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts">Broadcasts overview</a>).</li>
     <li><strong><code>RECEIVER_EXPORTED</code></strong>: "Some system broadcasts come from highly privileged apps, such as Bluetooth and telephony … To receive all system broadcasts, including broadcasts from highly privileged apps, flag your receiver with <code>RECEIVER_EXPORTED</code>" (same page).</li>
-    <li><strong>Why the <code>isEnabled</code> check before <code>stopScan</code>?</strong> In Android's source, <code>stopScan</code> starts with <code>BluetoothLeUtils.checkAdapterStateOn</code>, which throws <code>IllegalStateException("BT Adapter is not turned ON")</code>. When Bluetooth goes fully off, Android's scan service shuts down and drops every app's scan (in Android's source, <code>ScanController.stop</code> clears its scanners), so there's nothing left to stop. Some phones keep a BLE-only mode running for location's "Bluetooth scanning" when the user turns Bluetooth off; whether a scan survives that mode isn't checked yet, and the device checks cover it.</li>
+    <li><strong>Why no <code>isEnabled</code> check before <code>stopScan</code>?</strong> <code>isEnabled</code> is true only when Bluetooth is fully on: "Equivalent to: <code>getBluetoothState() == STATE_ON</code>" (<a href="https://developer.android.com/reference/android/bluetooth/BluetoothAdapter#isEnabled()">BluetoothAdapter.isEnabled</a>). <code>stopScan</code> asks something else. In Android's source it starts with <code>BluetoothLeUtils.checkAdapterStateOn</code>, which passes while Bluetooth LE is still running: on, turning on, turning off, and the BLE-only mode below. The receiver closes the flow on the first state that isn't on, <code>STATE_TURNING_OFF</code>, so <code>awaitClose</code> usually runs before Bluetooth is off. We logged it on the API 36 emulator: in 4 runs out of 4, <code>awaitClose</code> ran while Bluetooth was turning off, <code>isEnabled</code> was false, and <code>stopScan</code> ran without throwing. Some phones also keep a BLE-only mode running for location's "Bluetooth scanning" after the user turns Bluetooth off; there <code>isEnabled</code> stays false, but a scan could still be running. A guard on <code>isEnabled</code> would skip <code>stopScan</code> in both places, so the adapter always calls it.</li>
+    <li><strong>Why catch <code>IllegalStateException</code>, and only that?</strong> Once Bluetooth is fully off, <code>checkAdapterStateOn</code> throws <code>IllegalStateException("BT Adapter is not turned ON")</code>. Android's docs for <code>stopScan</code> don't mention it; its source does. By then there's nothing to stop: when Bluetooth goes fully off, Android's scan service shuts down and drops every app's scan (in Android's source, <code>ScanController.stop</code> clears its scanners). To reach this case on the emulator, we made a throwaway copy of <code>awaitClose</code> wait 3 seconds first: <code>stopScan</code> threw "BT Adapter is not turned ON", the <code>catch</code> held it, and the screen showed "Bluetooth was turned off." as usual. Without the <code>try</code>, that run looked the same: the flow had already ended with our <code>ScanException</code>, and the second exception reached neither the screen nor logcat. Don't count on that. The <code>catch</code> says this one throw is expected; any other exception still goes to the flow. We couldn't put the emulator in BLE-only mode (on the API 36 emulator, <code>adb shell cmd bluetooth_manager enableBle</code> answers "Uid 2000 does not have access"), so whether <code>stopScan</code> ends a scan there needs a phone: the device checks cover it.</li>
   </ol>
   <div class="callout gotcha">
     <span class="label">Gotcha · Android ignores a scan started too often, silently</span>
@@ -792,6 +803,16 @@
     <p class="feedback"></p>
     <p class="why">The <code>delegate</code> property is declared <code>weak</code>, so it doesn't keep the object alive. In the app, Koin keeps the adapter, and the adapter is its own delegate.</p>
   </div>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>AndroidBleScanner</code>'s <code>awaitClose</code> call <code>stopScan</code> inside a <code>try</code> instead of only <code>if (adapter.isEnabled)</code>?</p>
+    <div class="opts">
+      <button class="opt"><code>isEnabled</code> needs a permission the cleanup doesn't have</button>
+      <button class="opt" data-correct><code>isEnabled</code> is already false while Bluetooth turns off, and in BLE-only mode, when <code>stopScan</code> doesn't throw; it throws only once Bluetooth is fully off, and then Android has no scan left to stop</button>
+      <button class="opt"><code>stopScan</code> throws on every call after a scan fails</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why"><code>isEnabled</code> means fully on. <code>stopScan</code>'s own check, in Android's source, passes while Bluetooth LE still runs. On the API 36 emulator, the cleanup ran while Bluetooth was turning off every time we logged it, and <code>stopScan</code> ran there without throwing. A guard would have skipped it, and in BLE-only mode a scan could keep running.</p>
+  </div>
 
   <h3>Mixed review (interleaved)</h3>
   <div class="quiz mcq">
@@ -926,6 +947,9 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   5. Wait 30 s (Android ignores a scan started too often; lesson section 5). Tap Scan, and within
      2 s run adb shell cmd bluetooth_manager disable: "Scan failed" with "Bluetooth was turned
      off." Tap OK, then enable Bluetooth again.
+  6. No crash in steps 4 and 5: before step 4, run `adb logcat -b crash -c` and note what
+     `adb shell pidof com.example.devicemonitor` prints; after step 5 it prints the same number,
+     and `adb logcat -d -b crash` prints nothing.
   Don't tap Scan more than five times within 30 s anywhere in these checks.
 - Optional, if you have an emulator with Android 11 (API 30): grant
   android.permission.ACCESS_FINE_LOCATION instead in step 3 above, and scan. On our API 30 image
@@ -940,7 +964,10 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   track: the virtual device appears in the list, once, with an address (Android) or a UUID
   (iOS); the filter finds it by part of its name; Stop and the 10-second timeout end the scan;
   Bluetooth off before Scan, and turned off during a scan, show the two messages above, with no
-  system alert on iOS.
+  system alert on iOS. On Android, once more with Settings → Location → Location services →
+  Bluetooth scanning turned on (the BLE-only mode of section 5): Scan, turn Bluetooth off within
+  3 s, then `adb shell dumpsys bluetooth_manager` should list no scan still running for
+  com.example.devicemonitor.
 Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
 numbers, and show me where each box of the lesson's "who talks to whom" diagram is in the code.
 Do NOT do the unaided exercise for me.</pre>
@@ -948,7 +975,7 @@ Do NOT do the unaided exercise for me.</pre>
 
   <h2>Further reading</h2>
   <ul>
-    <li>Android: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">Bluetooth Low Energy overview</a> (primary source for the concepts), <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a> (primary source for scanning), <a href="https://developer.android.com/develop/connectivity/bluetooth/setup">Set up Bluetooth</a> (the adapter, <code>isEnabled</code>, <code>ACTION_STATE_CHANGED</code>), <a href="https://developer.android.com/develop/connectivity/bluetooth/bt-permissions">Bluetooth permissions</a> (<code>uses-feature</code>), and the <a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts">Broadcasts overview</a> (exported receivers).</li>
+    <li>Android: <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/ble-overview">Bluetooth Low Energy overview</a> (primary source for the concepts), <a href="https://developer.android.com/develop/connectivity/bluetooth/ble/find-ble-devices">Find BLE devices</a> (primary source for scanning), <a href="https://developer.android.com/develop/connectivity/bluetooth/setup">Set up Bluetooth</a> (the adapter, <code>isEnabled</code>, <code>ACTION_STATE_CHANGED</code>), <a href="https://developer.android.com/reference/android/bluetooth/BluetoothAdapter#isEnabled()">BluetoothAdapter.isEnabled</a> (true only when fully on), <a href="https://developer.android.com/develop/connectivity/bluetooth/bt-permissions">Bluetooth permissions</a> (<code>uses-feature</code>), and the <a href="https://developer.android.com/develop/background-work/background-tasks/broadcasts">Broadcasts overview</a> (exported receivers).</li>
     <li>iOS: <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager">CBCentralManager</a> (primary source), <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerdelegate">CBCentralManagerDelegate</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanager/scanforperipherals(withservices:options:)">scanForPeripherals(withServices:options:)</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbuuid">CBUUID</a>, <a href="https://developer.apple.com/documentation/corebluetooth/cbcharacteristicproperties">CBCharacteristicProperties</a> and <a href="https://developer.apple.com/documentation/corebluetooth/cbpeer/identifier">CBPeer.identifier</a>.</li>
     <li>Kotlin and Swift: <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.flow/callback-flow.html">callbackFlow</a>, <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/try-send.html">trySend</a> and <a href="https://kotlinlang.org/api/kotlinx.coroutines/kotlinx-coroutines-core/kotlinx.coroutines.channels/-send-channel/close.html">close</a>; <a href="https://skie.touchlab.co/features/flows">SKIE: Flows</a> (which directions it converts).</li>
     <li><a href="https://apps.apple.com/us/app/lightblue/id557428110">LightBlue</a> on the App Store: the virtual peripheral for this lesson and Lessons 14–16.</li>
@@ -1287,8 +1314,13 @@ class AndroidBleScanner(private val context: Context) : BleScanner {
 
         awaitClose {
             context.unregisterReceiver(bluetoothOff)
-            // stopScan throws once Bluetooth is off; by then the scan has ended anyway.
-            if (adapter.isEnabled) scanner.stopScan(callback)
+            // Stop even when isEnabled is false: it's false while Bluetooth is turning off, and in
+            // the BLE-only mode some phones keep for location's "Bluetooth scanning".
+            try {
+                scanner.stopScan(callback)
+            } catch (e: IllegalStateException) {
+                // Bluetooth is fully off, and going fully off drops every app's scan.
+            }
         }
     }
 }</code></pre>

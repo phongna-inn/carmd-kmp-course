@@ -44,7 +44,7 @@
     <tr><td>name</td><td><code>result.scanRecord?.deviceName</code> (no CONNECT permission needed)</td><td><code>advertisementData[CBAdvertisementDataLocalNameKey]</code></td></tr>
     <tr><td>id</td><td><code>result.device.address</code>, "00:11:22:AA:BB:CC"</td><td><code>peripheral.identifier</code>, a UUID the system assigns</td></tr>
     <tr><td>same device again?</td><td>yes (callback type <code>ALL_MATCHES</code>, the default)</td><td>once per scan by default</td></tr>
-    <tr><td>stop</td><td><code>stopScan(callback)</code>; can throw <code>IllegalStateException</code> once Bluetooth is off, so check <code>adapter.isEnabled</code> first</td><td><code>stopScan()</code></td></tr>
+    <tr><td>stop</td><td><code>stopScan(callback)</code>, even when <code>adapter.isEnabled</code> is false (it's false while Bluetooth turns off, and in the BLE-only mode some phones keep); it throws <code>IllegalStateException</code> once Bluetooth is fully off, and going fully off drops every scan, so catch that</td><td><code>stopScan()</code></td></tr>
     <tr><td>errors</td><td><code>onScanFailed(SCAN_FAILED_*)</code></td><td>no scan-error callback</td></tr>
     <tr><td>Bluetooth turned off mid-scan</td><td>nothing reaches the callback: listen for <code>ACTION_STATE_CHANGED</code> (receiver <code>RECEIVER_EXPORTED</code>)</td><td><code>centralManagerDidUpdateState</code> with a state below <code>.poweredOn</code>: "scanning has stopped"</td></tr>
   </table>
@@ -59,7 +59,11 @@ override fun scan(): Flow&lt;Device&gt; = callbackFlow {
     }
     scanner.startScan(null, settings, callback)
     awaitClose {                                   // mandatory: runs on cancel
-        if (adapter.isEnabled) scanner.stopScan(callback)   // stopScan throws once BT is off
+        try {
+            scanner.stopScan(callback)             // even when adapter.isEnabled is false
+        } catch (e: IllegalStateException) {
+            // BT fully off, and going fully off drops every scan
+        }
     }
 }
 
