@@ -173,7 +173,7 @@ Carried over from the team's original learning plan, restated for the hexagonal 
 | `DeviceSession` | `BleConnection` | 14–16 |
 | `PermissionAccess` | `PermissionChecker` | 12 |
 | `StatusReport` | `BatteryProvider`, `NetworkProvider`, `BluetoothProvider`, `ConnectionStatus` (a bridge adapter to `DeviceSession`) | 17 |
-| `DeviceMonitoring` | `MonitorScheduler`, `LogStore` (+ the three status ports) | 17–19 |
+| `DeviceMonitoring` | `MonitorScheduler`, `LogStore` (+ the status ports of A.6, `ConnectionStatus` included) | 17–19 |
 
 ### A.1 UI (Lessons 06–08, 20)
 Keep the UI simple, and enough to operate and test every feature. It must use: a text label, a text field, a button, a list, an image, basic navigation between screens/sections, a loading indicator, and a status/error message. Out of scope: advanced design, animations, complex layouts, design systems.

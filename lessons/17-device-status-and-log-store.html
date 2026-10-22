@@ -161,7 +161,7 @@ interface BluetoothProvider {
   <ul class="legend">
     <li data-part="core">App core</li>
     <li data-part="inbound">Inbound</li>
-    <li data-part="outbound">Outbound ports</li>
+    <li data-part="outbound">Outbound ports and the bridge adapter</li>
     <li data-part="android">Android adapters</li>
     <li data-part="ios">iOS adapters</li>
   </ul>
@@ -280,7 +280,7 @@ interface BluetoothProvider {
     <li><strong>A port in the asking service's terms.</strong> <code>ConnectionStatus</code> has the one call the status needs, in the app core's own model, <code>ConnectionState</code>. Its fake, <code>FakeConnectionStatus</code>, is one property and one method; a stand-in for <code>DeviceSession</code> would also need <code>connect</code>, <code>disconnect</code>, <code>services</code>, <code>read</code> and <code>subscribe</code> (<code>TestDeviceSession</code>, grown over Lessons 14–16, is 72 lines).</li>
     <li><strong>The bridge holds no rules.</strong> It passes the session's state on as it is: what counts as connected stays in <code>StatusService</code> (section 2), and the connection-state machine stays in <code>SessionService</code> (Lesson 16). If a bridge ever seems to need an <code>if</code>, that rule belongs in one of the two services, where their tests can see it.</li>
     <li><strong>An outbound adapter, in the shared code.</strong> It sits in <code>adapter/outbound</code> next to the simulated radio: an outbound adapter whose "outside world" is another capability. It touches no platform API, so one copy in <code>commonMain</code> serves both platforms.</li>
-    <li><strong>One definition widens.</strong> Lesson 10's table says inbound adapters call an inbound port; from today, a bridge adapter can too. Everything else still holds: every port is implemented by an adapter, and a service calls only outbound ports.</li>
+    <li><strong>One definition widens.</strong> Lesson 10's table says inbound adapters call an inbound port; from today, a bridge adapter can too. Everything else still holds: every outbound port is implemented by an outbound adapter, and a service calls only outbound ports.</li>
   </ol>
   <p>Why not something nearer? Each of these is shorter or more familiar, and each breaks a rule the course leans on:</p>
   <div class="table-wrap">
@@ -959,7 +959,7 @@ interface LogStore {
       <button class="opt" data-correct>an outbound port of its own, named in its own terms, which a bridge adapter in the shared code implements by calling the other capability's inbound port</button>
     </div>
     <p class="feedback"></p>
-    <p class="why">Services don't know each other: a service calls only outbound ports, and every port is implemented by an adapter. The bridge is that adapter, and it holds no rules.</p>
+    <p class="why">Services don't know each other: a service calls only outbound ports, and every outbound port is implemented by an outbound adapter. The bridge is that adapter, and it holds no rules.</p>
   </div>
   <div class="quiz mcq">
     <p class="q">Why doesn't <code>SessionService</code> simply implement <code>ConnectionStatus</code> as well, and save the bridge file?</p>
