@@ -28,7 +28,7 @@
   </div>
 
   <p><span class="tag">Primary source</span> Android's <a href="https://developer.android.com/training/permissions/requesting">Request runtime permissions</a>, before section 1, and Apple's <a href="https://developer.apple.com/documentation/corebluetooth/cbmanagerauthorization">CBManagerAuthorization</a> (four short cases), before section 6.</p>
-  <p><span class="tag">Tracks</span> The app core, its tests and both outbound adapters are the same on every track (sections 1–4, 6 and 9). The tracks differ in two places: how an Android screen lends the adapter its result launcher (section 5), and how each screen shows the permission and notices that the user is back from Settings (section 8). The XML Views and UIKit tracks also change one layout each. Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+  <p><span class="tag">Tracks</span> The app core, its tests and both outbound adapters are the same on every track (sections 1–4, 6 and 9). The tracks differ in two places: where Android code lends the adapter its result launcher (section 5), and how each screen shows the permission and notices that the user is back from Settings (section 8). The XML Views and UIKit tracks also change one layout each. Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
 
   <h2>What changes from m06</h2>
   <div class="table-wrap">
@@ -194,7 +194,7 @@
   </ol>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="l12-hex-title">
-      <title id="l12-hex-title">Who talks to whom for a permission request. The screen calls the shared DeviceListViewModel, an inbound adapter, which calls the inbound port PermissionAccess. PermissionService in the app core implements it and calls the outbound port PermissionChecker. Two outbound adapters implement that port: AndroidPermissionChecker, Kotlin in androidMain, which reaches Android's permission dialog through a result launcher; and IosPermissionChecker, Swift in the iOS app, which reads CBManager.authorization and creates a CBCentralManager. On Android only, a dashed arrow shows the screen lending its result launcher to the adapter, because only an Activity or a Fragment can register one. In the tests, FakePermissionChecker replaces both adapters.</title>
+      <title id="l12-hex-title">Who talks to whom for a permission request. The screen calls the shared DeviceListViewModel, an inbound adapter, which calls the inbound port PermissionAccess. PermissionService in the app core implements it and calls the outbound port PermissionChecker. Two outbound adapters implement that port: AndroidPermissionChecker, Kotlin in androidMain, which reaches Android's permission dialog through a result launcher; and IosPermissionChecker, Swift in the iOS app, which reads CBManager.authorization and creates a CBCentralManager. On Android only, a dashed arrow shows the Android UI code lending its result launcher to the adapter, because only an Activity or a Fragment can register one. In the tests, FakePermissionChecker replaces both adapters.</title>
       <defs><marker id="l12-hex-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <g data-part="android">
         <rect class="box" x="10" y="30" width="130" height="50" rx="6"/>
@@ -244,7 +244,7 @@
       <path class="edge dashed" d="M640,265 L600,156" marker-end="url(#l12-hex-arrow)"/>
       <path class="edge dashed" d="M400,265 L540,156" marker-end="url(#l12-hex-arrow)"/>
       <path class="edge dashed" d="M75,30 L75,12 L740,12 L740,198" marker-end="url(#l12-hex-arrow)"/>
-      <text class="small" x="220" y="9">Android only: the screen lends its result launcher</text>
+      <text class="small" x="220" y="9">Android only: an Activity or a Fragment lends its result launcher</text>
     </svg>
     <figcaption>Solid arrows are calls; dashed arrows into a port mean "implements". The top arrow is the one Android-only exception, explained in section 5.</figcaption>
   </figure>
@@ -337,7 +337,7 @@
   </figure>
   <ol class="walk">
     <li><strong><code>isGranted</code></strong> is <code>ContextCompat.checkSelfPermission(context, name) == PERMISSION_GRANTED</code>, for every Android name the app permission maps to.</li>
-    <li><strong><code>shouldShowRationale</code></strong> asks <code>ActivityCompat.shouldShowRequestPermissionRationale(activity, name)</code>, which needs an <code>Activity</code>: section 5 is where the adapter gets one. Until a screen has lent one, the adapter answers <code>false</code> here (section 8 shows when that matters). Its documentation says only "Gets whether you should show UI with rationale before requesting a permission". It doesn't say when it answers <code>false</code>, so we watched (table below).</li>
+    <li><strong><code>shouldShowRationale</code></strong> asks <code>ActivityCompat.shouldShowRequestPermissionRationale(activity, name)</code>, which needs an <code>Activity</code>: section 5 is where the adapter gets one. Without one it answers <code>false</code> here, and a <code>Denied</code> permission would read as <code>PermanentlyDenied</code> (refusal remembered) or <code>NotRequested</code> (none remembered). So both Android tracks lend the <code>Activity</code> before anything reads the status (sections 5 and 8). Its documentation says only "Gets whether you should show UI with rationale before requesting a permission". It doesn't say when it answers <code>false</code>, so we watched (table below).</li>
     <li><strong><code>refusals</code></strong> is the adapter's memory. "Not granted, and no rationale" means two different things: never asked, or refused for good. Android can't tell them apart, so the adapter remembers, in <code>SharedPreferences</code>, every permission it has seen refused. A memory of refusals is the adapter's job, not a rule of the app: iOS needs none.</li>
   </ol>
   <p>Here's what we saw. The first four rows' statuses match on the Android 16 (API 36) and Android 11 (API 30) emulators; the last row was run on API 36. The flags come from <code>adb shell dumpsys package com.example.devicemonitor</code> on API 36 (only <code>USER_SET</code> and <code>USER_FIXED</code> are shown; "none" means neither):</p>
@@ -356,7 +356,7 @@
     <span class="label">Gotcha · "not granted, no rationale" is not "permanently denied"</span>
     Our first version of the adapter skipped the memory: after a request, "not granted and no rationale" meant <code>PermanentlyDenied</code>. Then we dismissed the very first dialog with Back. Android recorded nothing (no flags), the dialog would have shown again, and the app told the user to go to Settings. Android's docs don't say what a dismissal does, so we checked: it isn't a refusal. The memory fixes both mistakes. A dismissal stays <code>NotRequested</code>, because nothing was ever refused. A permanent refusal survives a cold start, which without the memory would read <code>NotRequested</code>, and its "Allow" button would show no dialog.
   </div>
-  <p>Requesting uses the launcher a screen lends the adapter (section 5) and waits for the answer:</p>
+  <p>Requesting uses the launcher lent to the adapter (section 5) and waits for the answer:</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidPermissionChecker.kt</figcaption>
 <pre><code>    override suspend fun request(permissions: List&lt;Permission&gt;): Map&lt;Permission, PermissionStatus&gt; {
@@ -386,8 +386,8 @@
     Android's guide is explicit about the denied branch: "respect the user's decision. Don't link to system settings in an effort to convince the user to change their decision." The app shows one line that says what's unavailable, with one button: "Ask again" while the system can still show its dialog, and "Open Settings" only once it can't, because Settings is then the only way back. It never pops a dialog or asks again on its own. Lesson 13 makes Scan itself depend on the permission, and the rest of the app keeps working without it.
   </div>
 
-  <h2>5. Android: the screen lends a launcher</h2>
-  <p>Here's the one exception to "only the adapter talks to the OS". Android shows its dialog through the Activity Result API, and only an <code>Activity</code> or a <code>Fragment</code> can register for a result: "You must call <code>registerForActivityResult()</code> before the fragment or activity is created", and "the callback must be unconditionally registered every time your activity is created" (<a href="https://developer.android.com/training/basics/intents/result">Get a result from an activity</a>). The adapter lives for the whole process; screens come and go. So the screen registers the launcher and <em>lends</em> it to the adapter. The screen decides nothing: it doesn't check, launch or read the answer.</p>
+  <h2>5. Android: lending the adapter a launcher</h2>
+  <p>Here's the one exception to "only the adapter talks to the OS". Android shows its dialog through the Activity Result API, and only an <code>Activity</code> or a <code>Fragment</code> can register for a result: "You must call <code>registerForActivityResult()</code> before the fragment or activity is created", and "the callback must be unconditionally registered every time your activity is created" (<a href="https://developer.android.com/training/basics/intents/result">Get a result from an activity</a>). The adapter lives for the whole process; activities and fragments come and go. So the UI code registers the launcher and <em>lends</em> it to the adapter, with the <code>Activity</code> the rationale needs (section 4). It decides nothing: it doesn't check, launch or read the answer.</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/AndroidPermissionChecker.kt</figcaption>
 <pre><code><mark>class AndroidPermissionChecker(private val context: Context) : PermissionChecker {</mark>
@@ -415,33 +415,47 @@
     }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong><code>detach</code> checks it's the same launcher.</strong> On rotation, the new screen may attach before the old one detaches. Without the check, the old screen would wipe the new launcher.</li>
+    <li><strong><code>detach</code> checks it's the same launcher.</strong> If a newer <code>Activity</code> or <code>Fragment</code> has attached its own launcher meanwhile, the old one's <code>detach</code> leaves it alone instead of wiping it.</li>
     <li><strong>No <code>Activity</code> is kept after <code>detach</code></strong>: the adapter lives as long as the process, and holding a destroyed <code>Activity</code> would leak it.</li>
   </ol>
   <div class="tracks">
   <div data-track="compose">
   <figure class="excerpt" data-part="android">
-    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</figcaption>
-<pre><code>// Android lets only an Activity or a Fragment register for a result, so the screen lends
-// the permission adapter its launcher. It decides nothing: the adapter reads the answer.
-@Composable
-private fun LendPermissionLauncher() {
-<mark>    val activity = checkNotNull(LocalActivity.current)</mark>
-<mark>    val permissionChecker = (activity.application as DeviceMonitorApplication).permissionChecker</mark>
-<mark>    val launcher = rememberLauncherForActivityResult(RequestMultiplePermissions()) {</mark>
-<mark>        permissionChecker.onResult(activity)</mark>
+    <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/MainActivity.kt</figcaption>
+<pre><code>class MainActivity : ComponentActivity() {
+<span class="elide">⋯  a three-line comment: why the Activity registers and lends the launcher</span>
+<mark>    private val permissionChecker by lazy {</mark>
+        (application as DeviceMonitorApplication).permissionChecker
     }
-<mark>    DisposableEffect(permissionChecker, activity, launcher) {</mark>
-<mark>        permissionChecker.attach(activity, launcher)</mark>
-<mark>        onDispose { permissionChecker.detach(launcher) }</mark>
+<mark>    private val permissionLauncher = registerForActivityResult(RequestMultiplePermissions()) {</mark>
+<mark>        permissionChecker.onResult(this)</mark>
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+<span class="elide">⋯  a two-line comment: why attach comes before setContent</span>
+<mark>        permissionChecker.attach(this, permissionLauncher)</mark>
+<mark>        setContent {</mark>
+<span class="elide">⋯  MaterialTheme { DeviceMonitorApp() }: as in m06</span>
+        }
+    }
+
+    override fun onDestroy() {
+<mark>        permissionChecker.detach(permissionLauncher)</mark>
+        super.onDestroy()
     }
 }</code></pre>
   </figure>
   <ol class="walk">
-    <li><strong><code>rememberLauncherForActivityResult</code></strong> is Compose's <code>registerForActivityResult</code>. Android's Compose guide: "The same Activity Result API and <code>rememberLauncherForActivityResult()</code> explained above can be used to request runtime permissions using … <code>RequestMultiplePermissions</code> contract for multiple permissions" (<a href="https://developer.android.com/develop/ui/compose/libraries">Compose and other libraries</a>). A new <code>Activity</code> means a new composition, so the launcher is registered again for every new <code>Activity</code>, as the rule asks.</li>
-    <li><strong><code>DisposableEffect</code></strong> runs <code>attach</code> when the composable enters the composition and <code>onDispose</code> when it leaves: Lesson 06's rule that side effects go in callbacks or lifecycle-bound effects. The keys restart it with a new <code>Activity</code> or launcher.</li>
-    <li><strong><code>LocalActivity.current</code></strong> is the <code>Activity</code> hosting the composition (<code>androidx.activity.compose</code>). Its <code>application</code> is our <code>DeviceMonitorApplication</code>, which owns the adapter (section 7). Android's manual DI page reaches its container the same way: <code>(application as MyApplication).appContainer</code>.</li>
+    <li><strong>A property initializer</strong> is the safe place: "<code>registerForActivityResult()</code> is safe to call before your fragment or activity is created, letting it be used directly when declaring member variables" (<a href="https://developer.android.com/training/basics/intents/result">Get a result from an activity</a>). A rotation creates a new <code>MainActivity</code>, which registers again, as the rule asks, and its callback passes that new <code>Activity</code> to <code>onResult</code>.</li>
+    <li><strong><code>attach</code> comes before <code>setContent</code></strong>, because the first read of the permission happens inside it: <code>koinViewModel()</code> builds the list screen's ViewModel when the screen is first composed, and the ViewModel's constructor reads the status (section 8). Attached first, that read already has the <code>Activity</code>, so it can tell <code>Denied</code> apart.</li>
+    <li><strong><code>onCreate</code>/<code>onDestroy</code></strong> bracket the <code>Activity</code>'s whole life, so the adapter never holds a destroyed one. Its <code>application</code> is our <code>DeviceMonitorApplication</code>, which owns the adapter (section 7); <code>by lazy</code> reads it only when <code>onCreate</code> first needs it. Android's manual DI page reaches its container the same way: <code>(application as MyApplication).appContainer</code>.</li>
   </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · a composable lends too late for the first read</span>
+    Compose has its own launcher: "The same Activity Result API and <code>rememberLauncherForActivityResult()</code> explained above can be used to request runtime permissions using … <code>RequestMultiplePermissions</code> contract for multiple permissions" (<a href="https://developer.android.com/develop/ui/compose/libraries">Compose and other libraries</a>). Our first version used it, in a composable inside the list screen that attached the adapter in a <code>DisposableEffect</code>. That effect ran only after the screen had been composed, and composing it had already built the ViewModel, whose constructor read the status with no <code>Activity</code> attached. That read answers <code>PermanentlyDenied</code> or <code>NotRequested</code> for a <code>Denied</code> permission (section 4), and the screen shows it until <code>ON_RESUME</code> reads the status again. It's a race: on the API 36 emulator, two of our four screen recordings of a cold start after one refusal showed "Bluetooth permission is off" + Open Settings for the first frames, then "denied" + Ask again. After turning the permission off in Settings, the adapter remembers no refusal, so the wrong row is "needs Bluetooth permission" + Allow Bluetooth. With <code>MainActivity</code> lending before <code>setContent</code>, every cold start we recorded, after one refusal and after turning it off in Settings, showed "denied" + Ask again from the first frame.
+  </div>
   </div>
   <div data-track="xml">
   <figure class="excerpt" data-part="android">
@@ -471,8 +485,8 @@ private fun LendPermissionLauncher() {
   </ol>
   </div>
   </div>
-  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>The same three calls, <code>attach</code>, <code>onResult</code> and <code>detach</code>, in different homes. The Fragment registers once per instance, as a property, and brackets the visible time with <code>onStart</code>/<code>onStop</code>. Compose registers with <code>rememberLauncherForActivityResult</code> and ties <code>attach</code>/<code>detach</code> to the composable's time on screen with <code>DisposableEffect</code>.</p>
-  <p><strong>We rotated the emulator while the dialog was up</strong>, on both tracks (API 36). The <code>Activity</code> behind the dialog was recreated (logcat: <code>finishDrawing of relaunch: … MainActivity</code>). The answer was still delivered to the new screen's launcher, and the screen showed "allowed" or "denied" as answered. The ViewModel and the adapter both outlived the old <code>Activity</code>, so the coroutine waiting in <code>request</code> got its answer.</p>
+  <p data-both-only="android" class="callout ts"><span class="label">XML vs Compose · what changed and why</span>The same three calls, <code>attach</code>, <code>onResult</code> and <code>detach</code>, in different homes. The XML track's screen is a <code>Fragment</code>, which can register for itself: it registers once per instance, as a property, and brackets the visible time with <code>onStart</code>/<code>onStop</code>. A Compose screen is a composable, which can't lend before it is composed, so the one <code>Activity</code> registers, as a property too, and brackets its whole life with <code>onCreate</code>/<code>onDestroy</code>. Either way, the <code>Activity</code> is attached before the screen's ViewModel first reads the status (section 8).</p>
+  <p><strong>We rotated the emulator while the dialog was up</strong>, on both tracks (API 36). The <code>Activity</code> behind the dialog was recreated (logcat: <code>finishDrawing of relaunch: … MainActivity</code>). The answer was still delivered to the launcher the new <code>Activity</code> (Compose) or <code>Fragment</code> (XML) registered, and the screen showed "allowed" or "denied" as answered. The ViewModel and the adapter both outlived the old <code>Activity</code>, so the coroutine waiting in <code>request</code> got its answer.</p>
 
   <h2>6. The iOS adapter, in Swift</h2>
   <p>The iOS adapter is a Swift class in the iOS app that implements the Kotlin interface <code>PermissionChecker</code>. Swift sees a Kotlin interface as a protocol, so this is protocol conformance, and Koin hands the object to the app core like any other adapter. It's shared by both iOS tracks:</p>
@@ -581,7 +595,7 @@ private fun LendPermissionLauncher() {
     <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt · both Android tracks</figcaption>
 <pre><code>class DeviceMonitorApplication : Application() {
     // The Android permission adapter, one for the process. Koin hands it to the app core as
-    // its PermissionChecker, and the screen lends it a result launcher.
+    // its PermissionChecker, and an Activity or a Fragment lends it a result launcher.
 <mark>    lateinit var permissionChecker: AndroidPermissionChecker</mark>
         private set
 
@@ -644,7 +658,7 @@ private fun LendPermissionLauncher() {
 <span class="elide">⋯  openSettings() calls permissions.openSettings()</span></code></pre>
   </figure>
   <ol class="walk">
-    <li><strong>The constructor reads the status</strong>, so the screen never shows a placeholder. On Android that first read can be wrong: the ViewModel is built before the screen lends the adapter its <code>Activity</code>, so the rationale reads <code>false</code> (section 4), and a <code>Denied</code> permission comes back as <code>PermanentlyDenied</code> (refusal remembered) or <code>NotRequested</code> (none remembered). The re-read below puts it right when the screen resumes. On the Compose track (API 36), a cold start after a refusal showed the wrong row for the first few frames, then "denied" + Ask again. On the XML track, where the Fragment re-reads in <code>onResume</code>, the same cold start showed "denied" from its first frame (API 36).</li>
+    <li><strong>The constructor reads the status</strong>, so the screen never shows a placeholder. On Android that read needs the lent <code>Activity</code> (section 4), and both tracks have it by then. On Compose, <code>MainActivity</code> attaches before <code>setContent</code>, and the ViewModel is built when the screen is first composed. On XML, the Fragment attaches in <code>onStart</code> and first touches its <code>by viewModel()</code> property when its <code>repeatOnLifecycle(STARTED)</code> block starts collecting, which is after <code>onStart</code>. On API 36, a cold start after one refusal, and one after turning the permission off in Settings, showed "denied" + Ask again from the first frame on both tracks (screen recordings).</li>
     <li><strong><code>refreshPermission</code> re-reads it</strong>, and every screen calls it when the app comes back to the foreground: the user may have changed it in Settings. It does nothing while a request is running, so it can't overwrite the answer that request is about to report.</li>
     <li><strong>Koin needs no change for the new parameter</strong>: <code>viewModelOf(::DeviceListViewModel)</code> fills both with <code>get()</code>.</li>
   </ol>
@@ -653,8 +667,7 @@ private fun LendPermissionLauncher() {
   <div data-track="compose">
   <figure class="excerpt" data-part="android">
     <figcaption class="path">androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</figcaption>
-<pre><code><mark>    LendPermissionLauncher()</mark>
-    // Back from Settings (or anywhere else): the permission may have changed.
+<pre><code>    // Back from Settings (or anywhere else): the permission may have changed.
 <mark>    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermission() }</mark>
 <span class="elide">⋯  DeviceListContent(…, bluetooth = state.bluetooth, onAllow = viewModel::requestPermission, onOpenSettings = viewModel::openSettings, …)</span>
 @Composable
@@ -850,7 +863,7 @@ private fun PermissionRow(status: PermissionStatus, onAllow: () -&gt; Unit, onOp
     <tr><td>allow it while the app is in the background, return</td><td colspan="2">"Bluetooth permission: allowed", Scan enabled; Scan finds 5 devices, as in m06</td></tr>
   </table>
   </div>
-  <p>On API 36, allowing it in Settings kept the app's process (same pid). Turning it <em>off</em> in Settings ended the process, and returning to the app started it fresh, showing "denied" + Ask again (on Compose, after a few frames of the "needs Bluetooth permission" row: section 8). Android's guide says the same of one-time permissions: "As with any permission, if the user revokes your app's one-time permission, your app's process terminates." That's one more reason the status lives in the OS and the adapter's memory, never only in the ViewModel. On the iOS Simulator both iOS tracks launch with "Bluetooth permission: allowed" and Scan enabled (section 6's gotcha).</p>
+  <p>On API 36, allowing it in Settings kept the app's process (same pid). Turning it <em>off</em> in Settings ended the process, and returning to the app started it fresh, showing "denied" + Ask again from the first frame on both tracks (section 5's gotcha shows why that takes lending before the first read). Android's guide says the same of one-time permissions: "As with any permission, if the user revokes your app's one-time permission, your app's process terminates." That's one more reason the status lives in the OS and the adapter's memory, never only in the ViewModel. On the iOS Simulator both iOS tracks launch with "Bluetooth permission: allowed" and Scan enabled (section 6's gotcha).</p>
   <p><strong>m07 is a natural stop</strong> when <code>allTests</code> is green on both platforms and the Android emulator walks the table above. Commit it. Lesson 13 replaces the simulated radio with real ones: the Android scanner will need <code>BLUETOOTH_SCAN</code>, and the iOS one will need the authorization this lesson asked for.</p>
   <div class="callout ask-agent">
     <span class="label">Ask your agent</span>
@@ -890,14 +903,24 @@ private fun PermissionRow(status: PermissionStatus, onAllow: () -&gt; Unit, onOp
     <p class="why">"Prompt only when a prompt can appear" is a rule of the app, the same on both platforms, so it lives in the service, and <code>neverPromptsWhenOnlySettingsCanChangeIt</code> tests it. The screens hide the button too, but that's presentation.</p>
   </div>
   <div class="quiz mcq">
-    <p class="q">Why does an Android screen touch the permission adapter at all?</p>
+    <p class="q">Why does Android UI code touch the permission adapter at all?</p>
     <div class="opts">
-      <button class="opt" data-correct>only an Activity or a Fragment can register for a result, so the screen lends the adapter its launcher</button>
+      <button class="opt" data-correct>only an Activity or a Fragment can register for a result, so one of them lends the adapter its launcher</button>
       <button class="opt">the screen reads the answer and tells the ViewModel</button>
       <button class="opt">Koin can't inject the adapter into the ViewModel</button>
     </div>
     <p class="feedback"></p>
-    <p class="why">Registration belongs to the Activity or Fragment and must happen every time one is created. The screen registers and lends the launcher; the adapter launches it and reads the answer.</p>
+    <p class="why">Registration belongs to the Activity or Fragment and must happen every time one is created. It registers and lends the launcher; the adapter launches it and reads the answer.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">On the Compose track, why does <code>MainActivity</code> call <code>attach</code> before <code>setContent</code>?</p>
+    <div class="opts">
+      <button class="opt"><code>registerForActivityResult</code> throws once <code>setContent</code> has run</button>
+      <button class="opt" data-correct>composing the list screen builds its ViewModel, whose constructor reads the status, and only an attached <code>Activity</code> lets the adapter tell <code>Denied</code> apart</button>
+      <button class="opt">Koin can't start until the launcher is attached</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Without an <code>Activity</code> the adapter can't ask for the rationale, so a <code>Denied</code> permission reads as <code>PermanentlyDenied</code> or <code>NotRequested</code>. A composable that attaches in a <code>DisposableEffect</code> attaches only after that first read, and the wrong row can show for the first frames.</p>
   </div>
   <div class="quiz mcq">
     <p class="q">In Swift, why is the method named <code>__request</code> and not <code>request</code>?</p>
@@ -984,7 +1007,7 @@ paths are relative to demo/. Touch no file that isn't listed here.
 2. Android, both tracks: androidApp/src/main/AndroidManifest.xml (my track's) and
    androidApp/src/main/java/com/example/devicemonitor/android/DeviceMonitorApplication.kt:
    replaced. androidApp/build.gradle.kts stays as in m06.
-     Compose: DeviceListScreen.kt: replaced.
+     Compose: MainActivity.kt and DeviceListScreen.kt: replaced.
      XML: DeviceListFragment.kt and res/layout/fragment_device_list.xml: replaced.
    iOS, both tracks: add iosApp/iosApp/IosPermissionChecker.swift; iosApp/project.yml:
    replaced (my track's). Then run `xcodegen generate` in iosApp/: it adds the new Swift file
@@ -1050,6 +1073,15 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      (adb shell settings put system accelerometer_rotation 0; adb shell settings put system
      user_rotation 1). Tap "Allow" in the dialog: the row says "Bluetooth permission: allowed".
      Rotate back with user_rotation 0.
+  9. The first frame: fresh install again, tap Allow Bluetooth, then "Don't allow". Record a
+     cold start three times:
+       adb shell am force-stop com.example.devicemonitor
+       adb shell screenrecord --time-limit 6 /sdcard/rec.mp4 &amp;   (wait a second)
+       adb shell am start -W -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity
+     then adb pull /sdcard/rec.mp4 and extract every frame (ffmpeg -i rec.mp4 -vf setpts=N/TB
+     -fps_mode passthrough f%03d.png). Show me the first frames in which the permission row is visible:
+     in every recording, every such frame says "Bluetooth permission was denied…" with Ask
+     again, never "is off" or "needs Bluetooth permission".
   After each refusal, show me the flags from
     adb shell dumpsys package com.example.devicemonitor | grep BLUETOOTH_SCAN
   (USER_SET after the first, USER_SET|USER_FIXED after the second).
@@ -1732,7 +1764,7 @@ import com.example.devicemonitor.di.initKoin
 // Runs once per process, before any Activity: the place to start Koin.
 class DeviceMonitorApplication : Application() {
     // The Android permission adapter, one for the process. Koin hands it to the app core as
-    // its PermissionChecker, and the screen lends it a result launcher.
+    // its PermissionChecker, and an Activity or a Fragment lends it a result launcher.
     lateinit var permissionChecker: AndroidPermissionChecker
         private set
 
@@ -1773,9 +1805,6 @@ class DeviceMonitorApplication : Application() {
       <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</summary>
 <pre><code>package com.example.devicemonitor.android
 
-import androidx.activity.compose.LocalActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -1796,7 +1825,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -1822,7 +1850,6 @@ fun DeviceListScreen(
     var filter by rememberSaveable { mutableStateOf("") }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    LendPermissionLauncher()
     // Back from Settings (or anywhere else): the permission may have changed.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermission() }
 
@@ -1849,21 +1876,6 @@ fun DeviceListScreen(
             title = { Text("Scan failed") },
             text = { Text(message) },
         )
-    }
-}
-
-// Android lets only an Activity or a Fragment register for a result, so the screen lends
-// the permission adapter its launcher. It decides nothing: the adapter reads the answer.
-@Composable
-private fun LendPermissionLauncher() {
-    val activity = checkNotNull(LocalActivity.current)
-    val permissionChecker = (activity.application as DeviceMonitorApplication).permissionChecker
-    val launcher = rememberLauncherForActivityResult(RequestMultiplePermissions()) {
-        permissionChecker.onResult(activity)
-    }
-    DisposableEffect(permissionChecker, activity, launcher) {
-        permissionChecker.attach(activity, launcher)
-        onDispose { permissionChecker.detach(launcher) }
     }
 }
 
@@ -1967,6 +1979,47 @@ private fun DeviceRow(device: Device, onClick: () -&gt; Unit) {
         trailingContent = { Text("${device.rssi} dBm") },
         modifier = Modifier.clickable(onClick = onClick),
     )
+}</code></pre>
+    </details>
+    <details class="full-file" data-track="compose" data-part="android">
+      <summary>androidApp/src/main/java/com/example/devicemonitor/android/MainActivity.kt</summary>
+<pre><code>package com.example.devicemonitor.android
+
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
+import androidx.compose.material3.MaterialTheme
+
+class MainActivity : ComponentActivity() {
+    // Android lets only an Activity or a Fragment register for a result, and only while it is
+    // being created, so the Activity registers here and lends the launcher to the adapter.
+    // It decides nothing: the adapter reads the answer.
+    private val permissionChecker by lazy {
+        (application as DeviceMonitorApplication).permissionChecker
+    }
+    private val permissionLauncher = registerForActivityResult(RequestMultiplePermissions()) {
+        permissionChecker.onResult(this)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        enableEdgeToEdge()
+        super.onCreate(savedInstanceState)
+        // Before setContent: the list screen's ViewModel reads the permission as soon as the
+        // screen is composed, and the adapter needs this Activity to read it right.
+        permissionChecker.attach(this, permissionLauncher)
+        setContent {
+            MaterialTheme {
+                DeviceMonitorApp()
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        permissionChecker.detach(permissionLauncher)
+        super.onDestroy()
+    }
 }</code></pre>
     </details>
     <details class="full-file" data-track="xml" data-part="android">

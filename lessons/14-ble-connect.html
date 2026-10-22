@@ -1824,7 +1824,7 @@ import com.example.devicemonitor.di.initKoin
 // Runs once per process, before any Activity: the place to start Koin.
 class DeviceMonitorApplication : Application() {
     // The Android permission adapter, one for the process. Koin hands it to the app core as
-    // its PermissionChecker, and the screen lends it a result launcher.
+    // its PermissionChecker, and an Activity or a Fragment lends it a result launcher.
     lateinit var permissionChecker: AndroidPermissionChecker
         private set
 

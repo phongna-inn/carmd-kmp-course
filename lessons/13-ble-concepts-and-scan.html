@@ -1708,7 +1708,7 @@ import com.example.devicemonitor.di.initKoin
 // Runs once per process, before any Activity: the place to start Koin.
 class DeviceMonitorApplication : Application() {
     // The Android permission adapter, one for the process. Koin hands it to the app core as
-    // its PermissionChecker, and the screen lends it a result launcher.
+    // its PermissionChecker, and an Activity or a Fragment lends it a result launcher.
     lateinit var permissionChecker: AndroidPermissionChecker
         private set
 
@@ -1751,9 +1751,6 @@ class DeviceMonitorApplication : Application() {
       <summary>androidApp/src/main/java/com/example/devicemonitor/android/DeviceListScreen.kt</summary>
 <pre><code>package com.example.devicemonitor.android
 
-import androidx.activity.compose.LocalActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -1774,7 +1771,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -1800,7 +1796,6 @@ fun DeviceListScreen(
     var filter by rememberSaveable { mutableStateOf("") }
     val state by viewModel.uiState.collectAsStateWithLifecycle()
 
-    LendPermissionLauncher()
     // Back from Settings (or anywhere else): the permission may have changed.
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshPermission() }
 
@@ -1828,21 +1823,6 @@ fun DeviceListScreen(
             title = { Text("Scan failed") },
             text = { Text(message) },
         )
-    }
-}
-
-// Android lets only an Activity or a Fragment register for a result, so the screen lends
-// the permission adapter its launcher. It decides nothing: the adapter reads the answer.
-@Composable
-private fun LendPermissionLauncher() {
-    val activity = checkNotNull(LocalActivity.current)
-    val permissionChecker = (activity.application as DeviceMonitorApplication).permissionChecker
-    val launcher = rememberLauncherForActivityResult(RequestMultiplePermissions()) {
-        permissionChecker.onResult(activity)
-    }
-    DisposableEffect(permissionChecker, activity, launcher) {
-        permissionChecker.attach(activity, launcher)
-        onDispose { permissionChecker.detach(launcher) }
     }
 }
 
