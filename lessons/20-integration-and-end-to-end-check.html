@@ -229,7 +229,7 @@ fun onAppLaunch() {
 <mark>        monitor()</mark>
         HorizontalDivider()</code></pre>
   </figure>
-  <p>A <strong>slot</strong> is a composable parameter: Compose's docs call them slot APIs, and Material components such as <code>Scaffold</code> and <code>Button</code> take their content that way. <code>DeviceListContent</code> stays stateless: it places whatever it's given, and a preview or a test can pass <code>{}</code>. <code>koinViewModel()</code> scopes the monitor's ViewModel to the list's back stack entry, next to the list's own. <code>ON_RESUME</code> comes on the first frame, on return to the foreground, and after Back from the device screen.</p>
+  <p>A <strong>slot</strong> is a composable parameter: Compose's docs call them slot APIs, and Material components such as <code>Scaffold</code> and <code>Button</code> take their content that way. <code>DeviceListContent</code> stays stateless: it places whatever it's given, and a preview or a test can pass <code>{}</code>. <code>koinViewModel()</code> scopes the monitor's ViewModel to the list's back stack entry, next to the list's own. <code>ON_RESUME</code> comes when the section first appears on a resumed screen (an observer added to a lifecycle is brought up to its current state), on return to the foreground, and after Back from the device screen.</p>
   </div>
   <div data-track="xml">
   <figure class="excerpt" data-part="android">
@@ -244,7 +244,7 @@ fun onAppLaunch() {
 <mark>        monitorViewModel.refreshLog()</mark>
 <span class="elide">⋯  renderMonitor(state): summary, button text, count, newest lines joined with "\n", the problem</span></code></pre>
   </figure>
-  <p>Two flows, two <code>launch</code>es. <code>collect</code> on a <code>StateFlow</code> never returns, so a second <code>collect</code> written after the first inside <code>repeatOnLifecycle</code> would never run. The layout adds a vertical <code>LinearLayout</code>, <code>monitorSection</code>, under the status row, then a one-pixel divider; <code>filterInput</code> now sits below the divider. A Fragment asks Koin for the second ViewModel the same way as the first, with <code>by viewModel()</code>: one of each class, both scoped to the Fragment.</p>
+  <p>Two flows, two <code>launch</code>es. <code>collect</code> on a <code>StateFlow</code> never returns, so a second <code>collect</code> written after the first inside <code>repeatOnLifecycle</code> would never run. The layout adds a vertical <code>LinearLayout</code>, <code>monitorSection</code>, under the status row, then a divider <code>1dp</code> high; <code>filterInput</code> now sits below the divider. A Fragment asks Koin for the second ViewModel the same way as the first, with <code>by viewModel()</code>: one of each class, both scoped to the Fragment.</p>
   </div>
   </div>
   <div class="tracks">
@@ -285,7 +285,7 @@ fun onAppLaunch() {
   <div data-both-only="ios" class="callout ts"><span class="label">UIKit vs SwiftUI · what changed and why</span>SwiftUI gives the section its own view and its own <code>ViewModelOwner</code>, passed into the list's content as a generic slot. UIKit keeps one controller and one owner, with a second ViewModel from the same store and a second render method. Both read the log again when the scene becomes active.</div>
   <div class="callout gotcha">
     <span class="label">Gotcha · "Monitor running" and no record</span>
-    After Start, Android writes a record within seconds: a new periodic work request runs at once. iOS writes the first one a whole interval after Start, because the foreground timer waits one interval before its first tick (Lesson 19, section 3). Both are right, and both are in the behaviour table. A tester who taps Start on an iPhone and sees "Records in the log: 0" for 15 minutes hasn't found a bug.
+    After Start, Android writes a record within seconds: a new periodic work request runs at once. iOS writes the first one a whole interval after Start, because the foreground timer waits one interval before its first tick (Lesson 19, section 3). Both are right, and both follow from the behaviour table's rows: Android's "a record a moment after the first launch" (new work runs at once) and iOS's first record "one interval after the app becomes active". A tester who taps Start on an iPhone and sees "Records in the log: 0" for 15 minutes hasn't found a bug.
   </div>
 
   <h2>4. A Stop that lasts</h2>
@@ -379,7 +379,7 @@ fun onAppLaunch() {
   <ol class="walk" start="4">
     <li><strong>A port, because storage is the platform's.</strong> Lesson 10's recipe for a platform capability: an outbound port in the app's terms, one adapter per platform. The port stores a fact (the last tap was Stop); the service decides what it means.</li>
     <li><strong>A plain <code>Boolean</code>, false until set,</strong> so the adapters need no "missing" case: SharedPreferences returns the default you pass "if the key isn't present", and <code>UserDefaults.bool(forKey:)</code> returns "<code>false</code> if the key isn't present in the defaults database". It also crosses into Swift as a <code>Bool</code>; a Kotlin <code>Boolean?</code> would arrive as <code>KotlinBoolean?</code> (Lesson 17).</li>
-    <li><strong>Not suspending.</strong> The launch must know the answer before Android's worker reads the tick: <code>MonitorWorker</code> takes <code>currentTick</code> when it runs, and the only moment sure to come before that is <code>Application.onCreate</code> (Lesson 18). A suspending read would have to finish later, in a coroutine, and a worker could run first and find no tick.</li>
+    <li><strong>Not suspending.</strong> The launch must know the answer before Android's worker reads the tick: <code>MonitorWorker</code> takes <code>currentTick</code> when it runs, and the only moment sure to come before that is <code>Application.onCreate</code> (Lesson 18). A suspending read would have to finish later, in a coroutine, where a worker could run first and find no tick, or block the main thread until it finished.</li>
   </ol>
   <div class="tracks">
   <div data-track="compose">
@@ -432,7 +432,7 @@ fun onAppLaunch() {
   </div>
 
   <h2>5. A rule out of a ViewModel: the scan's time limit</h2>
-  <p>Lesson 13 put the 10-second limit around the list ViewModel's collection, with the comment "A real radio drains the battery while it scans, so every scan has a time limit." "Every scan" is a rule of the app, and a second screen that scanned would have to remember to copy it. The session's connect timeout has been the session service's since Lesson 14. The scan's moves to its service:</p>
+  <p>Lesson 13 put the 10-second limit around the list ViewModel's collection, with the comment "A real radio drains the battery while it scans, so every scan has a time limit." Lessons 10 and 13 kept it there as this screen's behaviour: how long one screen waits. The comment's reason is wider than that: a scan drains the battery whichever screen starts it, so "every scan" is a rule of the app, and a second screen that scanned would have to remember to copy it. The session's connect timeout has been the session service's since Lesson 14. The scan's moves to its service:</p>
   <figure class="excerpt" data-part="core">
     <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/core/ScanningService.kt</figcaption>
 <pre><code>    override fun scan(nameFilter: String): Flow&lt;Device&gt; = flow {
@@ -472,7 +472,7 @@ fun onAppLaunch() {
   </ol>
 
   <h2>6. Nothing unused</h2>
-  <p>Gradle builds a dependency whether you use it or not, and Kotlin doesn't warn about a public class nobody calls. A search does:</p>
+  <p>Gradle puts a declared dependency on the classpath whether you use it or not, and Kotlin doesn't warn about a public class nobody calls. A search does:</p>
 <pre><code>grep -rn 'import androidx.core' androidApp/src                # nothing: core-ktx isn't used here
 grep -rn 'Greeting\|platformName' shared androidApp iosApp \
   --include='*.kt' --include='*.swift'                        # only their own declarations</code></pre>
@@ -563,7 +563,7 @@ grep -rn 'Greeting\|platformName' shared androidApp iosApp \
     <tr><td>BLE: subscribe, receive</td><td>Subscribe on <code>2A19</code></td><td>Unsubscribe in its place, and the value under it changing about every second as the simulated battery runs down</td></tr>
     <tr><td>BLE: disconnect, reconnect</td><td>Unsubscribe, Disconnect, Connect</td><td>"Status: not connected", services gone; "Status: connected" again</td></tr>
     <tr><td>BLE: unexpected disconnect</td><td>Back, Tire Pressure Sensor, Connect, wait 20 s</td><td>"Connection failed": "The link to Tire Pressure Sensor was lost (simulated)."</td></tr>
-    <tr><td>monitor: start</td><td>fresh install, launch</td><td>Android: "Monitor running, about every 15 min", "Records in the log: 1" and its line, within 8 s. iOS: running, 0 records; the first record one interval after the timer started (in our UIKit run, 15 minutes after Start, on screen without a tap)</td></tr>
+    <tr><td>monitor: start</td><td>fresh install, launch</td><td>Android: "Monitor running, about every 15 min", "Records in the log: 1" and its line, within 10 s. iOS: running, 0 records; the first record one interval after the timer started (in our UIKit run, 15 minutes after Start, on screen without a tap)</td></tr>
     <tr><td>monitor: stop</td><td>Stop</td><td>"Monitor stopped"; Android: our job gone from <code>dumpsys jobscheduler</code>, and <code>stoppedByUser</code> true in <code>shared_prefs/monitor.xml</code></td></tr>
     <tr><td>monitor: restart</td><td>Android: Home, <code>am kill</code>, launch (a new pid). iOS: terminate, launch</td><td>still "Monitor stopped", no job, no new record. Start: running; Android wrote a record at once and the job was back with <code>TIME=+14m49s</code></td></tr>
     <tr><td>monitor: background, return, OS termination, force-kill</td><td>Lesson 19's runs</td><td>unchanged: m15 changes only what a launch does after a Stop. The rows of <code>docs/monitor-behaviour.md</code> hold</td></tr>
