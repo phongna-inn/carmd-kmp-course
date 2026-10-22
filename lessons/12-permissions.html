@@ -1091,6 +1091,7 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   (U+2019), not a straight one: match it exactly, or by its prefix "Don".
   To read whether Scan is enabled in the Compose track's dump, look at the clickable node
   just before the "Scan" text (its enabled="false"): the text node itself always says true. A dump takes about 2 s: wait for the screen you expect before the next tap.
+  Before step 6, close any Settings left open by an earlier session (adb shell am force-stop com.android.settings; adb shell am force-stop com.google.android.permissioncontroller): otherwise Open Settings can land inside that old Settings task, on another page, and Back then stays in Settings instead of returning to the app.
 - Optional, if you have an emulator with Android 11 (API 30): the same steps ask for location
   instead ("Allow Device Monitor to access this device's location?", with "While using the
   app", "Only this time" and "Deny"), and every step's row matches. Grant with
