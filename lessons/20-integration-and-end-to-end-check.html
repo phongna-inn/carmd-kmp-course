@@ -531,7 +531,7 @@ grep -rn 'Greeting\|platformName' shared androidApp iosApp \
             permissionChecker = permissionChecker,
 <mark>            bleScanner = com.example.devicemonitor.adapter.outbound.SimulatedBleScanner(),</mark>
 <mark>            bleConnection = com.example.devicemonitor.adapter.outbound.SimulatedBleConnection(),</mark>
-<span class="elide">⋯  the other seven adapters, as in m15</span></code></pre>
+<span class="elide">⋯  the other six adapters, as in m15</span></code></pre>
   </figure>
   </div>
   <div data-track="xml">
@@ -546,7 +546,7 @@ grep -rn 'Greeting\|platformName' shared androidApp iosApp \
             permissionChecker: IosPermissionChecker(),
 <mark>            bleScanner: SimulatedBleScanner(),</mark>
 <mark>            bleConnection: SimulatedBleConnection(),</mark>
-<span class="elide">⋯  the other seven adapters, as in m15</span></code></pre>
+<span class="elide">⋯  the other six adapters, as in m15</span></code></pre>
   </figure>
   </div>
   <div data-track="uikit">
@@ -562,7 +562,7 @@ grep -rn 'Greeting\|platformName' shared androidApp iosApp \
     <tr><td>BLE: connect, discover, read</td><td>OBD-II Adapter, Connect, Read on <code>2A19</code></td><td>"Status: connected", four services; "82 %" under the battery level</td></tr>
     <tr><td>BLE: subscribe, receive</td><td>Subscribe on <code>2A19</code></td><td>Unsubscribe in its place, and the value under it changing about every second as the simulated battery runs down</td></tr>
     <tr><td>BLE: disconnect, reconnect</td><td>Unsubscribe, Disconnect, Connect</td><td>"Status: not connected", services gone; "Status: connected" again</td></tr>
-    <tr><td>BLE: unexpected disconnect</td><td>Back, Tire Pressure Sensor, Connect, wait 15 s</td><td>"Connection failed": "The link to Tire Pressure Sensor was lost (simulated)."</td></tr>
+    <tr><td>BLE: unexpected disconnect</td><td>Back, Tire Pressure Sensor, Connect, wait 20 s</td><td>"Connection failed": "The link to Tire Pressure Sensor was lost (simulated)."</td></tr>
     <tr><td>monitor: start</td><td>fresh install, launch</td><td>Android: "Monitor running, about every 15 min", "Records in the log: 1" and its line, within 8 s. iOS: running, 0 records; the first record one interval after the timer started (in our UIKit run, 15 minutes after Start, on screen without a tap)</td></tr>
     <tr><td>monitor: stop</td><td>Stop</td><td>"Monitor stopped"; Android: our job gone from <code>dumpsys jobscheduler</code>, and <code>stoppedByUser</code> true in <code>shared_prefs/monitor.xml</code></td></tr>
     <tr><td>monitor: restart</td><td>Android: Home, <code>am kill</code>, launch (a new pid). iOS: terminate, launch</td><td>still "Monitor stopped", no job, no new record. Start: running; Android wrote a record at once and the job was back with <code>TIME=+14m49s</code></td></tr>
@@ -825,7 +825,9 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      pid): "Monitor stopped", still one record, still no job.
   4. Tap Start: within 10 s "Monitor running, about every 15 min", "Records in the log: 2", two
      lines, newest first; the dumpsys grep shows our job with TIME=+14m… or a little less.
-  5. Tap Clear: "Records in the log: 0", no record lines, and Clear disabled.
+  5. Tap Clear: "Records in the log: 0", no record lines, and Clear disabled. (In the Compose track's
+     uiautomator dump the label text always reads enabled="true"; the disabled flag is on the
+     clickable android.view.View around it, so read that node's enabled attribute.)
   6. Permission rows: adb uninstall, adb install (no pm grant), launch: "Device Monitor needs
      Bluetooth permission to find nearby devices." Tap Allow Bluetooth, then Don't allow in the
      system dialog: "Bluetooth permission was denied. Scanning needs it to find nearby devices."
@@ -2329,7 +2331,7 @@ put them back afterwards). On phones, use the real adapters and LightBlue (Lesso
 | BLE: read | Read on a readable characteristic | Its value under it (simulated battery: "82 %") | emulator, Simulator (simulated); phone, not yet run |
 | BLE: subscribe, receive | Subscribe on a notifying characteristic | A new value under it as the device sends one | emulator, Simulator (simulated); phone, not yet run |
 | BLE: disconnect, reconnect | Unsubscribe, Disconnect, Connect | "Status: not connected", services gone; then connected again | emulator, Simulator (simulated); phone, not yet run |
-| BLE: unexpected disconnect | Simulated: connect to Tire Pressure Sensor and wait 15 s. Phone: stop the peripheral | "Connection failed" with the reason, once; "Status: not connected" | emulator, Simulator (simulated); phone, not yet run |
+| BLE: unexpected disconnect | Simulated: connect to Tire Pressure Sensor and wait 20 s. Phone: stop the peripheral | "Connection failed" with the reason, once; "Status: not connected" | emulator, Simulator (simulated); phone, not yet run |
 | Camera | Extension E2 only | | not in the core app |
 | API | Extension E1 only | | not in the core app |
 | Monitor: start | Start | "Monitor running, about every 15 min". Android: a record within seconds. iOS: the first record one interval after Start | emulator, Simulator |
