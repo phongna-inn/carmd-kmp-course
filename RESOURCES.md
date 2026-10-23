@@ -92,6 +92,8 @@
   Official Ktor client docs: one engine per platform (OkHttp on Android, Darwin over `NSURLSession` on iOS), `install(ContentNegotiation) { json() }` with `setBody` and `body<T>()`, the request, connect and socket timeouts with a per-request `timeout { }` (and the engine table: Darwin has no connect timeout), no status validation unless `expectSuccess`, and `MockEngine` with the engine passed into the class under test. Use for: Extension E1 (primary source).
 - [Android Developers: Network security configuration](https://developer.android.com/privacy-and-security/security-config) and [Apple Developer: Preventing insecure network connections](https://developer.apple.com/documentation/security/preventing-insecure-network-connections)
   Cleartext HTTP is disabled by default from Android 9 and blocked by App Transport Security on iOS; both let an app allow it for named domains. Use for: Extension E1 (why an `http://` URL is "couldn't reach the server" on both platforms).
+- [Kotlin: Cancellation and timeouts](https://kotlinlang.org/docs/coroutines-cancellation.html)
+  Cancellation is a `CancellationException`; "if you must catch it, rethrow it", so a catch-all doesn't keep a cancelled coroutine running. Use for: Extension E1 (the adapter's last `catch`).
 - [kotlinx.serialization: JSON guide](https://github.com/Kotlin/kotlinx.serialization/blob/master/docs/json.md) and [httpbin.org](https://httpbin.org/)
   `JsonElement` for JSON of unknown shape and `prettyPrint` for indented output; httpbin is a public echo service (`/anything`, `/status/404`, `/delay/5`) to try requests against. Use for: Extension E1.
 - [Android Developers: Fragment lifecycle](https://developer.android.com/guide/fragments/lifecycle)

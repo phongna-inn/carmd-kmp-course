@@ -191,7 +191,7 @@ interface EndpointProbe {
   <p><code>ApiTestResult</code> has five cases: <code>Success</code>, <code>HttpError</code>, <code>TimedOut</code>, <code>Unreachable</code> and <code>InvalidUrl</code>. It's what A.5 means by "its service turns timeouts and network errors into results the UI can show": typed results, which the ViewModel puts into words (section 6).</p>
 
   <h2>3. Ktor inside one adapter</h2>
-  <p>Ktor is a Kotlin Multiplatform HTTP client from JetBrains. Its client is common code; what actually opens sockets is an <strong>engine</strong>, and each platform has its own. The shared module gets Ktor's core, its JSON plugin and its JSON format in <code>commonMain</code>, one engine per platform, and the mock engine for tests:</p>
+  <p>Ktor is JetBrains' Kotlin framework for HTTP servers and clients, and its client is Kotlin Multiplatform. The client's API is the same on every platform; what actually opens sockets is an <strong>engine</strong>, and each platform has its own. The shared module gets Ktor's core, its JSON plugin and its JSON format in <code>commonMain</code>, one engine per platform, and the mock engine for tests:</p>
   <figure class="excerpt">
     <figcaption class="path">shared/build.gradle.kts</figcaption>
 <pre><code>        commonMain.dependencies {
@@ -212,7 +212,7 @@ interface EndpointProbe {
 <mark>            implementation("io.ktor:ktor-client-mock:3.6.0")</mark>
         }</code></pre>
   </figure>
-  <p>The kotlinx.serialization plugin, which Ktor's JSON needs, is already in the shared module since Lesson 17. The adapter takes its engine from outside, the pattern Ktor's testing guide recommends:</p>
+  <p>The kotlinx.serialization plugin, which Ktor's JSON needs, is already in the shared module since Lesson 17. The adapter takes its engine from outside, the pattern Ktor's testing guide shows (its <code>ApiClient(engine)</code> gets <code>CIO.create()</code> in the app and a <code>MockEngine</code> in the test):</p>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KtorEndpointProbe.kt</figcaption>
 <pre><code><mark>internal class KtorEndpointProbe(engine: HttpClientEngine) : EndpointProbe {</mark>
@@ -239,7 +239,7 @@ interface EndpointProbe {
   </figure>
   <ol class="walk">
     <li><strong>The engine is a parameter.</strong> In the app it's the platform's; in the tests it's a <code>MockEngine</code> that answers without a network (section 9). Everything else, the plugins included, is the same code in both.</li>
-    <li><strong>Per-platform engines, with <code>expect</code>/<code>actual</code>.</strong> Lesson 05's mechanism, back for a real reason: common code declares that an engine exists, and each platform's source set says which. OkHttp is the engine Ktor's Android example uses; Darwin "uses <code>NSURLSession</code> under the hood". Ktor's docs also offer <code>ktor-client-engine-defaults</code>, one artifact that picks an engine per target for you; the course spells the engines out so you can see them.</li>
+    <li><strong>Per-platform engines, with <code>expect</code>/<code>actual</code>.</strong> Lesson 05's mechanism, back for a real reason: <code>commonMain</code> declares that an engine exists, and each platform's source set says which. OkHttp is the engine Ktor's Android example uses; Darwin "uses <code>NSURLSession</code> under the hood". Ktor's docs also offer <code>ktor-client-engine-defaults</code>, one artifact that picks an engine per target for you; the course spells the engines out so you can see them.</li>
     <li><strong><code>internal</code>.</strong> The adapter and <code>httpEngine()</code> are visible inside the shared module only. Koin builds the adapter in shared code (section 6), and Swift has no reason to see a Ktor type, so none reaches the framework's header.</li>
     <li><strong>Nothing outside these four files imports Ktor</strong>: <code>KtorEndpointProbe.kt</code> and the three <code>HttpEngine</code> files. That's A.5's "Nothing outside that adapter imports Ktor", with the engine function counted as part of the adapter. The agent brief checks it with a grep.</li>
   </ol>
@@ -269,7 +269,7 @@ interface EndpointProbe {
   </figure>
   <ol class="walk">
     <li><strong>Parameters go through <code>parameter()</code>, not string concatenation.</strong> Ktor encodes them: the adapter test sends <code>name</code> = "OBD II" and the URL becomes <code>?name=OBD+II&amp;max=5</code>. Gluing <code>"?name=$name"</code> onto a URL breaks on the first space or <code>&amp;</code>.</li>
-    <li><strong>A per-request timeout.</strong> <code>install(HttpTimeout)</code> once, then <code>timeout { … }</code> on each request, which "overrides the global value" (Ktor's Timeout page). The request timeout is the whole call, "from sending a request to receiving a response".</li>
+    <li><strong>A per-request timeout.</strong> <code>install(HttpTimeout)</code> once, then <code>timeout { … }</code> on each request: "timeouts specified for a specific request override global timeouts from the install block" (Ktor's Timeout page). The request timeout is the whole call, "from sending a request to receiving a response".</li>
     <li><strong>JSON out: a <code>@Serializable</code> class and a content type.</strong> <code>setBody</code> hands the object to ContentNegotiation, which serializes it for the content type you set. The class lives in the adapter, so the core's <code>ProbeMessage</code> carries no annotation; <code>sentAt</code> goes as the ISO text <code>Instant.toString()</code> prints, as in Lesson 17's log.</li>
     <li><strong>The service's Accept header arrives once.</strong> ContentNegotiation adds <code>Accept: application/json</code> by itself when a request doesn't have it. Our first adapter test, with and without the service's header, saw exactly one <code>application/json</code> both times, and httpbin echoed one. The service still sets it: the rule "ask for JSON" belongs to the app, not to a plugin we might swap.</li>
   </ol>
@@ -299,7 +299,7 @@ interface EndpointProbe {
   <p>Every request ends in one of a handful of ways. The adapter, the service and the ViewModel each turn them one step further, from what Ktor reports into what a person reads:</p>
   <figure class="diagram">
     <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="le1-outcomes-title">
-      <title id="le1-outcomes-title">How each outcome of a request travels. A server answering with a 2xx status becomes ProbeResult.Answered in the adapter, ApiTestResult.Success in the service, and "GET · 200 · success" on screen. Any other status is also Answered, then HttpError, then "GET · HTTP error 404". A request timeout, connect timeout or socket timeout becomes TimedOut, then TimedOut with the 10 second limit, then "no answer within 10 s". Any other IOException, such as an unknown host, no network, a refused connection or a cleartext request the platform blocks, becomes Unreachable with the platform's reason, then Unreachable, then "couldn't reach the server" with the reason. A text that isn't an http or https URL is stopped by the service before the adapter is called: InvalidUrl, then "Enter a URL that starts with http:// or https://".</title>
+      <title id="le1-outcomes-title">How each outcome of a request travels. A server answering with a 2xx status becomes ProbeResult.Answered in the adapter, ApiTestResult.Success in the service, and "GET · 200 · success" on screen. Any other status is also Answered, then HttpError, then "GET · HTTP error 404". A request timeout, connect timeout or socket timeout becomes TimedOut, then TimedOut with the 10 second limit, then "no answer within 10 s". Any other IOException, such as an unknown host, no network, a refused connection or a cleartext request the platform blocks, or a URL that Ktor or the engine refuses, becomes Unreachable with the platform's reason, then Unreachable, then "couldn't reach the server" with the reason. A text that isn't an http or https URL is stopped by the service before the adapter is called: InvalidUrl, then "Enter a URL that starts with http:// or https://".</title>
       <defs><marker id="le1-out-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
       <text class="small muted" x="20" y="20">what happened</text>
       <text class="small muted" x="230" y="20">adapter: ProbeResult</text>
@@ -309,7 +309,8 @@ interface EndpointProbe {
       <text class="small" x="20" y="112">answered, 404 · 500 · …</text>
       <text class="small" x="20" y="170">request · connect · socket timeout</text>
       <text class="small" x="20" y="228">other IOException: no host,</text>
-      <text class="small" x="20" y="244">offline, refused, cleartext</text>
+      <text class="small" x="20" y="244">offline, refused, cleartext;</text>
+      <text class="small" x="20" y="260">a URL the engine refuses</text>
       <text class="small" x="20" y="296">not an http(s) URL</text>
       <g data-part="outbound">
         <rect class="box" x="230" y="34" width="150" height="88" rx="6"/>
@@ -355,7 +356,7 @@ interface EndpointProbe {
       <path class="edge" d="M560,231 L586,231" marker-end="url(#le1-out-arrow)"/>
       <path class="edge" d="M560,295 L586,295" marker-end="url(#le1-out-arrow)"/>
     </svg>
-    <figcaption>Three results in the adapter, five in the service, one line each on screen. Ktor's exceptions stop at the adapter.</figcaption>
+    <figcaption>Three results in the adapter, five in the service, one line each on screen. Ktor's and the engines' exceptions stop at the adapter; only a cancellation passes through.</figcaption>
   </figure>
   <figure class="excerpt" data-part="outbound">
     <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KtorEndpointProbe.kt</figcaption>
@@ -371,7 +372,9 @@ interface EndpointProbe {
         ProbeResult.TimedOut
 <mark>    } catch (e: IOException) { // everything else the network does: no host, refused, offline</mark>
         ProbeResult.Unreachable(e.message ?: e.toString())
-<mark>    } catch (e: URLParserException) { // a URL the service let through, but Ktor can't read</mark>
+<mark>    } catch (e: CancellationException) { // the screen went away: let the coroutine end</mark>
+        throw e
+<mark>    } catch (e: Exception) { // a URL the service let through, but Ktor or the engine refuses</mark>
         ProbeResult.Unreachable(e.message ?: e.toString())
     }</code></pre>
   </figure>
@@ -380,7 +383,8 @@ interface EndpointProbe {
     <li><strong>Three timeouts, one result.</strong> Ktor has a request timeout (the whole call), a connect timeout and a socket timeout ("a maximum time of inactivity between two data packets"), each with its own exception. For the screen they all mean "no answer in time". Not every engine has all three: Ktor's table says Darwin supports the request and socket timeouts but not the connect timeout. That's one reason the adapter sets the request timeout, which every engine we use honours.</li>
     <li><strong>The order of the <code>catch</code>es matters.</strong> All three timeout exceptions are <code>IOException</code>s too, on Android and on iOS. Kotlin tries the <code>catch</code> clauses top to bottom, so with <code>IOException</code> first, a timeout would show as "couldn't reach the server".</li>
     <li><strong><code>IOException</code> is the network's catch-all.</strong> It's <code>kotlinx.io.IOException</code>, which on Android is <code>java.io.IOException</code> itself. OkHttp's "Unable to resolve host" and Darwin's <code>NSURLErrorDomain</code> errors both arrived as one (section 10 shows what each said).</li>
-    <li><strong>What's not caught passes through, on purpose.</strong> Leaving the screen cancels the request with a <code>CancellationException</code>, which must reach the coroutine machinery (Lesson 08). A <code>catch (e: Exception)</code> here would swallow it and leave a cancelled coroutine running on. <code>URLParserException</code> is the one non-IO failure a URL can cause: "https://example.com:99999/" passes the service's check, and Ktor answers "Fail to parse url".</li>
+    <li><strong>A URL can fail before anything is sent, and not with an <code>IOException</code>.</strong> "https://example.com:99999/" passes the service's check, and Ktor's own parser throws <code>URLParserException</code>, "Fail to parse url". The engines are stricter still, each in its own way: for "https://[::1/" OkHttp throws <code>IllegalArgumentException</code> ("Invalid URL host"), and Darwin throws <code>IllegalStateException</code> ("Invalid url") for "https://a&lt;b.com/" and even a <code>NullPointerException</code> for "https://[::1/". None of those is a network error, but each one escapes a <code>catch</code> for <code>IOException</code>, and an exception that escapes the adapter goes up through the ViewModel's coroutine: our first adapter caught only the IO and parser failures, and a GET on "https://[::1/" crashed the app on the Android emulator. So the last clause catches every other <code>Exception</code>, and the screen says "couldn't reach the server" with the exception's message.</li>
+    <li><strong>Except a cancellation, which passes through on purpose.</strong> Leaving the screen cancels the request with a <code>CancellationException</code>, which must reach the coroutine machinery (Lesson 08). It is an <code>Exception</code> too, so the clause just before the catch-all rethrows it; without that, the catch-all would turn a cancelled request into <code>Unreachable</code> and the cancelled coroutine would carry on. Kotlin's <a href="https://kotlinlang.org/docs/coroutines-cancellation.html">Cancellation and timeouts</a> guide: "If you must catch it, rethrow it". Lesson 08's rule, catch only what you can handle, still holds: here the adapter can handle every failure, since each one becomes a result.</li>
   </ol>
 
   <h2>6. Koin and the ViewModel</h2>
@@ -568,11 +572,11 @@ fun ApiTestScreen(
   <ol class="walk">
     <li><strong>Plain <code>http://</code> is blocked on both, by default.</strong> On Android, "starting with Android 9 (API level 28), cleartext support is disabled by default": our GET on <code>http://httpbin.org/get</code> came back as "couldn't reach the server" with OkHttp's "CLEARTEXT communication to httpbin.org not permitted by network security policy". On iOS, App Transport Security asks apps to "use secure URLs, like those beginning with https", and "otherwise, ATS denies the connection": Darwin reported <code>NSURLErrorDomain Code=-1022</code>, "the App Transport Security policy requires the use of a secure connection". Both arrive as an <code>IOException</code>, so the screen shows them as it shows any unreachable server. Each platform lets you allow cleartext for named domains (a network security config, ATS exceptions in <code>Info.plist</code>); the API screen doesn't, and a real app rarely should.</li>
     <li><strong>The <code>INTERNET</code> permission.</strong> Android apps need it to open sockets; it's an install-time permission, granted without a prompt. In this build OkHttp's own library manifest declares it, and the manifest merger adds it to the app (the merged manifest says "ADDED from [com.squareup.okhttp3:okhttp-android:5.5.0]"), so the app worked before we added the line. The app declares it anyway: what an app uses belongs in its own manifest, not in whichever engine it happens to depend on today. iOS has no such permission for HTTPS.</li>
-    <li><strong>A keyboard made for URLs.</strong> <code>KeyboardType.Uri</code>, <code>textUri</code> and <code>.URL</code> show keys like <code>/</code> and <code>.com</code>, and the iOS fields turn off autocapitalization, so "https" doesn't become "Https".</li>
+    <li><strong>A keyboard made for URLs.</strong> <code>KeyboardType.Uri</code>, <code>textUri</code> and <code>.URL</code> put <code>/</code> and <code>.</code> on the letters page (the emulator's Gboard shows both next to the space bar; Apple's <code>.URL</code> keyboard also features ".com"), and the iOS fields turn off autocapitalization, so "https" doesn't become "Https".</li>
   </ol>
   <div class="callout gotcha">
-    <span class="label">Gotcha · the keyboard that "fixed" http://</span>
-    On the Compose track, our first field had <code>KeyboardType.Uri</code> and nothing else. Typing <code>http://httpbin.org/get</code> on the emulator (with its default Gboard keyboard) left <code>https://httpbin.org/get</code> in the field, and the cleartext check above passed when it should have failed. With <code>autoCorrectEnabled = false</code> the field kept what was typed. A URL field needs autocorrect off; the XML <code>textUri</code> input type has no autocorrect flag, and the iOS tracks use <code>.autocorrectionDisabled()</code> and <code>.autocorrectionType = .no</code>.
+    <span class="label">Gotcha · autocorrect in a URL field</span>
+    Autocorrect works on words, and a URL isn't one: a keyboard that "corrects" a host or a path changes the request, and a check like the cleartext one above can then pass for the wrong reason. Compose leaves autocorrect to the keyboard unless you say otherwise (<code>autoCorrectEnabled</code> defaults to <code>null</code>, "soft keyboard default configurations should apply", and it applies to <code>KeyboardType.Uri</code>), so the field sets <code>autoCorrectEnabled = false</code>. On our emulator, typing through adb kept <code>http://httpbin.org/get</code> as typed with or without that line, while Gboard still offered word suggestions without it; agent brief check 7 still reads the field before it trusts the cleartext result. The XML <code>textUri</code> input type has no autocorrect flag (<code>textAutoCorrect</code> is a separate one, and "without this flag, the IME will not try to correct typos"), and the iOS tracks use <code>.autocorrectionDisabled()</code> and <code>.autocorrectionType = .no</code>.
   </div>
   <div class="callout gotcha">
     <span class="label">Gotcha · the platform's own words</span>
@@ -585,7 +589,7 @@ fun ApiTestScreen(
   <table>
     <tr><th>Class</th><th>Tests</th><th>What it shows</th></tr>
     <tr><td><code>ApiTestingServiceTest</code></td><td>6 (new)</td><td>a GET asks for JSON within the 10 s limit, with its parameters; a POST sends the greeting stamped by the clock; 2xx is a success and 404 or 500 an HTTP error; a timeout carries the limit; no network is a result; texts that aren't web URLs are never sent, and a URL is trimmed</td></tr>
-    <tr><td><code>KtorEndpointProbeTest</code></td><td>7 (new)</td><td>parameters encoded into the query and headers sent (Accept once); a POST's JSON body and content type; a JSON answer indented; HTML and fake JSON as they came; a 404 as an answer; a slow server as <code>TimedOut</code>; an <code>IOException</code> as <code>Unreachable</code></td></tr>
+    <tr><td><code>KtorEndpointProbeTest</code></td><td>7 (new)</td><td>parameters encoded into the query and headers sent (Accept once); a POST's JSON body and content type; a JSON answer indented; HTML and fake JSON as they came; a 404 as an answer; a slow server as <code>TimedOut</code>; an <code>IOException</code>, and a URL the engine refuses, as <code>Unreachable</code></td></tr>
     <tr><td><code>ApiTestViewModelTest</code></td><td>4 (new)</td><td>sending, then the answer's words; every failure worded as an error; a long body shortened; the newest request wins</td></tr>
     <tr><td><code>AppModuleTest</code></td><td>3</td><td><code>buildsEveryViewModel</code> also builds <code>ApiTestViewModel</code>, with the real Ktor adapter over the platform's engine</td></tr>
   </table>
@@ -612,11 +616,11 @@ fun ApiTestScreen(
     @Test
     fun aNetworkErrorIsUnreachable() = runTest {
 <mark>        val probe = probe { throw IOException("Unable to resolve host \"example.invalid\"") }</mark>
-<span class="elide">⋯  get, then: Unreachable, with that message</span></code></pre>
+<span class="elide">⋯  get, then: Unreachable, with that message; then the same for an IllegalArgumentException, as OkHttp throws for a host like "[::1"</span></code></pre>
   </figure>
   <ol class="walk">
     <li><strong>A <code>MockEngine</code> is a fake engine, not a fake adapter.</strong> The adapter's real code runs: ContentNegotiation serializes the POST, <code>HttpTimeout</code> times the request, <code>parameter()</code> encodes the query. Only the network is replaced. The handler sees the request the adapter built (<code>sent</code>), and answers with <code>respond(content, status, headers)</code>, or throws as a failing network would.</li>
-    <li><strong>The timeout test runs in real time.</strong> <code>runTest</code> skips <code>delay</code>s only on its own test dispatcher; Ktor's timeout and the mock's handler run on dispatchers of their own. So the limit is 100 ms, not 10 s: the JVM run took 0.105 s, and the 5-second <code>delay</code> never finished.</li>
+    <li><strong>The timeout test runs in real time.</strong> <code>runTest</code> skips <code>delay</code>s only on its own test dispatcher; Ktor's timeout and the mock's handler run on dispatchers of their own. So the limit is 100 ms, not 10 s: on the JVM the test takes about 0.1 s, and the 5-second <code>delay</code> never finishes.</li>
     <li><strong>The service's tests know nothing about HTTP.</strong> <code>FakeEndpointProbe</code> returns whatever <code>ProbeResult</code> the test sets and records what it was asked: method, URL, parameters, headers, message, time limit. Each rule of section 2 is one test, with no Ktor in sight.</li>
   </ol>
 
@@ -632,11 +636,12 @@ fun ApiTestScreen(
     <tr><td>GET <code>https://no-such-host.invalid/</code></td><td>GET · couldn't reach the server</td><td>Android: "Unable to resolve host …". iOS: "Exception in http request: Error Domain=NSURLErrorDomain Code=-1003 …"</td></tr>
     <tr><td>GET <code>http://httpbin.org/get</code></td><td>GET · couldn't reach the server</td><td>Android: "CLEARTEXT communication to httpbin.org not permitted by network security policy". iOS: "… Code=-1022 … App Transport Security policy requires the use of a secure connection …"</td></tr>
     <tr><td>GET <code>example.com</code></td><td>Enter a URL that starts with http:// or https://</td><td>none; nothing was sent</td></tr>
+    <tr><td>GET <code>https://[::1/</code> (passes the service's check; the engines can't read the host)</td><td>GET · couldn't reach the server</td><td>Android: "Invalid URL host: "[::1"". iOS: "kotlin.NullPointerException", the Darwin engine's own failure</td></tr>
     <tr><td>Android, airplane mode on, GET <code>https://httpbin.org/get</code></td><td>GET · couldn't reach the server</td><td>"Unable to resolve host "httpbin.org": No address associated with hostname"</td></tr>
     <tr><td>GET the never-answering address, then Back at once</td><td>the main screen, no crash, nothing shown later</td><td>the request ended with its ViewModel</td></tr>
   </table>
   </div>
-  <p>These rows are in <code>docs/checklists.md</code> now: four API rows (GET, POST, error, timeout) replace "Extension E1 only", each "Seen on" the emulator and the Simulator. Both reach the network through the Mac, so these runs say nothing about a phone's own Wi-Fi or mobile data. The code and the engines are the same on a phone, so we expect the same lines there; one device check, on the ticket's list, confirms it. httpbin.org is a public service: if it's down, any HTTPS echo service works.</p>
+  <p>These rows are in <code>docs/checklists.md</code> now: four API rows (GET, POST, error, timeout) replace "Extension E1 only", each "Seen on" the emulator and the Simulator. Both reach the network through the Mac, so these runs say nothing about a phone's own Wi-Fi or mobile data. The code and the engines are the same on a phone, so we expect the same lines there; one device check, in the agent brief, confirms it. httpbin.org is a public service: if it's down, any HTTPS echo service works.</p>
   <p><strong>e1 is a natural stop</strong> when the tests pass on both platforms, the grep for <code>io.ktor</code> finds only the adapter's four files, and the API rows of <code>docs/checklists.md</code> match what you see on your tracks. Commit it, and tag it.</p>
   <div class="callout ask-agent">
     <span class="label">Ask your agent</span>
@@ -683,7 +688,7 @@ fun ApiTestScreen(
       <button class="opt">the adapter catches the cancellation and returns <code>Unreachable</code></button>
     </div>
     <p class="feedback"></p>
-    <p class="why">That's why the adapter catches only <code>IOException</code> and <code>URLParserException</code>, never <code>Exception</code>: a <code>CancellationException</code> must pass through.</p>
+    <p class="why">That's why the adapter rethrows a <code>CancellationException</code> before its last clause, <code>catch (e: Exception)</code>: a cancellation must pass through, and only real failures become <code>Unreachable</code>.</p>
   </div>
   <div class="quiz mcq">
     <p class="q">In <code>KtorEndpointProbeTest</code>, what does the <code>MockEngine</code> replace?</p>
@@ -711,7 +716,7 @@ fun ApiTestScreen(
     <p class="q"><code>httpEngine()</code> is declared with <code>expect</code> in <code>commonMain</code>. What happens if <code>iosMain</code> has no <code>actual</code> for it? (Lesson 05)</p>
     <div class="opts">
       <button class="opt">the iOS app compiles and crashes on the first request</button>
-      <button class="opt" data-correct>the iOS compilation fails: every <code>expect</code> needs an <code>actual</code> in each target that compiles the common code</button>
+      <button class="opt" data-correct>the iOS compilation fails: every <code>expect</code> needs an <code>actual</code> in each target that compiles <code>commonMain</code></button>
       <button class="opt">Ktor falls back to a default engine</button>
     </div>
     <p class="feedback"></p>
@@ -742,7 +747,7 @@ fun ApiTestScreen(
   <div class="callout exercise">
     <span class="label">Unaided exercise (no agent, on your e1 project)</span>
     <ol>
-      <li><strong>Predict, then run.</strong> Change <code>TIME_LIMIT</code> to 3 seconds and GET <code>https://httpbin.org/delay/5</code> (httpbin waits 5 s before answering). Write down the screen's line before you tap; then check. Which test now fails, and why is that the right test to fail?</li>
+      <li><strong>Predict, then run.</strong> Change <code>TIME_LIMIT</code> to 3 seconds and GET <code>https://httpbin.org/delay/5</code> (httpbin waits 5 s before answering). Write down the screen's line before you tap; then check. Which tests now fail, and why are those the right tests to fail?</li>
       <li><strong>Parameters on screen.</strong> <code>ApiTesting.get</code> already takes <code>params</code>, and the screen never passes any. Add a second text field on your tracks, "Query", where the user types <code>name=value</code> pairs separated by <code>&amp;</code>; turn it into a map in the ViewModel and pass it to <code>get</code>. GET <code>https://httpbin.org/anything</code> with <code>q=OBD II</code> and find your parameter, encoded, in the echo's <code>"url"</code>. Pin the parsing with a ViewModel test.</li>
       <li><strong>One more outcome.</strong> Make a 3xx status its own result: add <code>Redirected(status)</code> to <code>ApiTestResult</code> and a service test for it. First check what Ktor does with <code>https://httpbin.org/redirect/1</code> by default: does your test even reach the service with a 302?</li>
     </ol>
@@ -899,6 +904,7 @@ Do NOT do the unaided exercise for me.</pre>
     <li>Ktor: <a href="https://ktor.io/docs/client-engines.html">Client engines</a> (primary source: engines per platform, Darwin over <code>NSURLSession</code>, <code>ktor-client-engine-defaults</code>), <a href="https://ktor.io/docs/client-serialization.html">Content negotiation and serialization</a> (<code>install(ContentNegotiation) { json() }</code>, <code>setBody</code>, <code>body()</code>), <a href="https://ktor.io/docs/client-timeout.html">Timeout</a> (the three timeouts, per-request <code>timeout { }</code>, the engine table with Darwin's missing connect timeout), <a href="https://ktor.io/docs/client-response-validation.html">Response validation</a> (no status validation unless <code>expectSuccess</code>) and <a href="https://ktor.io/docs/client-testing.html">Testing</a> (<code>MockEngine</code>, and passing the engine into the client's class).</li>
     <li>Android: <a href="https://developer.android.com/privacy-and-security/security-config">Network security configuration</a> (primary source: cleartext "disabled by default" from Android 9, and how to allow it for one domain) and <a href="https://developer.android.com/build/manage-manifests">Manage manifest files</a> (how a library's manifest, OkHttp's here, merges into the app's).</li>
     <li>Apple: <a href="https://developer.apple.com/documentation/security/preventing-insecure-network-connections">Preventing insecure network connections</a> (primary source: App Transport Security, "use secure URLs, like those beginning with https").</li>
+    <li>Kotlin: <a href="https://kotlinlang.org/docs/coroutines-cancellation.html">Cancellation and timeouts</a> (why a caught <code>CancellationException</code> is rethrown, as the adapter's last <code>catch</code> needs).</li>
     <li>kotlinx.serialization: <a href="https://kotlinlang.org/docs/serialization.html">Serialization</a> and the <a href="https://github.com/Kotlin/kotlinx.serialization/blob/master/docs/json.md">JSON guide</a> (<code>JsonElement</code>, <code>prettyPrint</code>).</li>
     <li><a href="https://httpbin.org/">httpbin.org</a>: the echo service the screen starts with (<code>/anything</code>, <code>/status/404</code>, <code>/delay/5</code>).</li>
     <li><a href="../reference/architecture-di-testing-cheatsheet.html">Cheatsheet: architecture, DI and testing</a>: where a port, a service and an adapter go, fakes, and Koin's graph test.</li>
@@ -1147,7 +1153,6 @@ import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
-import io.ktor.http.URLParserException
 import io.ktor.http.contentType
 import io.ktor.serialization.ContentConvertException
 import io.ktor.serialization.kotlinx.json.json
@@ -1155,6 +1160,7 @@ import kotlinx.io.IOException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration
 
 // Outbound adapter: the EndpointProbe port over Ktor, shared by both platforms. With its engine
@@ -1196,8 +1202,8 @@ internal class KtorEndpointProbe(engine: HttpClientEngine) : EndpointProbe {
         }
     }
 
-    // Sends the request and turns everything that can happen into a ProbeResult. Catches only
-    // what a request can fail with: a CancellationException (the screen went away) passes through.
+    // Sends the request and turns everything that can happen into a ProbeResult. The one
+    // exception that passes through is a CancellationException: the screen went away.
     private suspend fun probe(send: suspend () -&gt; HttpResponse): ProbeResult = try {
         val response = send()
         ProbeResult.Answered(response.status.value, readBody(response))
@@ -1210,7 +1216,9 @@ internal class KtorEndpointProbe(engine: HttpClientEngine) : EndpointProbe {
         ProbeResult.TimedOut
     } catch (e: IOException) { // everything else the network does: no host, refused, offline
         ProbeResult.Unreachable(e.message ?: e.toString())
-    } catch (e: URLParserException) { // a URL the service let through, but Ktor can't read
+    } catch (e: CancellationException) { // the screen went away: let the coroutine end
+        throw e
+    } catch (e: Exception) { // a URL the service let through, but Ktor or the engine refuses
         ProbeResult.Unreachable(e.message ?: e.toString())
     }
 
@@ -1744,6 +1752,13 @@ class KtorEndpointProbeTest {
 
         assertTrue(result is ProbeResult.Unreachable)
         assertEquals("Unable to resolve host \"example.invalid\"", result.reason)
+
+        // A URL the engine refuses is no answer either: OkHttp throws this for a host like "[::1".
+        assertEquals(
+            ProbeResult.Unreachable("Invalid URL host: \"[::1\""),
+            probe { throw IllegalArgumentException("Invalid URL host: \"[::1\"") }
+                .get("https://[::1/", emptyMap(), emptyMap(), 10.seconds),
+        )
     }
 }</code></pre>
     </details>
