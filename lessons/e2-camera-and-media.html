@@ -1062,14 +1062,18 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   capitals, so match case-insensitively. Start from a fresh install (adb uninstall first).
   1. The main screen shows a "Photo" button next to the title. Tap it: "Device Monitor needs
      the camera permission to take photos.", Allow camera, Take photo (disabled) and Choose
-     from library.
+     from library. In a Compose uiautomator dump the "Take photo" label node still reads
+     enabled="true": the flag is on the clickable android.view.View around it (enabled="false"),
+     or look at a screenshot, where the button is greyed.
   2. Allow camera, then Don't allow: "Camera permission was denied. Taking photos needs it."
      and Ask again. Ask again, then While using the app: "Camera permission: allowed".
   3. Take photo: the emulator's camera app opens. Take the picture (the shutter button) and
      accept it (✓): the photo, and "From the camera · W × H px · image/jpeg · N KB".
      adb shell run-as com.example.devicemonitor ls cache/media shows exactly one file.
-  4. Choose from library, pick sideways.jpg: the photo upright (the screenshot's status bar at
-     the top), and "From the library · W × H px · image/jpeg · N KB" with H greater than W.
+  4. Choose from library, pick sideways.jpg. The picker labels photos only by date, so you can't
+     tell the two test photos apart by name: pick one and read the line, and pick the other if it
+     says image/png (that is portrait.png, check 5). Expect the photo upright (the screenshot's
+     status bar at the top), and "From the library · W × H px · image/jpeg · N KB" with H greater than W.
   5. Choose from library, pick portrait.png: "From the library · … · image/png · …"; cache/media
      still holds one file.
   6. Choose from library, then the system Back key: the last photo and its line stay, no error.
@@ -1078,7 +1082,8 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      the photo and its line stay.
 - iOS Simulator, my track. Drive it with a throwaway XCUITest that launches the installed app
   by bundle ID (or idb); don't script the Simulator window with System Events. System alerts
-  belong to com.apple.springboard. In the photo picker, tap a photo by its label ("Photo, …"),
+  belong to com.apple.springboard. In the photo picker, tap a photo by its label ("Photo, …"; the cells are app.images
+  elements, and, as on Android, only dates tell the test photos apart: pick one and read the line),
   with element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap(): the cells
   report "not hittable" to a plain tap(). Start with
   `xcrun simctl privacy booted reset camera com.example.devicemonitor`.
