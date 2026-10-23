@@ -608,7 +608,8 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      devices the emulator's image hears). Then `adb shell dumpsys bluetooth_manager`: under
      com.example.devicemonitor, the last scan says ScanMode=LOW_LATENCY, and "LE scans
      (started/stopped)" shows the same number twice.
-  2. Scan, and tap Stop within 2 s: dumpsys shows that scan stopped after about 2 s.
+  2. Scan, and tap Stop within 2 s (the Stop that takes Scan's place, not the monitor's Stop
+     higher up): dumpsys shows that scan stopped after about 2 s.
   3. adb shell cmd bluetooth_manager disable; Scan: "Bluetooth is off. Turn it on, then scan
      again."; then adb shell cmd bluetooth_manager enable.
   4. Wait 30 s (Android limits how often an app may start scans), Scan, and 2 s later
