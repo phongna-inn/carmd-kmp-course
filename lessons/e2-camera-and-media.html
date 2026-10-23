@@ -1078,8 +1078,11 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
      still holds one file.
   6. Choose from library, then the system Back key: the last photo and its line stay, no error.
      Take photo, then Back (or the camera app's ✕): the same.
-  7. XML only: rotate the emulator (adb shell settings put system user_rotation 1, then 0):
-     the photo and its line stay.
+  7. XML only: rotate the emulator (adb shell settings put system accelerometer_rotation 0, then
+     adb shell settings put system user_rotation 1, then 0): the photo stays, and so does its
+     line. In landscape the line is below the visible part of the screen, so a dump lacks it
+     until you scroll up (adb shell input swipe 1200 800 1200 200 300); then it reads the same.
+     Put accelerometer_rotation back to 1 afterwards.
 - iOS Simulator, my track. Drive it with a throwaway XCUITest that launches the installed app
   by bundle ID (or idb); don't script the Simulator window with System Events. System alerts
   belong to com.apple.springboard. In the photo picker, tap a photo by its label ("Photo, …"; the cells are app.images
