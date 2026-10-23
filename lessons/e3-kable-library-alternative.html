@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>E3 — Kable: the library alternative</title>
+<link rel="stylesheet" href="../assets/style.css">
+<script src="../assets/switcher.js" defer></script>
+<script src="../assets/quiz.js" defer></script>
+<script src="../assets/copy.js" defer></script>
+</head>
+<body>
+<main>
+  <p class="kicker">Extension E3 · optional, after the core lessons · Native Device Monitor course</p>
+  <h1>Kable: the library alternative</h1>
+  <div class="meta">
+    <span class="tag">~2 h · no extra time per UI track</span>
+    <span class="tag">Milestone: e3 BLE stack switchable between hand-written and Kable</span>
+    <span class="tag">Prereq: <a href="20-integration-and-end-to-end-check.html">20</a> (m15)</span>
+  </div>
+
+  <div class="mission-tie">
+    <strong>Why this matters:</strong> Lessons 13–16 wrote the Bluetooth LE code by hand, once per platform: a callback object turned into a <code>Flow</code> on Android, a Swift delegate with a Kotlin half on iOS. That's the best way to learn what the radio does, and the team's apps still contain code like it. But a real project can also take a library. <strong>Kable</strong> is a Kotlin Multiplatform BLE library: one coroutine API over Android's <code>BluetoothGatt</code> and Apple's CoreBluetooth. This extension writes a second pair of adapters over Kable, behind the <em>same</em> <code>BleScanner</code> and <code>BleConnection</code> outbound ports, and switches the whole app to them with one Koin line. Nothing in the app core, the ViewModels or the screens changes. Then it compares the two stacks on what you'd actually weigh: lines of code, connection state, errors and iOS behaviour, measured where we could. That gives milestone <strong>e3</strong>: a BLE stack you can switch between hand-written and Kable.
+  </div>
+
+  <p><span class="tag">Primary source</span> Kable's <a href="https://github.com/JuulLabs/kable">README</a> (scanning, connectivity, observation, background support and Android permissions) before section 2, and its <a href="https://juullabs.github.io/kable/">API docs</a> for <code>Peripheral</code> and <code>Scanner</code> before sections 3–5. Kable's <a href="https://github.com/JuulLabs/kable/releases">release notes</a> for 0.44.0 (section 3). Koin's <a href="https://insert-koin.io/docs/reference/koin-core/modules">Modules</a> page, "Load order and overrides", before section 6.</p>
+  <p><span class="tag">Tracks</span> Every file this extension touches is in the shared module, so it's the same on Compose, XML Views, SwiftUI and UIKit, and no screen changes. The tracks differ only in how you run the checks. Each excerpt shows only the lines its notes explain; the complete files are in <a href="#full-files">Full files</a> at the end.</p>
+  <div class="callout ts">
+    <span class="label">Did E1 or E2 first?</span>
+    Every extension starts from m15, and the full files here are m15 plus E3. If your project already has e1 or e2, three files have both extensions' lines: keep theirs and add E3's. Those files are <code>shared/build.gradle.kts</code> (Kable's dependency next to Ktor's or ExifInterface's), <code>di/AppModule.kt</code> (<code>kableBleModule</code> and the <code>initKoin</code> line, next to their bindings) and <code>di/AppModuleTest.kt</code> (the Kable test, next to their ViewModels). This page's code was built from m15 alone, so check the merged files with the tests.
+  </div>
+
+  <h2>What changes from m15</h2>
+  <div class="table-wrap">
+  <table>
+    <tr><th>What</th><th>m15</th><th>e3</th></tr>
+    <tr><td>app core</td><td><code>BleScanner</code> and <code>BleConnection</code> outbound ports</td><td>the same ports; only their comments now name the Kable adapters too</td></tr>
+    <tr><td>outbound adapters</td><td>hand-written: <code>AndroidBleScanner</code> and <code>AndroidBleConnection</code> (<code>androidMain</code>); <code>IosBleScanner</code> and <code>IosBleConnection</code> (Swift) with <code>scanFlow</code> and <code>LinkedBleConnection</code> (<code>iosMain</code>)</td><td>all still there, plus <code>KableBleScanner</code> and <code>KableBleConnection</code> (shared, <code>commonMain</code>) with <code>kableScanner()</code> and <code>kablePeripheral()</code>: one <code>actual</code> each in <code>androidMain</code> and <code>iosMain</code></td></tr>
+    <tr><td>Koin</td><td><code>appModule</code> and <code>platformModule(…)</code></td><td>plus <code>kableBleModule</code>, listed last in <code>initKoin</code>: one line chooses the BLE stack</td></tr>
+    <tr><td>screens, ViewModels, services</td><td>—</td><td>unchanged</td></tr>
+    <tr><td><code>shared/build.gradle.kts</code></td><td>no BLE library</td><td><code>com.juul.kable:kable-core:0.45.0</code> in <code>commonMain</code></td></tr>
+    <tr><td>tests</td><td>105 per platform</td><td>110 per platform: 4 for the Kable adapters' translations, 1 more in the graph test</td></tr>
+  </table>
+  </div>
+
+  <h2>1. The same ports, a second stack</h2>
+  <p>Lesson 10 promised that the app core doesn't care what's behind an outbound port. Lesson 20 used that promise once, to swap in the simulated radio for a run. This extension uses it for real: a whole second implementation of the two BLE ports, written against a library instead of against the platforms.</p>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 330" role="img" aria-labelledby="le3-stacks-title">
+      <title id="le3-stacks-title">Two BLE stacks behind the same ports. The app core holds ScanningService and SessionService, which call the BleScanner and BleConnection outbound ports. The hand-written stack implements them per platform: AndroidBleScanner and AndroidBleConnection in androidMain, and on iOS the Swift IosBleScanner and IosBleConnection with their Kotlin halves in iosMain. The Kable stack implements them once, in commonMain: KableBleScanner and KableBleConnection, over the Kable library, with two small expect functions that have one actual each in androidMain and iosMain. Koin's kableBleModule, loaded last, decides which stack the services get.</title>
+      <defs><marker id="le3-stacks-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="arrowhead" d="M0,0 L10,5 L0,10 z"/></marker></defs>
+      <g data-part="core">
+        <rect class="box" x="230" y="20" width="300" height="86" rx="6"/>
+        <text class="title" x="244" y="42">App core (unchanged)</text>
+        <text class="mono small" x="244" y="64">ScanningService · SessionService</text>
+        <text class="small" x="244" y="88">outbound ports: BleScanner · BleConnection</text>
+      </g>
+      <text class="small muted" x="380" y="128" text-anchor="middle">implemented by one stack or the other</text>
+      <path class="edge dashed" d="M300,106 L190,158" marker-start="url(#le3-stacks-arrow)"/>
+      <path class="edge dashed" d="M460,106 L570,158" marker-start="url(#le3-stacks-arrow)"/>
+      <text class="small muted" x="20" y="152">hand-written (Lessons 13–16)</text>
+      <g data-part="android">
+        <rect class="box" x="20" y="162" width="160" height="64" rx="6"/>
+        <text class="title" x="32" y="182">androidMain</text>
+        <text class="mono small" x="32" y="200">AndroidBleScanner</text>
+        <text class="mono small" x="32" y="216">AndroidBleConnection</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="196" y="162" width="170" height="64" rx="6"/>
+        <text class="title" x="208" y="182">Swift + iosMain</text>
+        <text class="mono small" x="208" y="200">IosBleScanner, scanFlow</text>
+        <text class="mono small" x="208" y="216">IosBleConnection, Linked…</text>
+      </g>
+      <text class="small muted" x="430" y="152">Kable (this extension)</text>
+      <g data-part="outbound">
+        <rect class="box" x="430" y="162" width="310" height="64" rx="6"/>
+        <text class="title" x="442" y="182">commonMain: one copy for both</text>
+        <text class="mono small" x="442" y="200">KableBleScanner · KableBleConnection</text>
+        <text class="small" x="442" y="216">over com.juul.kable</text>
+      </g>
+      <g data-part="android">
+        <rect class="box" x="430" y="250" width="150" height="44" rx="6"/>
+        <text class="mono small" x="442" y="277">KablePlatform.android</text>
+      </g>
+      <g data-part="ios">
+        <rect class="box" x="590" y="250" width="150" height="44" rx="6"/>
+        <text class="mono small" x="602" y="277">KablePlatform.ios</text>
+      </g>
+      <path class="edge" d="M505,226 L505,248" marker-end="url(#le3-stacks-arrow)"/>
+      <path class="edge" d="M665,226 L665,248" marker-end="url(#le3-stacks-arrow)"/>
+      <text class="small muted" x="430" y="316">expect/actual: kableScanner(), kablePeripheral()</text>
+      <text class="small muted" x="20" y="262">Koin: kableBleModule, listed last,</text>
+      <text class="small muted" x="20" y="280">replaces the platform's two bindings.</text>
+      <text class="small muted" x="20" y="298">Delete its line: the hand-written stack.</text>
+    </svg>
+    <figcaption>Both stacks implement the same two ports. Which one the services get is decided in one place, the Koin module list.</figcaption>
+  </figure>
+  <ul class="legend">
+    <li data-part="core">app core</li>
+    <li data-part="outbound">outbound adapters (shared)</li>
+    <li data-part="android">Android</li>
+    <li data-part="ios">iOS</li>
+  </ul>
+  <p>Why can the Kable adapters live in <code>commonMain</code> when the hand-written ones can't? Because the platform code has moved into the library. Kable's <code>commonMain</code> declares a <code>Scanner</code> and a <code>Peripheral</code>, and Kable's own <code>androidMain</code> and <code>appleMain</code> implement them over <code>BluetoothLeScanner</code>/<code>BluetoothGatt</code> and <code>CBCentralManager</code>/<code>CBPeripheral</code>. That's the same expect/actual split as Lesson 05's, one layer down, inside someone else's code. Our adapters translate between Kable's types and the app's: <code>Device</code>, <code>ConnectionState</code>, <code>DeviceService</code>, <code>ScanException</code>, <code>ConnectionException</code>. It's the job every outbound adapter has; ADR 0001 places a shared one, like E1's Ktor client, in <code>commonMain</code>.</p>
+
+  <h2>2. Kable in the build</h2>
+  <p>Kable describes itself as "a simple Coroutines-powered API for interacting with Bluetooth Low Energy devices". Scanning is a <code>Flow</code> of advertisements; a <code>Peripheral</code> has <code>suspend</code> functions for <code>connect</code>, <code>read</code> and <code>write</code>, a <code>state</code> <code>StateFlow</code>, and <code>observe</code>, a <code>Flow</code> of a characteristic's notifications. One dependency in <code>commonMain</code>:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/build.gradle.kts</figcaption>
+<pre><code>        commonMain.dependencies {
+<span class="elide">⋯  as in m15</span>
+<mark>            implementation("com.juul.kable:kable-core:0.45.0")</mark>
+        }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>No permissions come with it.</strong> Kable's README: "Kable does not declare any permissions; it is expected that the consuming app declares any necessary permissions." A separate artifact, <code>kable-default-permissions</code>, would add some; the app doesn't use it, because its manifest has declared exactly what it needs since Lesson 12. We compared the merged Android manifests of m15 and e3: the same permission lines.</li>
+    <li><strong>What it does add on Android.</strong> Two entries in the merged manifest, both under AndroidX Startup's <code>InitializationProvider</code>: <code>com.juul.kable.KableInitializer</code>, and <code>TuulboxCoroutinesInitializer</code> from tuulbox, a JuulLabs library Kable uses. The first is how Kable gets the application <code>Context</code> without our code passing one, which is why <code>KableBleScanner</code> and <code>KableBleConnection</code> take no <code>Context</code>. Gradle's dependency tree (<code>./gradlew :androidApp:dependencies</code>) also shows what Kable brings along on Android: kotlinx-io, atomicfu, tuulbox, AndroidX Startup, <code>core-ktx</code> (which Lesson 20 had removed from the app's own build file) and the parcelize runtime.</li>
+    <li><strong>0.45.0, pinned.</strong> Kable is 0.x: its releases still make breaking changes (0.44.0 turned <code>Bluetooth.availability</code> into a compile error, section 3). Pin the version, and read the release notes before you upgrade.</li>
+  </ol>
+
+  <h2>3. The scanner: a Flow that's already there</h2>
+  <p>Lesson 13's Android scanner was a <code>callbackFlow</code> around a <code>ScanCallback</code>, plus a broadcast receiver; the iOS one was a Swift delegate feeding a Kotlin <code>callbackFlow</code>. Kable's <code>Scanner</code> already has a <code>Flow</code>, <code>advertisements</code>, so the adapter only translates:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KableBleScanner.kt</figcaption>
+<pre><code><mark>internal class KableBleScanner(private val bluetooth: BluetoothProvider) : BleScanner {</mark>
+<span class="elide">⋯  why Kable doesn't answer the next two</span>
+<mark>    override suspend fun isAvailable(): Boolean = bluetooth.isEnabled() != null</mark>
+
+    override suspend fun isEnabled(): Boolean = bluetooth.isEnabled() == true
+
+<span class="elide">⋯  comments: collecting starts the scan; the name; the identifier</span>
+    override fun scan(): Flow&lt;Device&gt; =
+<mark>        kableScanner().advertisements</mark>
+<mark>            .map { Device(id = "${it.identifier}", name = it.name.orEmpty(), rssi = it.rssi) }</mark>
+<mark>            .catch { failure -&gt; throw ScanException(scanFailure(failure)) }</mark>
+}
+
+<span class="elide">⋯  comment</span>
+internal fun scanFailure(failure: Throwable): String = when {
+    failure is UnmetRequirementException &amp;&amp; failure.reason == UnmetRequirementReason.BluetoothDisabled -&gt;
+        "Bluetooth is off. Turn it on, then scan again."
+<mark>    failure is UnmetRequirementException -&gt;</mark>
+<mark>        "Scanning needs Location turned on on this phone (Android 11 and lower)."</mark>
+    else -&gt; "The scan failed (Kable: ${failure.message})."
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Collecting starts the scan, cancelling stops it.</strong> That's the port's contract from Lesson 10, and Kable's <code>advertisements</code> already keeps it: on Android it's a <code>callbackFlow</code> whose <code>awaitClose</code> calls <code>stopScan</code> (in Kable's source), much like ours. On the emulator, a scan that ran out after 10 s and one we stopped after 2 s both show as stopped in <code>adb shell dumpsys bluetooth_manager</code> ("LE scans (started/stopped): 2 / 2").</li>
+    <li><strong>The name is the advertised one.</strong> Kable's <code>Advertisement.name</code> is <code>ScanRecord.getDeviceName</code> on Android and <code>CBAdvertisementDataLocalNameKey</code> on Apple, the same fields Lesson 13 read. Kable also has <code>peripheralName</code>, the system's cached name, which can differ; the adapter keeps the advertised one, so the list shows the same names with either stack.</li>
+    <li><strong>The identifier is text.</strong> Kable's <code>Identifier</code> is a typealias: a <code>String</code> (the MAC address) on Android, a <code>Uuid</code> on Apple. A string template turns either into the <code>String</code> a <code>Device</code> holds, and <code>kablePeripheral</code> turns it back (section 4).</li>
+    <li><strong>Failures in the app's words.</strong> <code>catch</code> sees what Kable throws when the scan starts or fails: <code>UnmetRequirementException</code> with a reason (<code>BluetoothDisabled</code>, or <code>LocationServicesDisabled</code>, which Kable's docs say is "only applicable on Android 11 (API 30) and lower"), or an <code>IllegalStateException</code> (a missing permission, a failed scan). <code>catch</code> doesn't see the collector's own cancellation, so Stop and the 10 s limit still end the scan quietly.</li>
+    <li><strong><code>isAvailable</code> and <code>isEnabled</code> come from another port.</strong> Kable doesn't answer them any more: 0.44.0's release notes say "Escalate deprecation of <code>Bluetooth.availability</code>", and "you'll now need to maintain your own version in your codebase"; the deprecation message says it "has inconsistent behavior across platforms". Kable's experimental <code>Bluetooth.isSupported()</code> "always returns <code>true</code> on Apple". The app already has the answer: Lesson 17's <code>BluetoothProvider</code> port, whose <code>null</code> means "the app can't tell: the phone has no radio, or (iOS) the user hasn't allowed Bluetooth". <code>ScanningService</code> checks the permission first, so by the time it asks, an iPhone's <code>null</code> means no radio. The adapter holds no rule by asking: it passes the question on, and Koin passes in whichever <code>BluetoothProvider</code> the platform built. The alternative, each platform's own <code>isAvailable</code> and <code>isEnabled</code>, would bring platform code back into a shared adapter.</li>
+    <li><strong><code>internal</code>.</strong> Koin builds both Kable adapters in shared code (section 6), so they're <code>internal</code>, like E1's Ktor adapter. The iOS framework's header has no <code>Kable</code> class in it (<code>grep -c Kable Shared.h</code> prints 0).</li>
+  </ol>
+  <p>Two things the shared code can't say, because Kable's builder options differ per platform: how to build the scanner, and how to get a device's <code>Peripheral</code> back from its id. Each is an <code>expect</code> with one <code>actual</code> per platform, part of the adapter as E1's <code>httpEngine()</code> was:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.kt</figcaption>
+<pre><code><span class="elide">⋯  package, imports, comment</span>
+<mark>internal expect fun kableScanner(): PlatformScanner</mark>
+
+<mark>internal expect fun kablePeripheral(device: Device): Peripheral</mark></code></pre>
+  </figure>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.android.kt</figcaption>
+<pre><code><span class="elide">⋯  package, imports, comment</span>
+@OptIn(ObsoleteKableApi::class)
+internal actual fun kableScanner(): PlatformScanner = Scanner {
+<mark>    scanSettings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()</mark>
+}
+
+<span class="elide">⋯  comment</span>
+<mark>internal actual fun kablePeripheral(device: Device): Peripheral = Peripheral(device.id)</mark></code></pre>
+  </figure>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.ios.kt</figcaption>
+<pre><code><span class="elide">⋯  package, imports, comment: the power alert</span>
+<mark>private val managerSetUp = lazy { CentralManager.configure { } }</mark>
+
+<span class="elide">⋯  comment: duplicate filtering</span>
+internal actual fun kableScanner(): PlatformScanner {
+    managerSetUp.value
+<mark>    return Scanner { allowDuplicateKeys = false }</mark>
+}
+
+<span class="elide">⋯  comment</span>
+internal actual fun kablePeripheral(device: Device): Peripheral {
+    managerSetUp.value
+<mark>    return Peripheral(device.id.toIdentifier())</mark>
+}</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>Kable's defaults aren't Lesson 13's.</strong> On Android, Kable's <code>scanSettings</code> defaults to <code>ScanSettings.Builder().build()</code>. We built a copy with a bare <code>Scanner()</code> and scanned on the API 36 emulator: <code>dumpsys bluetooth_manager</code> showed <code>ScanMode=LOW_POWER</code>; with the line above, <code>ScanMode=LOW_LATENCY</code>, as <code>AndroidBleScanner</code> asks. Kable marks <code>scanSettings</code> <code>@ObsoleteKableApi</code>: its KDoc says it "will be replaced by a Kable provided DSL", hence the opt-in.</li>
+    <li><strong>On iOS, Kable reports every advertisement unless told not to.</strong> Its <code>allowDuplicateKeys</code> defaults to <code>true</code>. CoreBluetooth's own default is <code>false</code>: the central "coalesces multiple discoveries of the same peripheral into a single discovery event", and Apple warns that turning that off "can have an adverse effect on battery life; use it only if necessary". <code>IosBleScanner</code> keeps Apple's default, so this does too. The port allows either (Lesson 13: "the same device may come again"), and <code>ScanningService</code> reports each device once anyway.</li>
+    <li><strong>One <code>CBCentralManager</code>, configured before first use.</strong> Kable makes one manager for the whole app, on first use (a scan, or creating a <code>Peripheral</code>), on a dispatch queue of its own. Without <code>configure</code>, it passes no options, and Apple's default for <code>CBCentralManagerOptionShowPowerAlertKey</code> is <code>true</code>: "If the key isn't specified, the default value is true", so iOS would show its own alert if Bluetooth is off as the manager is made. Any <code>configure</code> call makes Kable pass <code>false</code> (in Kable's source), so the app keeps showing its own message, as the hand-written adapters do. Kable's README: "attempts to <code>configure</code> it after initialization will result in an <code>IllegalStateException</code>". The <code>lazy</code> runs it once, before the first scanner or peripheral. In this app, <code>ScanningService</code> checks that Bluetooth is on before the first scan, so Kable's manager is normally made with Bluetooth on; <code>configure</code> makes sure the alert can't appear either way.</li>
+    <li><strong>Back from an id to a <code>Peripheral</code>.</strong> On Android, <code>Peripheral(identifier)</code> calls <code>getRemoteDevice</code> with the address, as <code>AndroidBleConnection</code> does. On iOS, it asks Kable's manager to retrieve the peripheral by UUID, as <code>IosBleConnection</code> asks its own, and Kable's docs say it throws <code>NoSuchElementException</code> if iOS doesn't know it: "a scan will be necessary". The connection adapter turns that into "Scan again".</li>
+  </ol>
+
+  <h2>4. The connection: suspend, don't call back</h2>
+  <p>Lessons 14–16's connection adapters had the most machinery: a <code>callbackFlow</code> for the link, a <code>CompletableDeferred</code> for each request's answer, a delegate that had to be kept alive. Kable's <code>Peripheral</code> does all of that inside: <code>connect()</code>, <code>read()</code> and the rest are <code>suspend</code> functions that return the answer or throw. So <code>connect</code> is a plain <code>flow { }</code>:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KableBleConnection.kt</figcaption>
+<pre><code>    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = flow {
+        val peripheral = try {
+            kablePeripheral(device)
+        } catch (e: Exception) {
+            throw ConnectionException("Kable couldn't find ${device.name} (${e.message}). Scan again.")
+        }
+        try {
+            emit(ConnectionState.Connecting(device))
+<mark>            val scope = kable("The connection failed") { peripheral.connect() }</mark>
+            link = Link(peripheral, scope)
+<mark>            emit(ConnectionState.Connected(device))</mark>
+<mark>            val ended = peripheral.state.first { it is State.Disconnected } as State.Disconnected</mark>
+            val reason = ended.status?.toString() ?: "no reason given"
+            throw ConnectionException("The link to ${device.name} was lost (Kable: $reason).")
+        } finally {
+            link = null
+<mark>            withContext(NonCancellable) { peripheral.disconnect() }</mark>
+<mark>            peripheral.close()</mark>
+        }
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>connect()</code> returns when the link is ready, discovery included.</strong> Kable's README: "A connection is considered ready when connected, services have been discovered, and observations (if any) have been re-wired. <em>Service discovery occurs automatically upon connection.</em>" So this adapter emits <code>Connected</code> later than the hand-written ones, which emit it as soon as the link is up and discover services as a separate request. The screens show the same states, but "connecting…" now lasts until discovery is done, and <code>SessionService</code>'s 10-second limit (Lesson 14) now also covers discovery.</li>
+    <li><strong>The flow's life is the link's life.</strong> After <code>Connected</code>, the flow suspends on Kable's <code>state</code> until it's <code>Disconnected</code>: a drop. That becomes the port's <code>ConnectionException</code>, which <code>SessionService</code> reports, as in Lesson 16. A Disconnect tap doesn't get there: it cancels the collector, so <code>first</code> is cancelled and only <code>finally</code> runs.</li>
+    <li><strong>Every way out frees the radio.</strong> <code>finally</code> calls <code>disconnect()</code>, which "cancels an in-flight connection attempt" too, and then <code>close()</code>: Kable's <code>Peripheral</code> "should be disposed (via <code>close</code>) when no longer needed". <code>disconnect()</code> suspends, and this <code>finally</code> often runs because the collector was cancelled, so it runs under <code>NonCancellable</code>, as <code>SessionService</code>'s unsubscribe did in Lesson 16. On the API 30 emulator, a timed-out attempt ended with <code>BluetoothGatt: cancelOpen()</code>, then <code>close()</code> and <code>unregisterApp()</code> in logcat.</li>
+    <li><strong><code>disconnect()</code> waits for the radio.</strong> It "suspends until the peripheral has settled on a disconnected state", for up to the peripheral's <code>disconnectTimeout</code>, 5 seconds by default (in Kable's source, Android and Apple alike). A pending attempt that's cancelled never reports a disconnection on Android, so there it waits the full 5 s. Section 8 measures what that does to the screen.</li>
+    <li><strong>The link holds the scope.</strong> <code>connect()</code> returns a <code>CoroutineScope</code> that Kable cancels on disconnect. The adapter keeps it with the peripheral in <code>Link</code>, for the subscriptions (section 5).</li>
+  </ol>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KableBleConnection.kt</figcaption>
+<pre><code>    // Not a request any more: Kable discovered everything before connect() returned.
+    override suspend fun discoverServices(): List&lt;DeviceService&gt; {
+<mark>        val services = openLink().peripheral.services.value</mark>
+            ?: throw ConnectionException("Discovery failed: Kable has no services for this link.")
+        return services.map { it.toDeviceService() }
+    }
+
+    override suspend fun read(characteristic: Characteristic): ByteArray {
+        val peripheral = openLink().peripheral
+<mark>        return kable("The device refused the read") { peripheral.read(characteristic.inKable()) }</mark>
+    }
+<span class="elide">⋯  subscribe, unsubscribe, notifications (section 5), openLink, and a comment</span>
+<mark>private fun Characteristic.inKable() = characteristicOf(Uuid.parse(serviceUuid), Uuid.parse(uuid))</mark>
+<span class="elide">⋯  toDeviceService: fullUuid and propertiesOf, as in Lessons 15–16; and a comment</span>
+private suspend fun &lt;T&gt; kable(what: String, call: suspend () -&gt; T): T =
+    try {
+        call()
+<mark>    } catch (e: CancellationException) {</mark>
+<mark>        throw e</mark>
+    } catch (e: Exception) {
+        throw ConnectionException(connectionFailure(what, e))
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>discoverServices()</code> asks nothing of the device.</strong> Kable's <code>services</code> is a <code>StateFlow</code> that's "<code>null</code> until services have been discovered", and after <code>connect()</code> it's filled. The port still has the function, so the session service and the screens work unchanged; this adapter just answers from what it already knows.</li>
+    <li><strong>A characteristic by its two UUIDs.</strong> <code>characteristicOf(service, characteristic)</code> names one the way the app does; Kable then uses "the first found characteristic with [Read] property matching the service UUID and characteristic UUID" (its KDoc). No search through the platform's GATT objects, which <code>AndroidBleConnection.find</code> and the Swift <code>target(for:)</code> did by hand.</li>
+    <li><strong>One request at a time is still the service's rule.</strong> Kable serializes its own requests too (a <code>Mutex</code> in its <code>Connection</code>, on both platforms, in its source), but the port's contract says callers send one request at a time ("callers wait for each to finish before sending the next"), and <code>SessionService</code>'s lock keeps it. Nothing here depends on that lock, or works around it.</li>
+    <li><strong>Every failure becomes a <code>ConnectionException</code>, except cancellation.</strong> <code>kable { }</code> wraps each call: a cancellation passes through, as E1's adapter does (Kotlin's docs: "if you must catch it, rethrow it"), and anything else gets the app's words first, then Kable's: <code>NotConnectedException</code> is "the link closed first", <code>NoSuchElementException</code> is "no such characteristic", <code>UnmetRequirementException</code> is "Bluetooth is off". <code>KableTranslationTest</code> pins these words without a radio.</li>
+  </ol>
+
+  <h2>5. Notifications: a Flow, split into requests</h2>
+  <p>Kable has no <code>subscribe</code>. Its <code>observe(characteristic)</code> returns a <code>Flow&lt;ByteArray&gt;</code>: collecting it turns the notifications on (Kable writes the CCCD descriptor, as Lesson 16 did by hand), and cancelling the collection turns them off. The port, since Lesson 16, splits that into requests and data: <code>subscribe</code> and <code>unsubscribe</code>, each one request under the session's lock, and <code>notifications</code>, a <code>Flow</code> you collect first. So the adapter starts the collection inside <code>subscribe</code>, and lets it run in the link's scope:</p>
+  <figure class="excerpt" data-part="outbound">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KableBleConnection.kt</figcaption>
+<pre><code>    override suspend fun subscribe(characteristic: Characteristic) {
+        val link = openLink()
+        val on = CompletableDeferred&lt;Unit&gt;()
+<mark>        val job = link.scope.launch {</mark>
+            try {
+<mark>                link.peripheral.observe(characteristic.inKable()) { on.complete(Unit) }</mark>
+<mark>                    .collect { notified.emit(Notified(characteristic, it)) }</mark>
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                on.completeExceptionally(e)
+            }
+        }
+        job.invokeOnCompletion { on.completeExceptionally(NotConnectedException("The link closed first.")) }
+        link.subscriptions[characteristic] = job
+<mark>        kable("The device refused to turn on its notifications") { on.await() }</mark>
+    }
+
+    // Cancelling the collection is Kable's unsubscribe: it writes the CCCD to turn them off.
+    override suspend fun unsubscribe(characteristic: Characteristic) {
+<mark>        openLink().subscriptions.remove(characteristic)?.cancelAndJoin()</mark>
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong><code>onSubscription</code> says when they're on.</strong> Kable runs <code>observe</code>'s <code>onSubscription</code> action "<em>after</em> the observation is spun up (i.e. after enabling notifications or indications)". Completing <code>on</code> there makes <code>subscribe</code> return when the device has accepted, as the port promises. If enabling fails, the <code>observe</code> flow fails, and <code>on</code> carries the failure to <code>subscribe</code>'s caller. If the link closes first, the job completes, and <code>invokeOnCompletion</code> fails <code>on</code> (a <code>CompletableDeferred</code> ignores a second completion, so this only matters when nothing came first).</li>
+    <li><strong>In the link's scope, so it ends with the link.</strong> Kable's README says an <code>observe</code> flow "will remain active" across a drop and resumes after a reconnect. The port promises the opposite: "The link ending ends the values". Launching the collection in the scope <code>connect()</code> returned does that, because Kable cancels that scope on disconnect.</li>
+    <li><strong>Cancel and join is Kable's unsubscribe.</strong> When the last collector of an observation goes away while connected, Kable turns the notifications off (its <code>Observation.onCompletion</code>, under <code>NonCancellable</code>). <code>cancelAndJoin</code> waits for that, so <code>unsubscribe</code> returns after the CCCD write, as the hand-written one did.</li>
+    <li><strong>The values go out as before.</strong> <code>notified</code> is a <code>MutableSharedFlow</code>, and <code>notifications(characteristic)</code> filters it by the two UUIDs, exactly as <code>AndroidBleConnection</code> and <code>LinkedBleConnection</code> do. <code>SessionService</code> still collects first, then subscribes (Lesson 16).</li>
+  </ol>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · a library's shape isn't your port's</span>
+    It's tempting to change the port to fit the library: make <code>subscribe</code> return Kable's <code>Flow</code> and drop <code>unsubscribe</code>. Then the hand-written adapters, the fake and <code>SessionService</code> all change, and the session's one-request-at-a-time lock no longer covers the CCCD write. The port is named in the app's terms (ADR 0001), so the adapter bends: here, a small bridge from "a Flow whose collection is the subscription" to "a request, then a stream". If two libraries both fit a port badly, then it's worth asking whether the port is wrong. One awkward fit isn't that.
+  </div>
+
+  <h2>6. One Koin line</h2>
+  <p>The platform still builds its hand-written adapters and passes them to <code>initKoin</code>, as in m15. A third module, in shared code, binds the same two ports to the Kable adapters, and it's listed last:</p>
+  <figure class="excerpt">
+    <figcaption class="path">shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</figcaption>
+<pre><code><mark>internal val kableBleModule = module {</mark>
+<mark>    single&lt;BleScanner&gt; { KableBleScanner(get()) }</mark>
+<mark>    single&lt;BleConnection&gt; { KableBleConnection() }</mark>
+}
+<span class="elide">⋯  a comment, and initKoin with its nine parameters</span>
+    startKoin {
+        modules(
+            appModule,
+            platformModule(
+<span class="elide">⋯                the nine adapters the platform built</span>
+            ),
+<mark>            kableBleModule, // the BLE stack: delete this line for the hand-written adapters</mark>
+        )
+    }</code></pre>
+  </figure>
+  <ol class="walk">
+    <li><strong>The module loaded last wins.</strong> Koin's Modules page: "When two loaded modules declare the same type, the module loaded last wins. In a DSL start block, this is the order of <code>modules(...)</code>." <code>platformModule</code> binds <code>BleScanner</code> and <code>BleConnection</code> to what the platform passed; <code>kableBleModule</code>, after it, rebinds both. <code>KableBleScanner(get())</code> gets the platform's <code>BluetoothProvider</code>, which nothing overrides.</li>
+    <li><strong>One line, both platforms.</strong> <code>initKoin</code> is shared code, so the line switches Android and iOS together. Delete it, and the app is m15's again; nothing else in the app knows. That's the refactor checklist's "swapping an adapter is one line" (Lesson 20), for a whole stack.</li>
+    <li><strong>The platform's adapters are still built.</strong> Each app start still constructs <code>AndroidBleScanner</code>, <code>IosBleConnection</code> and the rest, and Koin holds them, unused. They're cheap: <code>IosBleScanner</code> and <code>IosBleConnection</code> make their <code>CBCentralManager</code> on first use, which never comes. Moving the choice into each app start instead (pass Kable's adapters to <code>initKoin</code>) would need the adapters to be public, and two lines per platform; keeping it in shared code is one line.</li>
+  </ol>
+  <figure class="excerpt" data-part="inbound">
+    <figcaption class="path">shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</figcaption>
+<pre><code>    @Test
+    fun kableBleModuleReplacesThePlatformsBleAdapters() {
+<mark>        val withKable = koinApplication { modules(appModule, platformFakes(), kableBleModule) }</mark>
+        try {
+<mark>            assertIs&lt;KableBleScanner&gt;(withKable.koin.get&lt;BleScanner&gt;())</mark>
+<mark>            assertIs&lt;KableBleConnection&gt;(withKable.koin.get&lt;BleConnection&gt;())</mark>
+            assertNotNull(withKable.koin.get&lt;DeviceDetailViewModel&gt;())
+        } finally {
+            withKable.close()
+        }
+    }</code></pre>
+  </figure>
+  <p>The graph test (Lesson 11) gets one more case: with the fakes passed in as the platform's adapters and <code>kableBleModule</code> after them, Koin hands out the Kable adapters, and a ViewModel that needs the session still builds on top. Building them touches no radio: <code>KableBleScanner</code> stores its <code>BluetoothProvider</code>, and Kable's scanner and <code>CBCentralManager</code> are made only when a scan or a connection starts. <code>platformFakes()</code> is the old inline module, moved into a function so both tests use it. <code>KableTranslationTest</code> covers the translations: a Kable <code>DiscoveredService</code> (an interface, so a test can make one) becomes the app's <code>DeviceService</code> with full upper-case UUIDs and the right properties, and three failures get the app's words.</p>
+  <div class="callout gotcha">
+    <span class="label">Gotcha · the Kable line overrides Lesson 20's simulated run</span>
+    Lesson 20 ran the end-to-end BLE rows by passing <code>SimulatedBleScanner</code> and <code>SimulatedBleConnection</code> to <code>initKoin</code> from each app start. With <code>kableBleModule</code> in the list, that swap does nothing: the Kable bindings come later, and they win, as <code>kableBleModuleReplacesThePlatformsBleAdapters</code> shows with fakes. For a simulated run on e3, delete the Kable line too, then put both back.
+  </div>
+
+  <h2>7. The two stacks, side by side</h2>
+  <p>The comparison the course plan asks for: lines of code, connection-state handling, errors and iOS behaviour. "Code lines" below counts lines that aren't blank, comments, <code>package</code> or <code>import</code>. Rows marked "seen" are from section 8's runs; the rest come from the two stacks' code and Kable's source, and the iOS ones wait for an iPhone.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th></th><th>Hand-written (m15)</th><th>Kable (e3)</th></tr>
+    <tr><td>files and size</td><td>Android: 2 Kotlin files in <code>androidMain</code>, 326 lines, 202 code lines. iOS: 2 Kotlin files in <code>iosMain</code> and 2 Swift files, 475 lines, 321 code lines</td><td>5 Kotlin files (2 in <code>commonMain</code>, 1 <code>expect</code>, 2 <code>actual</code>), 256 lines, 118 code lines, for both platforms. Plus a dependency you don't maintain, and can't fix yourself</td></tr>
+    <tr><td>machinery you write</td><td><code>callbackFlow</code>s, a <code>CompletableDeferred</code> per request, a broadcast receiver, delegates kept alive, a Kotlin/Swift seam on iOS (<code>IosLink</code>, replies)</td><td>none of it: <code>suspend</code> calls and <code>Flow</code>s. The one bridge left is <code>subscribe</code>'s, from Kable's shape to the port's</td></tr>
+    <tr><td>when it's <code>Connected</code></td><td>the link is up; discovery is a separate request</td><td>the link is up and every service and characteristic is discovered</td></tr>
+    <tr><td>a drop</td><td>the platform's callback: "was lost (Android status N)" or iOS's error</td><td>Kable's <code>state</code> turns <code>Disconnected(status)</code>: "was lost (Kable: …)"</td></tr>
+    <tr><td>giving up on a device (seen, API 30)</td><td>the failure shows about 10 s after Connect</td><td>about 15 s: <code>disconnect()</code> waits up to <code>disconnectTimeout</code> (5 s) for a disconnection a pending attempt never reports</td></tr>
+    <tr><td>Bluetooth off mid-scan (seen, API 36)</td><td>"Scan failed: Bluetooth was turned off." at once (Lesson 13's receiver)</td><td>"Scanning…" until the 10 s limit, then "No devices found. Try another filter.": Kable's scanner doesn't watch the radio once it's started (on Apple too, in its source)</td></tr>
+    <tr><td>Location off, Android 11 and lower (seen, API 30)</td><td>the scan finds nothing, and says "No devices found"</td><td>"Scanning needs Location turned on on this phone (Android 11 and lower)": Kable checks before it starts</td></tr>
+    <tr><td>error detail</td><td>Android status codes, iOS's <code>localizedDescription</code></td><td>typed exceptions (<code>UnmetRequirementException</code> with a reason, <code>NotConnectedException</code>, <code>GattStatusException</code>) and Kable's messages</td></tr>
+    <tr><td>logs</td><td>none of ours</td><td>Kable logs at its default level, warnings: a cancelled attempt logs "Failed to establish connection" with a stack trace (seen, API 30). It's not a crash</td></tr>
+    <tr><td>iOS</td><td>Swift classes on the main queue, one <code>CBCentralManager</code> per adapter, <code>ShowPowerAlert</code> false</td><td>one <code>CBCentralManager</code> for the app, on Kable's own queue, configured before first use; duplicate filtering set back to Apple's default; no Swift at all</td></tr>
+    <tr><td>tests without a radio</td><td>fakes behind the ports (Lessons 11–16)</td><td>the same fakes, plus the translations; Kable itself has no test double, so the adapter's radio paths wait for a phone either way</td></tr>
+  </table>
+  </div>
+  <figure class="diagram">
+    <svg class="dg" viewBox="0 0 760 210" role="img" aria-labelledby="le3-giveup-title">
+      <title id="le3-giveup-title">Timeline of a connection attempt to a device that never answers, on the API 30 emulator. Both stacks start connecting at 0 seconds. At 10 seconds SessionService gives up and cancels the link's collection. The hand-written adapter's awaitClose calls disconnect and close at once, and the failure shows at about 10 seconds. The Kable adapter's finally calls disconnect, which waits up to disconnectTimeout, 5 seconds, for a disconnection that a pending attempt never reports; close runs at about 15 seconds, and the failure shows then.</title>
+      <text class="small muted" x="10" y="60">hand-written</text>
+      <text class="small muted" x="10" y="130">Kable</text>
+      <path class="axis" d="M120,55 L700,55 M120,125 L700,125"/>
+      <circle class="dot" cx="120" cy="55" r="5"/><text class="mono small" x="120" y="43" text-anchor="middle">Connect</text>
+      <circle class="dot" cx="480" cy="55" r="5"/><text class="mono small" x="480" y="43" text-anchor="middle">give up: close()</text>
+      <text class="small" x="480" y="76" text-anchor="middle">failure shown</text>
+      <circle class="dot" cx="120" cy="125" r="5"/><text class="mono small" x="120" y="113" text-anchor="middle">Connect</text>
+      <circle class="dot" cx="480" cy="125" r="5"/><text class="mono small" x="480" y="113" text-anchor="middle">give up: disconnect()</text>
+      <path class="edge dashed" d="M486,125 L654,125"/>
+      <text class="small muted" x="570" y="146" text-anchor="middle">waits for Disconnected, up to 5 s</text>
+      <circle class="dot" cx="660" cy="125" r="5"/><text class="mono small" x="660" y="113" text-anchor="middle">close()</text>
+      <text class="small" x="660" y="166" text-anchor="middle">failure shown</text>
+      <path class="axis" d="M120,185 L700,185"/>
+      <text class="small muted" x="120" y="202" text-anchor="middle">0 s</text>
+      <text class="small muted" x="300" y="202" text-anchor="middle">5 s</text>
+      <text class="small muted" x="480" y="202" text-anchor="middle">10 s</text>
+      <text class="small muted" x="660" y="202" text-anchor="middle">15 s</text>
+    </svg>
+    <figcaption>The same rule, "give up after 10 seconds", in the same service, behind the same port: the failure still shows 5 seconds later with Kable, because its cleanup waits for the radio.</figcaption>
+  </figure>
+
+  <h2>8. What actually happens: the runs behind this page</h2>
+  <p>We built e3 on all four tracks (Kotlin 2.4.20, Kable 0.45.0, Koin 4.2.2, Xcode 26.2). <code>allTests</code> passed 110 of 110 on the JVM and 110 of 110 on the iOS simulator, and no build printed a compiler warning from our code. The emulator's Bluetooth is simulated and can't hear LightBlue on your Mac, and the Simulator has no Bluetooth at all (Lesson 13), so these runs check what they can without a peripheral. To compare, we also ran a copy with the Kable line deleted.</p>
+  <div class="table-wrap">
+  <table>
+    <tr><th>Where</th><th>What we did</th><th>Kable stack</th><th>Hand-written stack</th></tr>
+    <tr><td>API 36 emulator, Compose and XML</td><td>Scan, wait</td><td>"Scanning…", then after 10 s "No devices found. Try another filter."; <code>dumpsys</code>: one scan, <code>ScanMode=LOW_LATENCY</code>, stopped after 9.9 s</td><td>the same (Lesson 13)</td></tr>
+    <tr><td>API 36 emulator, Compose</td><td>Scan, Stop after 2 s</td><td><code>dumpsys</code>: stopped after 2.1 s</td><td>the same</td></tr>
+    <tr><td>API 36 emulator, Compose</td><td>Bluetooth off (<code>adb shell cmd bluetooth_manager disable</code>), Scan</td><td>"Bluetooth is off. Turn it on, then scan again." (from <code>ScanningService</code>, before Kable runs)</td><td>the same</td></tr>
+    <tr><td>API 36 emulator, Compose and XML (hand-written: Compose)</td><td>Scan, then Bluetooth off after 2 s</td><td>"Scanning…" until the 10 s limit, then "No devices found. Try another filter."</td><td>"Scan failed: Bluetooth was turned off." at once</td></tr>
+    <tr><td>API 30 emulator, Compose</td><td>Scan</td><td>two <code>gDevice-beacon</code> rows, <code>BE:AC:10:00:00:01</code> and <code>…:02</code>, "Devices found: 2"</td><td>the same (Lesson 13)</td></tr>
+    <tr><td>API 30 emulator, Compose</td><td>a beacon's screen, Connect</td><td>"Status: connecting…", then about 15 s after the tap "Connection failed: gDevice-beacon didn't answer within 10 seconds."; logcat: <code>cancelOpen()</code> at 10 s, <code>close()</code> 5 s later</td><td>the same dialog about 10 s after the tap; <code>cancelOpen()</code> and <code>close()</code> 6 ms apart</td></tr>
+    <tr><td>API 30 emulator, Compose</td><td>Location off (<code>adb shell cmd location set-location-enabled false</code>), Scan</td><td>"Scan failed: Scanning needs Location turned on on this phone (Android 11 and lower)."</td><td>"No devices found. Try another filter." after 10 s</td></tr>
+    <tr><td>iOS 26.2 Simulator, SwiftUI and UIKit</td><td>Scan (a throwaway XCUITest)</td><td>"Scan failed: This phone has no Bluetooth LE radio." (<code>BluetoothProvider</code> says <code>null</code>: the Simulator's radio is <code>unsupported</code>); the app stays in the foreground</td><td>the same (Lesson 13)</td></tr>
+  </table>
+  </div>
+  <p>The real goal, LightBlue scanned, connected, read, subscribed and disconnected through Kable, needs your phones; so do the iOS rows of section 7. The agent brief lists them as device checks. <strong>e3 is a natural stop</strong> when the tests pass on both platforms, the emulator and the Simulator show the lines above, and deleting the Kable line gives you m15's behaviour back. Commit it, and tag it.</p>
+
+  <h2>9. When to choose which</h2>
+  <p>Neither stack is the right one everywhere. What the runs and the code above suggest:</p>
+  <ol class="walk">
+    <li><strong>Choose a library like Kable</strong> when the app's BLE needs are ordinary (scan, connect, read, write, notify) and the team writes Kotlin on both platforms: one adapter instead of two, under a quarter of the code lines (118 against 202 + 321), no Swift-to-Kotlin seam, and errors as typed exceptions. It suits a team that would otherwise maintain the same state machine twice.</li>
+    <li><strong>Write it by hand</strong> when you need a platform's behaviour exactly: background modes and state restoration on iOS, a phone maker's quirk to work around on Android, a precise moment to report <code>Connected</code>, or a reaction to Bluetooth going off mid-scan, which Kable's scanner doesn't watch for. Also when the team owns iOS in Swift and wants CoreBluetooth in its own language.</li>
+    <li><strong>Either way, keep the port.</strong> The choice stayed cheap here because the app core never saw <code>BluetoothGatt</code>, <code>CBPeripheral</code> or a Kable type. With the port in place, you can start with a library and drop to hand-written code for one platform later, or the other way round, one Koin line at a time.</li>
+    <li><strong>Read its defaults.</strong> Most differences we met were defaults: low-power scanning, duplicates on, a 5-second disconnect wait, the power alert. A library decides things for you; the adapter is where you decide them back.</li>
+  </ol>
+  <div class="callout ask-agent">
+    <span class="label">Ask your agent</span>
+    Ask your agent how it would make <code>KableBleScanner</code> end the scan when Bluetooth goes off, as <code>AndroidBleScanner</code> does, without changing the port: where the code goes (shared, or an <code>actual</code> per platform), what it listens to, and how a test could check it without a radio. Check its answer against sections 3 and 6, then compare with your own answer to the exercise's step 2.
+  </div>
+
+  <h2 id="retrieval-checks">Retrieval checks</h2>
+  <p>Answer from memory, without scrolling up.</p>
+  <div class="quiz mcq">
+    <p class="q">Why can <code>KableBleScanner</code> and <code>KableBleConnection</code> live in <code>commonMain</code>, when Lesson 13's adapters needed one per platform?</p>
+    <div class="opts">
+      <button class="opt">Kable talks to the radio over a cross-platform Bluetooth protocol of its own</button>
+      <button class="opt" data-correct>Kable is a Kotlin Multiplatform library: its own <code>androidMain</code> and <code>appleMain</code> implement <code>Scanner</code> and <code>Peripheral</code> over each platform's API, so our adapters only translate types</button>
+      <button class="opt">the ports moved into the platform source sets</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The platform code didn't disappear; it moved into the library. The two small <code>actual</code>s that remain are the per-platform choices Kable's builders leave to us.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q"><code>initKoin</code> lists <code>appModule</code>, <code>platformModule(…)</code>, then <code>kableBleModule</code>. Which <code>BleScanner</code> does <code>ScanningService</code> get?</p>
+    <div class="opts">
+      <button class="opt">the platform's: the first definition of a type wins</button>
+      <button class="opt">neither: Koin fails at start with a duplicate definition</button>
+      <button class="opt" data-correct><code>KableBleScanner</code>: when two loaded modules declare the same type, the module loaded last wins</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Koin's "Load order and overrides". To make an accidental override fail instead, Koin has <code>allowOverride(false)</code>; this app relies on the override, and the graph test pins it.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">When does <code>KableBleConnection</code> emit <code>Connected</code>, compared with <code>AndroidBleConnection</code>?</p>
+    <div class="opts">
+      <button class="opt">at the same moment: both report the link coming up</button>
+      <button class="opt" data-correct>later: Kable's <code>connect()</code> returns only once services are discovered, while the hand-written adapter emits <code>Connected</code> when the link is up</button>
+      <button class="opt">earlier: Kable emits <code>Connected</code> as soon as it starts connecting</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Kable's README: "Service discovery occurs automatically upon connection." So the session's 10-second limit now covers discovery too, and <code>discoverServices()</code> answers without asking the device.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">With the Kable stack on Android, Bluetooth goes off two seconds into a scan. What does the screen show?</p>
+    <div class="opts">
+      <button class="opt">"Scan failed: Bluetooth was turned off." at once</button>
+      <button class="opt">"Bluetooth is off. Turn it on, then scan again." at once</button>
+      <button class="opt" data-correct>"Scanning…" until the 10-second limit, then "No devices found. Try another filter."</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Kable checks Bluetooth before it starts the scan, not during it, and Android's scan callback reports nothing when the radio goes off (Lesson 13). The hand-written adapter listens for the broadcast; Kable's scanner doesn't.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does <code>subscribe</code> launch Kable's <code>observe</code> collection in the link's scope instead of returning Kable's <code>Flow</code>?</p>
+    <div class="opts">
+      <button class="opt">Kable's <code>Flow</code> can't be collected outside Kable's own scope</button>
+      <button class="opt" data-correct>the port splits the request (<code>subscribe</code>, under the session's lock) from the data (<code>notifications</code>); a collection in the link's scope ends when the link does, as the port promises</button>
+      <button class="opt">so that notifications keep arriving after a reconnect</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Kable's own <code>observe</code> flow survives a drop and resumes after a reconnect; the port says "The link ending ends the values". The scope <code>connect()</code> returns is cancelled on disconnect, so the collection ends with the link.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does the iOS <code>actual</code> call <code>CentralManager.configure { }</code>, with nothing inside, before Kable's first scan?</p>
+    <div class="opts">
+      <button class="opt">Kable won't scan until its manager is configured</button>
+      <button class="opt" data-correct>without it Kable passes no options, and iOS's default shows a system alert if Bluetooth is off as the manager is made; any <code>configure</code> makes Kable pass <code>ShowPowerAlert</code> false. It must run before the manager exists, or it throws</button>
+      <button class="opt">to turn on state restoration for background scanning</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Apple: "If the key isn't specified, the default value is true." The <code>lazy</code> makes sure it runs once, first.</p>
+  </div>
+
+  <h3>Mixed review (interleaved)</h3>
+  <div class="quiz mcq">
+    <p class="q">Why did <code>AndroidBleScanner</code> register a receiver for <code>ACTION_STATE_CHANGED</code>? (Lesson 13)</p>
+    <div class="opts">
+      <button class="opt">to start the scan as soon as Bluetooth comes on</button>
+      <button class="opt" data-correct>turning Bluetooth off ends the scan without any call to the <code>ScanCallback</code>, so without the broadcast the app can't tell</button>
+      <button class="opt">Android requires a receiver before <code>startScan</code></button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The same silence is what the Kable stack runs into in section 8.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">You add <code>kableBleModule</code> to <code>initKoin</code> but forget to bind <code>BluetoothProvider</code> anywhere. When do you find out? (Lesson 11)</p>
+    <div class="opts">
+      <button class="opt">at compile time: <code>get()</code> checks its type</button>
+      <button class="opt" data-correct>at run time, when Koin first builds <code>KableBleScanner</code>, unless a graph test builds it first</button>
+      <button class="opt">never: Koin passes <code>null</code></button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">Koin resolves <code>get()</code> when it builds the definition, which is why Lesson 11 added a graph test, and why this extension adds a case to it.</p>
+  </div>
+  <div class="quiz mcq">
+    <p class="q">Why does the Kable adapter's <code>finally</code> wrap <code>peripheral.disconnect()</code> in <code>withContext(NonCancellable)</code>? (Lesson 16)</p>
+    <div class="opts">
+      <button class="opt">Kable's <code>disconnect()</code> must run on the main thread</button>
+      <button class="opt" data-correct>the <code>finally</code> often runs because the coroutine was cancelled, and a cancelled coroutine's next suspension throws at once; <code>NonCancellable</code> lets the cleanup suspend until it's done</button>
+      <button class="opt">so a Disconnect tap can't interrupt the connection attempt</button>
+    </div>
+    <p class="feedback"></p>
+    <p class="why">The same reason <code>SessionService</code> sends its unsubscribe under <code>NonCancellable</code> when the collector goes away.</p>
+  </div>
+
+  <h2 id="unaided-exercise">Unaided exercise</h2>
+  <div class="callout exercise">
+    <span class="label">Unaided exercise (no agent, on your e3 project)</span>
+    <ol>
+      <li><strong>Predict, then switch.</strong> Write down what the screen will say when Bluetooth goes off two seconds into a scan, first with the Kable line, then without it. Run both on the emulator (<code>adb shell cmd bluetooth_manager disable</code>, then <code>enable</code>). Then run <code>./gradlew :shared:allTests</code> without the line: which test still passes, and why doesn't it need the line in <code>initKoin</code>?</li>
+      <li><strong>Close the gap.</strong> Make <code>KableBleScanner</code> end the scan with <code>ScanException("Bluetooth was turned off.")</code> when Bluetooth goes off, without changing the port. A first idea that needs nothing new: while the scan runs, ask <code>BluetoothProvider</code> every second, and fail when it stops saying <code>true</code>. Write it so a test can check it with <code>FakeBluetoothProvider</code> and a fake advertisement source, then try it on the emulator. What does polling cost, and what would an <code>actual</code> per platform listen to instead?</li>
+      <li><strong>The 5-second wait.</strong> On the API 30 emulator, time the "didn't answer" dialog after Connect on a <code>gDevice-beacon</code>. Then give the Android <code>Peripheral</code> a shorter wait (<code>Peripheral(device.id) { disconnectTimeout = 1.seconds }</code>) and time it again. What could a too-short wait cost on a real phone with a live link?</li>
+    </ol>
+  </div>
+
+  <h2 id="agent-brief">Agent brief</h2>
+  <p>Hand this to your coding agent. Then read its code against the walkthroughs above, run the tests and the checks yourself, compare the two stacks with the Kable line in and out, and do the unaided exercise.</p>
+  <div class="callout brief copy-wrap">
+<pre class="brief-text">Lesson source: https://phongna-inn.github.io/carmd-kmp-course/lessons/e3-kable-library-alternative.html
+Before anything else, download the lesson and the reference pages it links, then read
+them in full. Don't use a summarising web fetch; it can leave out code.
+  mkdir -p .course    # in my workspace root, not inside demo/
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/e3-kable-library-alternative.html" -o .course/lesson-e3.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/architecture-di-testing-cheatsheet.html" -o .course/ref-architecture-di-testing-cheatsheet.html
+  curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/reference/ble-cheatsheet.html" -o .course/ref-ble-cheatsheet.html
+Lesson 20, which this extension builds on; skipped if it's already there:
+  [ -f .course/lesson-20.html ] || curl -fsSL "https://phongna-inn.github.io/carmd-kmp-course/lessons/20-integration-and-end-to-end-check.html" -o .course/lesson-20.html
+Use these files to answer my questions about this lesson without asking me for context.
+Then build what follows, using the lesson's "Full files" exactly, except where the brief
+below says otherwise.
+
+Extension E3 (Kable: the library alternative): build milestone e3 on top of m15: a second
+pair of BLE outbound adapters over Kable 0.45.0 (com.juul.kable:kable-core, commonMain only),
+KableBleScanner and KableBleConnection in commonMain, behind the unchanged BleScanner and
+BleConnection ports; kableScanner() and kablePeripheral() as expect funs with one actual each
+in androidMain (a low-latency scan; Peripheral(address)) and iosMain (CentralManager.configure
+before first use; allowDuplicateKeys = false, Apple's default; Peripheral(uuid)); a Koin module,
+kableBleModule, listed last in initKoin, so one line switches the whole app between the Kable
+and the hand-written stacks; translation tests (KableTranslationTest) and one more graph test.
+No screen, ViewModel or service changes. The hand-written adapters stay as they are.
+My tracks: Android = [Compose | XML], iOS = [SwiftUI | UIKit]  (default Compose + SwiftUI). This
+extension's files are the same on every track.
+Starting point: my m15 project in demo/ (Lesson 20). Use exactly the file contents shown in the
+lesson's "Full files" section, including package lines, imports and comments. All paths are
+relative to demo/. Touch no file that isn't listed here.
+
+1. Shared code, all tracks: shared/build.gradle.kts: replaced (adds kable-core 0.45.0).
+   Under shared/src/commonMain/kotlin/com/example/devicemonitor/:
+     replaced: core/outbound/BleScanner.kt, core/outbound/BleConnection.kt (comments only),
+       di/AppModule.kt
+     add: adapter/outbound/KableBleScanner.kt, adapter/outbound/KableBleConnection.kt,
+       adapter/outbound/KablePlatform.kt
+   add: shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.android.kt
+   add: shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.ios.kt
+   Under shared/src/commonTest/kotlin/com/example/devicemonitor/:
+     add: adapter/outbound/KableTranslationTest.kt
+     replaced: di/AppModuleTest.kt
+   Every other file in shared/ stays as in m15.
+2. Android and iOS apps, every track: no file changes. No new Swift file, so no xcodegen run.
+
+3. Test, then build both apps. From demo/:
+     ./gradlew :shared:allTests
+     ./gradlew :shared:compileCommonMainKotlinMetadata :androidApp:assembleDebug
+   Android: run on an emulator with Android 12 or newer (API 31+), and grant the Bluetooth
+   permission in the app (or adb shell pm grant com.example.devicemonitor
+   android.permission.BLUETOOTH_SCAN, and the same for BLUETOOTH_CONNECT):
+     adb install -r androidApp/build/outputs/apk/debug/androidApp-debug.apk
+     adb shell am start -n com.example.devicemonitor/com.example.devicemonitor.android.MainActivity
+   iOS, from demo/iosApp/ (pick an installed iPhone simulator on iOS 17 or newer; if two
+   share a name, use id=&lt;UDID&gt;):
+     xcodebuild -project iosApp.xcodeproj -scheme iosApp \
+       -destination 'platform=iOS Simulator,name=&lt;that iPhone&gt;' -derivedDataPath build build
+   Run: `xcrun simctl install booted build/Build/Products/Debug-iphonesimulator/iosApp.app`,
+     then `xcrun simctl launch booted com.example.devicemonitor`.
+
+Acceptance checks (run every one you can, on an emulator and a simulator):
+- ./gradlew :shared:allTests runs BOTH testAndroidHostTest and iosSimulatorArm64Test (show me
+  the task lines), and all 110 tests pass on each: 24 in SessionServiceTest, 13 in
+  DeviceDetailViewModelTest, 10 in DeviceListViewModelTest, 10 in MonitoringServiceTest, 9 in
+  ScanningServiceTest, 8 in ValueDecoderTest, 6 in MonitorViewModelTest, 5 in
+  StatusServiceTest, 4 in AppModuleTest, 4 in KableTranslationTest, 4 in JsonLinesTest, 4 in
+  PermissionServiceTest, 3 in DeviceServiceTest, 1 in SessionConnectionStatusTest, and 5 in
+  AndroidLogStoreTest (JVM results) or 5 in IosLogStoreTest (iOS results). Show the counts from
+  the XML files in shared/build/test-results/.
+- All builds succeed with no compiler warnings (w: / warning:) from our own Kotlin or Swift
+  code, test code included (never use -q: it hides w: lines; read the output). Not from our
+  code, and expected: SKIE's "Configuration '…' was resolved during configuration time",
+  SLF4J "Failed to load class", Gradle's "Deprecated Gradle features … Gradle 10", "Unable to
+  strip the following libraries", Xcode's "appintentsmetadataprocessor … warning: Metadata
+  extraction skipped", xcodebuild's "WARNING: Using the first of multiple matching
+  destinations", and Gradle's "The Daemon will expire …". Xcode "note:" lines are not warnings.
+- Placement, each from demo/:
+    grep -rln 'import com.juul.kable' shared/src androidApp/src iosApp/iosApp
+  lists exactly KableBleScanner.kt, KableBleConnection.kt, KablePlatform.kt,
+  KablePlatform.android.kt, KablePlatform.ios.kt and KableTranslationTest.kt;
+    grep -rn 'import com.juul\|import android\.\|import platform\.\|import org.koin' shared/src/commonMain/kotlin/com/example/devicemonitor/core
+  finds nothing; and after the iOS build,
+    grep -c Kable shared/build/bin/iosSimulatorArm64/debugFramework/Shared.framework/Headers/Shared.h
+  prints 0 (the Kable adapters are internal).
+- Android emulator (API 31+), my track. Find text with `adb shell uiautomator dump` (the XML
+  buttons show their text in capitals, so match case-insensitively).
+  1. Scan: "Scanning…", then about 10 s later "No devices found. Try another filter." (or the
+     devices the emulator's image hears). Then `adb shell dumpsys bluetooth_manager`: under
+     com.example.devicemonitor, the last scan says ScanMode=LOW_LATENCY, and "LE scans
+     (started/stopped)" shows the same number twice.
+  2. Scan, and tap Stop within 2 s: dumpsys shows that scan stopped after about 2 s.
+  3. adb shell cmd bluetooth_manager disable; Scan: "Bluetooth is off. Turn it on, then scan
+     again."; then adb shell cmd bluetooth_manager enable.
+  4. Wait 30 s (Android limits how often an app may start scans), Scan, and 2 s later
+     adb shell cmd bluetooth_manager disable: the screen stays on "Scanning…" until the 10 s
+     limit, then says "No devices found. Try another filter." (Kable doesn't watch the radio
+     during a scan). Then enable Bluetooth again.
+  5. Delete the kableBleModule line from initKoin, rebuild, install, and repeat check 4: "Scan
+     failed" / "Bluetooth was turned off." at once (the hand-written stack). Put the line back,
+     rebuild and reinstall, and run git diff on AppModule.kt: nothing left of the change.
+- Optional, if you have an emulator with Android 11 (API 30): grant
+  android.permission.ACCESS_FINE_LOCATION, then
+  1. Scan: two gDevice-beacon rows, "Devices found: 2".
+  2. Tap one, Connect: "Status: connecting…", then about 15 s after the tap "Connection
+     failed" / "gDevice-beacon didn't answer within 10 seconds."; adb logcat -d shows
+     BluetoothGatt cancelOpen() and, 5 s later, close(), and Kable/Peripheral's "Failed to
+     establish connection" with a stack trace (Kable's log, not a crash: the app is still
+     running, adb shell pidof com.example.devicemonitor prints a pid).
+  3. adb shell cmd location set-location-enabled false; back on the main screen, Scan: "Scan
+     failed" / "Scanning needs Location turned on on this phone (Android 11 and lower)." Then
+     adb shell cmd location set-location-enabled true.
+- iOS Simulator, my track. Drive it with a throwaway XCUITest that launches the installed app
+  by bundle ID (or idb); don't script the Simulator window with System Events.
+  1. Tap Scan: "Scan failed" and "This phone has no Bluetooth LE radio."; the app stays in the
+     foreground.
+- Device checks (record them, don't run them): on a physical Android phone and an iPhone, with
+  LightBlue's virtual peripheral (Lesson 13) and the Kable line in: scan finds it; connect;
+  services listed; read and decode a value; subscribe and receive a notification; unsubscribe;
+  Disconnect; stop the virtual device for an unexpected drop. On the iPhone also: Bluetooth off
+  two seconds into a scan (expected as on Android: "Scanning…" until the limit), and Bluetooth
+  off before the first scan after a fresh launch (expected: the app's own message, no system
+  alert).
+Then walk me through each new or changed file line by line, tied to the lesson's walkthrough
+numbers, and show me the placement greps' output.
+Do NOT do the unaided exercise for me.</pre>
+  </div>
+
+  <h2>Further reading</h2>
+  <ul>
+    <li>The course plan's <a href="../COURSE_PLAN.md">Appendix A.3</a> (the BLE requirements both stacks meet) and ADR 0001 (where a shared outbound adapter goes).</li>
+    <li>Kable: the <a href="https://github.com/JuulLabs/kable">README</a> (primary source: "a simple Coroutines-powered API", scanning, "Service discovery occurs automatically upon connection", <code>disconnect</code> "suspends until the peripheral has settled on a disconnected state", <code>observe</code> and <code>onSubscription</code>, <code>CentralManager.configure</code> before first use, "Kable does not declare any permissions"), the <a href="https://juullabs.github.io/kable/">API docs</a> (<code>Peripheral</code>, <code>Scanner</code>, <code>State</code>, <code>UnmetRequirementException</code>) and the <a href="https://github.com/JuulLabs/kable/releases">release notes</a> (0.44.0: "Escalate deprecation of <code>Bluetooth.availability</code>").</li>
+    <li>Koin: <a href="https://insert-koin.io/docs/reference/koin-core/modules">Modules</a> (primary source: "Load order and overrides", "the module loaded last wins", <code>allowOverride(false)</code>).</li>
+    <li>Apple: <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanageroptionshowpoweralertkey">CBCentralManagerOptionShowPowerAlertKey</a> ("If the key isn't specified, the default value is true") and <a href="https://developer.apple.com/documentation/corebluetooth/cbcentralmanagerscanoptionallowduplicateskey">CBCentralManagerScanOptionAllowDuplicatesKey</a> (false by default; turning filtering off "can have an adverse effect on battery life").</li>
+    <li>Android: <a href="https://developer.android.com/reference/android/bluetooth/le/ScanSettings.Builder">ScanSettings.Builder</a> (<code>setScanMode</code>, and the scan modes Kable's default and ours choose between).</li>
+    <li>Kotlin: <a href="https://kotlinlang.org/docs/coroutines-cancellation.html">Cancellation and timeouts</a> (rethrowing <code>CancellationException</code>, and <code>NonCancellable</code> for cleanup that suspends).</li>
+    <li><a href="../reference/ble-cheatsheet.html">Cheatsheet: BLE</a> (the hand-written adapters this extension compares against) and <a href="../reference/architecture-di-testing-cheatsheet.html">Cheatsheet: architecture, DI and testing</a> (ports, adapters, Koin's graph test).</li>
+    <li>Wisdom: Kable's <a href="https://github.com/JuulLabs/kable/issues">GitHub issues</a>, where its behaviour is discussed (issue 737 is the one <code>Bluetooth.availability</code>'s deprecation message points to); the Kotlin Slack's #multiplatform channel.</li>
+  </ul>
+
+  <section id="full-files">
+    <h2>Full files</h2>
+    <p>Every file this extension adds or changes, complete, the same on every track. The Android and iOS apps, <code>project.yml</code>, <code>Info.plist</code>, both <code>androidApp/build.gradle.kts</code> files, the root build files and every hand-written BLE adapter stay as in m15. Each file is in the colour of its part of the app; the build file and the composition root carry none.</p>
+    <details class="full-file">
+      <summary>shared/build.gradle.kts</summary>
+<pre><code>plugins {
+    id("org.jetbrains.kotlin.multiplatform")
+    id("com.android.kotlin.multiplatform.library")
+    id("org.jetbrains.kotlin.plugin.serialization")
+    id("co.touchlab.skie")
+}
+
+kotlin {
+    android {
+        namespace = "com.example.devicemonitor.shared"
+        compileSdk = 37
+        minSdk = 26
+        withHostTest {}
+    }
+
+    listOf(iosArm64(), iosSimulatorArm64()).forEach { target -&gt;
+        target.binaries.framework {
+            baseName = "Shared"
+            isStatic = true
+            export("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            binaryOption("bundleId", "com.example.devicemonitor.shared")
+        }
+    }
+
+    sourceSets {
+        commonMain.dependencies {
+            api("androidx.lifecycle:lifecycle-viewmodel:2.11.0")
+            api("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
+            implementation("io.insert-koin:koin-core:4.2.2")
+            implementation("io.insert-koin:koin-core-viewmodel:4.2.2")
+            implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.12.0")
+            implementation("com.juul.kable:kable-core:0.45.0")
+        }
+        androidMain.dependencies {
+            implementation("androidx.activity:activity:1.13.0")
+            implementation("androidx.work:work-runtime:2.12.0")
+        }
+        commonTest.dependencies {
+            implementation(kotlin("test"))
+            implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+            implementation("app.cash.turbine:turbine:1.2.1")
+        }
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import com.example.devicemonitor.core.Device
+import kotlinx.coroutines.flow.Flow
+
+// Outbound port: what the app needs from a Bluetooth radio, in the app's own terms.
+// One adapter per platform: Kotlin in androidMain, Swift in the iOS app. Or one shared adapter
+// over the Kable library, KableBleScanner in commonMain (Extension E3).
+interface BleScanner {
+    // Whether this phone has a Bluetooth LE radio the app can use.
+    suspend fun isAvailable(): Boolean
+
+    // Whether that radio is switched on.
+    suspend fun isEnabled(): Boolean
+
+    // Every device the radio hears, as it hears it; the same device may come again. A device
+    // that advertises no name comes with name "". Collecting starts the radio scan, and
+    // cancelling the collector stops it. Throws ScanException.
+    fun scan(): Flow&lt;Device&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="core">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/core/outbound/BleConnection.kt</summary>
+<pre><code>package com.example.devicemonitor.core.outbound
+
+import com.example.devicemonitor.core.Characteristic
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.DeviceService
+import kotlinx.coroutines.flow.Flow
+
+// Outbound port: what the app needs from a Bluetooth radio to hold a link to one device, in the
+// app's own terms. One adapter per platform: Kotlin in androidMain; on iOS, a Kotlin half in
+// iosMain (LinkedBleConnection) over a Swift half in the iOS app. Or one shared adapter over the
+// Kable library, KableBleConnection in commonMain (Extension E3).
+interface BleConnection {
+    // The link to device, as its state changes: Connecting, then Connected once it's up.
+    // Collecting starts the connection, and cancelling the collector ends it and frees what the
+    // radio held for it. Throws ConnectionException when the attempt fails or the link drops.
+    fun connect(device: Device): Flow&lt;ConnectionState&gt;
+
+    // The requests below go over the link that connect() holds open, one at a time: callers wait
+    // for each to finish before sending the next. Each throws ConnectionException when there's
+    // no link, when the link closes first, or when the device or the radio reports an error.
+
+    // Every service on the device with its characteristics, all UUIDs in the full form (fullUuid).
+    suspend fun discoverServices(): List&lt;DeviceService&gt;
+
+    // The characteristic's value, as the bytes the device sent. Only after discoverServices().
+    suspend fun read(characteristic: Characteristic): ByteArray
+
+    // Asks the device to send the characteristic's value each time it changes (it must notify):
+    // from then on the values arrive in notifications(characteristic). Only after
+    // discoverServices().
+    suspend fun subscribe(characteristic: Characteristic)
+
+    // Asks the device to stop sending them.
+    suspend fun unsubscribe(characteristic: Characteristic)
+
+    // Not a request: the values the device sends for characteristic, as they arrive, for as long
+    // as it is collected. A value that arrives while nobody collects is lost, so collect first,
+    // then subscribe. The link ending ends the values, not this Flow.
+    fun notifications(characteristic: Characteristic): Flow&lt;ByteArray&gt;
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KableBleScanner.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.ScanException
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.juul.kable.UnmetRequirementException
+import com.juul.kable.UnmetRequirementReason
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.map
+
+// Outbound adapter: the phone's Bluetooth LE radio through the Kable library, behind the
+// BleScanner port. Shared code, the same Kotlin on Android and iOS. Kable's Scanner is already a
+// Flow, so there's no callback here: the adapter translates Kable's advertisements and failures
+// into the app's Device and ScanException.
+internal class KableBleScanner(private val bluetooth: BluetoothProvider) : BleScanner {
+    // Kable doesn't answer these two: 0.44.0 made Bluetooth.availability a compile error (it
+    // behaved differently on each platform), and its experimental isSupported() is always true on
+    // iOS. So they ask the BluetoothProvider port (Lesson 17), whose null means no radio to use.
+    override suspend fun isAvailable(): Boolean = bluetooth.isEnabled() != null
+
+    override suspend fun isEnabled(): Boolean = bluetooth.isEnabled() == true
+
+    // Collecting starts Kable's scan and cancelling the collector stops it, as the port asks.
+    // Kable's name is the advertised name, as in the hand-written adapters; none becomes "".
+    // The identifier is the address (a String) on Android and a Uuid on iOS: "$" makes it text.
+    override fun scan(): Flow&lt;Device&gt; =
+        kableScanner().advertisements
+            .map { Device(id = "${it.identifier}", name = it.name.orEmpty(), rssi = it.rssi) }
+            .catch { failure -&gt; throw ScanException(scanFailure(failure)) }
+}
+
+// Kable's failures, in the words the app shows. catch never sees the collector's cancellation.
+internal fun scanFailure(failure: Throwable): String = when {
+    failure is UnmetRequirementException &amp;&amp; failure.reason == UnmetRequirementReason.BluetoothDisabled -&gt;
+        "Bluetooth is off. Turn it on, then scan again."
+    failure is UnmetRequirementException -&gt;
+        "Scanning needs Location turned on on this phone (Android 11 and lower)."
+    else -&gt; "The scan failed (Kable: ${failure.message})."
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KableBleConnection.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Characteristic
+import com.example.devicemonitor.core.ConnectionException
+import com.example.devicemonitor.core.ConnectionState
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.DeviceService
+import com.example.devicemonitor.core.fullUuid
+import com.example.devicemonitor.core.outbound.BleConnection
+import com.example.devicemonitor.core.propertiesOf
+import com.juul.kable.DiscoveredService
+import com.juul.kable.NotConnectedException
+import com.juul.kable.Peripheral
+import com.juul.kable.State
+import com.juul.kable.UnmetRequirementException
+import com.juul.kable.characteristicOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlin.concurrent.Volatile
+import kotlin.coroutines.cancellation.CancellationException
+import kotlin.uuid.Uuid
+
+// Outbound adapter: a link to one device through the Kable library, behind the BleConnection
+// port. Shared code, the same Kotlin on Android and iOS. Kable's Peripheral suspends where the
+// platforms call back, so there's no callback object and no request waiting for its answer here:
+// each port function calls Kable and translates the answer, and the failure, into the app's terms.
+internal class KableBleConnection : BleConnection {
+    // The open link: the device's Peripheral, the scope Kable keeps for this one connection, and
+    // the subscriptions running in it. The session service sends one request at a time.
+    private class Link(val peripheral: Peripheral, val scope: CoroutineScope) {
+        val subscriptions = mutableMapOf&lt;Characteristic, Job&gt;()
+    }
+
+    @Volatile private var link: Link? = null
+
+    // Every value a subscribed characteristic sends on the link; nobody collecting, it's dropped.
+    private val notified = MutableSharedFlow&lt;Notified&gt;(extraBufferCapacity = 64)
+
+    private class Notified(val characteristic: Characteristic, val value: ByteArray)
+
+    // Kable's connect() suspends until the link is up and every service is discovered, then
+    // returns. Kable's state then says when the link drops. However the Flow ends, finally
+    // disconnects and closes the Peripheral, which frees what the radio held for it.
+    override fun connect(device: Device): Flow&lt;ConnectionState&gt; = flow {
+        val peripheral = try {
+            kablePeripheral(device)
+        } catch (e: Exception) {
+            throw ConnectionException("Kable couldn't find ${device.name} (${e.message}). Scan again.")
+        }
+        try {
+            emit(ConnectionState.Connecting(device))
+            val scope = kable("The connection failed") { peripheral.connect() }
+            link = Link(peripheral, scope)
+            emit(ConnectionState.Connected(device))
+            val ended = peripheral.state.first { it is State.Disconnected } as State.Disconnected
+            val reason = ended.status?.toString() ?: "no reason given"
+            throw ConnectionException("The link to ${device.name} was lost (Kable: $reason).")
+        } finally {
+            link = null
+            withContext(NonCancellable) { peripheral.disconnect() }
+            peripheral.close()
+        }
+    }
+
+    // Not a request any more: Kable discovered everything before connect() returned.
+    override suspend fun discoverServices(): List&lt;DeviceService&gt; {
+        val services = openLink().peripheral.services.value
+            ?: throw ConnectionException("Discovery failed: Kable has no services for this link.")
+        return services.map { it.toDeviceService() }
+    }
+
+    override suspend fun read(characteristic: Characteristic): ByteArray {
+        val peripheral = openLink().peripheral
+        return kable("The device refused the read") { peripheral.read(characteristic.inKable()) }
+    }
+
+    // Kable has no subscribe: observe() returns a Flow, and collecting it writes the CCCD
+    // descriptor. So subscribing starts a collection in the link's scope, and waits until Kable
+    // says notifications are on (observe's onSubscription) or the collection fails or ends.
+    override suspend fun subscribe(characteristic: Characteristic) {
+        val link = openLink()
+        val on = CompletableDeferred&lt;Unit&gt;()
+        val job = link.scope.launch {
+            try {
+                link.peripheral.observe(characteristic.inKable()) { on.complete(Unit) }
+                    .collect { notified.emit(Notified(characteristic, it)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                on.completeExceptionally(e)
+            }
+        }
+        job.invokeOnCompletion { on.completeExceptionally(NotConnectedException("The link closed first.")) }
+        link.subscriptions[characteristic] = job
+        kable("The device refused to turn on its notifications") { on.await() }
+    }
+
+    // Cancelling the collection is Kable's unsubscribe: it writes the CCCD to turn them off.
+    override suspend fun unsubscribe(characteristic: Characteristic) {
+        openLink().subscriptions.remove(characteristic)?.cancelAndJoin()
+    }
+
+    override fun notifications(characteristic: Characteristic): Flow&lt;ByteArray&gt; =
+        notified
+            .filter { it.characteristic.serviceUuid == characteristic.serviceUuid }
+            .filter { it.characteristic.uuid == characteristic.uuid }
+            .map { it.value }
+
+    private fun openLink(): Link = link ?: throw ConnectionException("Not connected.")
+}
+
+// The app's characteristic as Kable names one: by its service's UUID and its own.
+private fun Characteristic.inKable() = characteristicOf(Uuid.parse(serviceUuid), Uuid.parse(uuid))
+
+// A service Kable discovered, in the app's terms: full upper-case UUIDs (fullUuid), and the
+// properties from the same Characteristic Properties bits both platforms report.
+internal fun DiscoveredService.toDeviceService(): DeviceService {
+    val serviceUuid = fullUuid(serviceUuid.toString())
+    return DeviceService(
+        uuid = serviceUuid,
+        characteristics = characteristics.map {
+            Characteristic(serviceUuid, fullUuid(it.characteristicUuid.toString()), propertiesOf(it.properties.value))
+        },
+    )
+}
+
+// Runs one Kable call, and gives any failure to the app core as a ConnectionException: the
+// user's words first, Kable's after. Cancellation passes through as it is.
+private suspend fun &lt;T&gt; kable(what: String, call: suspend () -&gt; T): T =
+    try {
+        call()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        throw ConnectionException(connectionFailure(what, e))
+    }
+
+internal fun connectionFailure(what: String, failure: Exception): String = when (failure) {
+    is UnmetRequirementException -&gt; "Bluetooth is off. Turn it on, then connect again."
+    is NotConnectedException -&gt; "$what: the link closed first."
+    is NoSuchElementException -&gt; "This device has no such characteristic. Scan and connect again."
+    else -&gt; "$what (Kable: ${failure.message})."
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+import com.juul.kable.Peripheral
+import com.juul.kable.PlatformScanner
+
+// The two things the Kable adapters can't do in common code, each with one actual per platform:
+// build Kable's Scanner the way the hand-written scanners scan, and get a device's Peripheral back
+// from the id its scan reported. Part of the Kable adapters, like the httpEngine files of E1.
+internal expect fun kableScanner(): PlatformScanner
+
+internal expect fun kablePeripheral(device: Device): Peripheral</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/androidMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.android.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import android.bluetooth.le.ScanSettings
+import com.example.devicemonitor.core.Device
+import com.juul.kable.ObsoleteKableApi
+import com.juul.kable.Peripheral
+import com.juul.kable.PlatformScanner
+import com.juul.kable.Scanner
+
+// Android: the low-latency scan AndroidBleScanner runs. Without scanSettings, Kable passes
+// Android's default settings, whose mode is low power. Kable marks scanSettings obsolete: it
+// plans a builder of its own for these settings.
+@OptIn(ObsoleteKableApi::class)
+internal actual fun kableScanner(): PlatformScanner = Scanner {
+    scanSettings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
+}
+
+// The id is the address the scan reported, as for AndroidBleConnection.
+internal actual fun kablePeripheral(device: Device): Peripheral = Peripheral(device.id)</code></pre>
+    </details>
+    <details class="full-file" data-part="outbound">
+      <summary>shared/src/iosMain/kotlin/com/example/devicemonitor/adapter/outbound/KablePlatform.ios.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.Device
+import com.juul.kable.CentralManager
+import com.juul.kable.Peripheral
+import com.juul.kable.PlatformScanner
+import com.juul.kable.Scanner
+import com.juul.kable.toIdentifier
+
+// iOS: Kable makes one CBCentralManager for the app, on first use. Unless configure runs before
+// that, Kable passes no options, and iOS then shows its own alert if Bluetooth is off as the
+// manager is made. Any configure call passes ShowPowerAlert false, so the app shows its own
+// message instead, as the hand-written adapters do. configure throws once the manager exists,
+// so it runs once, first.
+private val managerSetUp = lazy { CentralManager.configure { } }
+
+// Kable turns off iOS's duplicate filtering unless told otherwise: an event for every
+// advertisement, which costs battery. IosBleScanner keeps iOS's default, each device once per
+// scan, and so does this.
+internal actual fun kableScanner(): PlatformScanner {
+    managerSetUp.value
+    return Scanner { allowDuplicateKeys = false }
+}
+
+// The id is the identifier the scan reported. Kable asks its manager for that peripheral, as
+// IosBleConnection asks its own, and throws NoSuchElementException if iOS doesn't know it.
+internal actual fun kablePeripheral(device: Device): Peripheral {
+    managerSetUp.value
+    return Peripheral(device.id.toIdentifier())
+}</code></pre>
+    </details>
+    <details class="full-file">
+      <summary>shared/src/commonMain/kotlin/com/example/devicemonitor/di/AppModule.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.MonitorViewModel
+import com.example.devicemonitor.adapter.outbound.KableBleConnection
+import com.example.devicemonitor.adapter.outbound.KableBleScanner
+import com.example.devicemonitor.adapter.outbound.SessionConnectionStatus
+import com.example.devicemonitor.core.MonitoringService
+import com.example.devicemonitor.core.PermissionService
+import com.example.devicemonitor.core.ScanningService
+import com.example.devicemonitor.core.SessionService
+import com.example.devicemonitor.core.StatusService
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import com.example.devicemonitor.core.inbound.DeviceScanning
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.inbound.PermissionAccess
+import com.example.devicemonitor.core.inbound.StatusReport
+import com.example.devicemonitor.core.outbound.BatteryProvider
+import com.example.devicemonitor.core.outbound.BleConnection
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.core.outbound.BluetoothProvider
+import com.example.devicemonitor.core.outbound.ConnectionStatus
+import com.example.devicemonitor.core.outbound.LogStore
+import com.example.devicemonitor.core.outbound.MonitorScheduler
+import com.example.devicemonitor.core.outbound.MonitorSettings
+import com.example.devicemonitor.core.outbound.NetworkProvider
+import com.example.devicemonitor.core.outbound.PermissionChecker
+import org.koin.core.context.startKoin
+import org.koin.core.module.dsl.viewModelOf
+import org.koin.dsl.module
+
+// The composition root, as a Koin module: which service implements each inbound port,
+// which adapter implements each outbound port, and how to build each ViewModel.
+internal val appModule = module {
+    single&lt;DeviceScanning&gt; { ScanningService(get(), get()) }
+    // One session for the whole app: every screen sees the same connection state.
+    single&lt;DeviceSession&gt; { SessionService(get(), get()) }
+    single&lt;PermissionAccess&gt; { PermissionService(get()) }
+    single&lt;StatusReport&gt; { StatusService(get(), get(), get(), get()) }
+    // The bridge adapter: the status asks ConnectionStatus, and the one session answers.
+    single&lt;ConnectionStatus&gt; { SessionConnectionStatus(get()) }
+    // The monitor reads the same four status ports, writes to the log store, and keeps the
+    // user's Stop in the settings.
+    single&lt;DeviceMonitoring&gt; { MonitoringService(get(), get(), get(), get(), get(), get(), get()) }
+    viewModelOf(::DeviceListViewModel)
+    viewModelOf(::DeviceDetailViewModel)
+    viewModelOf(::MonitorViewModel)
+}
+
+// The outbound adapters that each platform builds itself and passes to initKoin.
+internal fun platformModule(
+    permissionChecker: PermissionChecker,
+    bleScanner: BleScanner,
+    bleConnection: BleConnection,
+    batteryProvider: BatteryProvider,
+    networkProvider: NetworkProvider,
+    bluetoothProvider: BluetoothProvider,
+    logStore: LogStore,
+    monitorScheduler: MonitorScheduler,
+    monitorSettings: MonitorSettings,
+) = module {
+    single { permissionChecker }
+    single { bleScanner }
+    single { bleConnection }
+    single { batteryProvider }
+    single { networkProvider }
+    single { bluetoothProvider }
+    single { logStore }
+    single { monitorScheduler }
+    single { monitorSettings }
+}
+
+// The other BLE stack: the Kable adapters, shared code that each platform doesn't build itself.
+// Listed after platformModule, its two definitions replace the platform's BleScanner and
+// BleConnection: when two modules define the same type, Koin keeps the one loaded last.
+internal val kableBleModule = module {
+    single&lt;BleScanner&gt; { KableBleScanner(get()) }
+    single&lt;BleConnection&gt; { KableBleConnection() }
+}
+
+// Call once, when the app process starts (Android: Application.onCreate; iOS: at launch).
+fun initKoin(
+    permissionChecker: PermissionChecker,
+    bleScanner: BleScanner,
+    bleConnection: BleConnection,
+    batteryProvider: BatteryProvider,
+    networkProvider: NetworkProvider,
+    bluetoothProvider: BluetoothProvider,
+    logStore: LogStore,
+    monitorScheduler: MonitorScheduler,
+    monitorSettings: MonitorSettings,
+) {
+    startKoin {
+        modules(
+            appModule,
+            platformModule(
+                permissionChecker, bleScanner, bleConnection, batteryProvider, networkProvider, bluetoothProvider,
+                logStore, monitorScheduler, monitorSettings,
+            ),
+            kableBleModule, // the BLE stack: delete this line for the hand-written adapters
+        )
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/adapter/outbound/KableTranslationTest.kt</summary>
+<pre><code>package com.example.devicemonitor.adapter.outbound
+
+import com.example.devicemonitor.core.CharacteristicProperty
+import com.juul.kable.DiscoveredCharacteristic
+import com.juul.kable.DiscoveredDescriptor
+import com.juul.kable.DiscoveredService
+import com.juul.kable.ExperimentalKableApi
+import com.juul.kable.NotConnectedException
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.uuid.Uuid
+
+// The Kable adapters' translations, without a radio: Kable's discovered services and its
+// failures, in the app's terms. Kable's discovered types are interfaces, so a test can make one.
+class KableTranslationTest {
+    @OptIn(ExperimentalKableApi::class)
+    private fun battery(): DiscoveredService {
+        val serviceUuid = Uuid.parse("0000180f-0000-1000-8000-00805f9b34fb")
+        val level = object : DiscoveredCharacteristic {
+            override val serviceUuid = serviceUuid
+            override val characteristicUuid = Uuid.parse("00002a19-0000-1000-8000-00805f9b34fb")
+            override val descriptors = emptyList&lt;DiscoveredDescriptor&gt;()
+            override val properties = com.juul.kable.Characteristic.Properties(0x12) // read, notify
+        }
+        return object : DiscoveredService {
+            override val serviceUuid = serviceUuid
+            override val characteristics = listOf(level)
+        }
+    }
+
+    @Test
+    fun aDiscoveredServiceComesInTheAppsTerms() {
+        val service = battery().toDeviceService()
+
+        assertEquals("0000180F-0000-1000-8000-00805F9B34FB", service.uuid)
+        val level = service.characteristics.single()
+        assertEquals(service.uuid, level.serviceUuid)
+        assertEquals("00002A19-0000-1000-8000-00805F9B34FB", level.uuid)
+        assertEquals(listOf(CharacteristicProperty.Read, CharacteristicProperty.Notify), level.properties)
+    }
+
+    @Test
+    fun aDroppedLinkSaysWhatFailed() {
+        val message = connectionFailure("The device refused the read", NotConnectedException("gone"))
+
+        assertEquals("The device refused the read: the link closed first.", message)
+    }
+
+    @Test
+    fun anyOtherFailureKeepsKablesWords() {
+        val message = connectionFailure("The device refused the read", IllegalStateException("Read failed"))
+
+        assertEquals("The device refused the read (Kable: Read failed).", message)
+    }
+
+    @Test
+    fun aScanFailureKeepsKablesWords() {
+        assertEquals("The scan failed (Kable: Scan failed).", scanFailure(IllegalStateException("Scan failed")))
+    }
+}</code></pre>
+    </details>
+    <details class="full-file" data-part="inbound">
+      <summary>shared/src/commonTest/kotlin/com/example/devicemonitor/di/AppModuleTest.kt</summary>
+<pre><code>package com.example.devicemonitor.di
+
+import com.example.devicemonitor.adapter.inbound.DeviceDetailViewModel
+import com.example.devicemonitor.adapter.inbound.DeviceListViewModel
+import com.example.devicemonitor.adapter.inbound.MonitorViewModel
+import com.example.devicemonitor.adapter.outbound.KableBleConnection
+import com.example.devicemonitor.adapter.outbound.KableBleScanner
+import com.example.devicemonitor.core.Device
+import com.example.devicemonitor.core.Permission
+import com.example.devicemonitor.core.PermissionStatus
+import com.example.devicemonitor.core.inbound.DeviceMonitoring
+import com.example.devicemonitor.core.inbound.DeviceSession
+import com.example.devicemonitor.core.inbound.StatusReport
+import com.example.devicemonitor.core.outbound.BleConnection
+import com.example.devicemonitor.core.outbound.BleScanner
+import com.example.devicemonitor.doubles.FakeBatteryProvider
+import com.example.devicemonitor.doubles.FakeBleConnection
+import com.example.devicemonitor.doubles.FakeBleScanner
+import com.example.devicemonitor.doubles.FakeBluetoothProvider
+import com.example.devicemonitor.doubles.FakeLogStore
+import com.example.devicemonitor.doubles.FakeMonitorScheduler
+import com.example.devicemonitor.doubles.FakeMonitorSettings
+import com.example.devicemonitor.doubles.FakeNetworkProvider
+import com.example.devicemonitor.doubles.FakePermissionChecker
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
+import org.koin.core.module.Module
+import org.koin.dsl.koinApplication
+import kotlin.test.AfterTest
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertIs
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.time.Duration.Companion.minutes
+
+class AppModuleTest {
+    // Fakes stand in for the adapters each platform passes to initKoin.
+    private val radio = FakeBleConnection()
+    private val os = FakePermissionChecker()
+    private val log = FakeLogStore()
+    private val timer = FakeMonitorScheduler()
+    private fun platformFakes(): Module = platformModule(
+        os, FakeBleScanner(), radio,
+        FakeBatteryProvider(), FakeNetworkProvider(), FakeBluetoothProvider(),
+        log, timer, FakeMonitorSettings(),
+    )
+    private val app = koinApplication { modules(appModule, platformFakes()) }
+    private val koin = app.koin
+
+    // A single's instance is kept in the module, and appModule is one object for every test:
+    // without close(), the next test's koinApplication would get this test's session.
+    @AfterTest
+    fun closeKoin() {
+        app.close()
+    }
+
+    // Koin checks the graph only when something asks for an instance, at run time. This
+    // test asks for every screen's ViewModel, so a missing binding fails here, not in the app.
+    @Test
+    fun buildsEveryViewModel() {
+        assertNotNull(koin.get&lt;DeviceListViewModel&gt;())
+        assertNotNull(koin.get&lt;DeviceDetailViewModel&gt;())
+        assertNotNull(koin.get&lt;MonitorViewModel&gt;())
+    }
+
+    // The bridge must reach the session the screens connect through, not a second one.
+    @Test
+    fun theStatusSeesTheAppsOneSession() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Granted
+        val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+        val call = launch { koin.get&lt;DeviceSession&gt;().connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        assertTrue(koin.get&lt;StatusReport&gt;().current().bluetoothConnected)
+        call.cancelAndJoin()
+    }
+
+    // The monitor reaches the same session through the same bridge, and writes to the log store
+    // the platform passed in.
+    @Test
+    fun theMonitorLogsWhatTheAppsOneSessionSays() = runTest {
+        os.statuses[Permission.Bluetooth] = PermissionStatus.Granted
+        val obd = Device(id = "01", name = "OBD-II Adapter", rssi = -48)
+        val call = launch { koin.get&lt;DeviceSession&gt;().connect(obd) }
+        radio.answer()
+        testScheduler.runCurrent()
+
+        koin.get&lt;DeviceMonitoring&gt;().start(15.minutes)
+        timer.fire()
+
+        assertEquals(listOf(true), log.records.map { it.status.bluetoothConnected })
+        call.cancelAndJoin()
+    }
+
+    // The one Koin line of Extension E3: kableBleModule, listed after the platform's adapters,
+    // replaces both BLE bindings, and the rest of the graph still builds on top of them.
+    @Test
+    fun kableBleModuleReplacesThePlatformsBleAdapters() {
+        val withKable = koinApplication { modules(appModule, platformFakes(), kableBleModule) }
+        try {
+            assertIs&lt;KableBleScanner&gt;(withKable.koin.get&lt;BleScanner&gt;())
+            assertIs&lt;KableBleConnection&gt;(withKable.koin.get&lt;BleConnection&gt;())
+            assertNotNull(withKable.koin.get&lt;DeviceDetailViewModel&gt;())
+        } finally {
+            withKable.close()
+        }
+    }
+}</code></pre>
+    </details>
+  </section>
+
+  <nav class="progress-links">
+    <a href="e2-camera-and-media.html">← E2 Camera and media</a>
+    <span class="muted">Every extension starts from m15: E1, E2 and E3 in any order. The <a href="../index.html#lesson-map">lesson map</a> lists them all.</span>
+  </nav>
+</main>
+</body>
+</html>
