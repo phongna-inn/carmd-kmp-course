@@ -873,7 +873,8 @@ Acceptance checks (run every one you can, on an emulator and a simulator):
   9. adb shell cmd connectivity airplane-mode enable; GET https://httpbin.org/get: "GET ·
      couldn't reach the server" and "Unable to resolve host "httpbin.org"…"; then
      adb shell cmd connectivity airplane-mode disable.
-  10. GET https://10.255.255.1/, then Back within a second: the main screen; wait 12 s:
+  10. GET https://10.255.255.1/, then Back within a second (tap the screen's own Back button;
+     with the keyboard open the system Back key only closes the keyboard first): the main screen; wait 12 s:
      adb shell pidof com.example.devicemonitor still prints a pid and adb logcat -d shows no
      FATAL EXCEPTION.
 - iOS Simulator, my track. Drive it with a throwaway XCUITest that launches the installed app
